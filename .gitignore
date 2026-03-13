@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Project-specific
+app/logs/*.log
+*.db
+*.sqlite3
+
+# OS generated files
+.DS_Store
+.DS_Store?
+atalkd.conf
+netatalk.conf
+atalk.conf
+.atalk/
+atalkd.conf
+Thumbs.db
+desktop.ini
+
+# IDEs (Important for your 1.13GB WSL setup)
+.vscode/
+.idea/
+*.swp
+*.swo
+
+
+#logs
+.logs
+*.logss
