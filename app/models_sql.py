@@ -67,6 +67,7 @@ class Reply(Base):
     reply_text = Column(String)
     time_of_post = Column(DateTime(timezone=True), server_default=func.now())
 
+    __table_args__ = UniqueConstraint("user_id", "review_id", name="user_reply_review")
     user = relationship("User", back_populates="replies")
     review = relationship("Review", back_populates="reply")
     product = relationship("Product", back_populates="reply")
@@ -143,6 +144,7 @@ class Review(Base):
     )
     review_text = Column(String)
     ratings = Column(Integer)
+    reply_count: Mapped(int) = mapped_column(Integer, default=0)
     edited = Column(Boolean, default=False)
     date_of_review = Column(
         DateTime(timezone=True), server_default=func.now(), index=True

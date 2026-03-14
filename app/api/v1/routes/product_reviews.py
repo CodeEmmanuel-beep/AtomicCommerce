@@ -36,10 +36,9 @@ async def review_list(
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
 ):
     return await product_reviews_service.view_reviews(
-        product_id=product_id, db=db, payload=payload, page=page, limit=limit
+        product_id=product_id, db=db, page=page, limit=limit
     )
 
 

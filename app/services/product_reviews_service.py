@@ -67,11 +67,7 @@ async def product_review(review, db, payload):
     return {"message": "review generated successfully"}
 
 
-async def view_reviews(product_id, page, limit, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt to access view_reviews endpoint")
-        raise HTTPException(status_code=401, detail="not a registered user")
+async def view_reviews(product_id, page, limit, db):
     offset = (page - 1) * limit
     version = await cache_version("product_review_key")
     cache_key = f"product_review:v{version}:{product_id}:{page}:{limit}"

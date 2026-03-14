@@ -23,6 +23,7 @@ async def category(
     "/get_cart",
     response_model=StandardResponse[PaginatedMetadata[CategoryResponse]],
     response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
 )
 async def retrieve(
     page: int = Query(1, ge=1),

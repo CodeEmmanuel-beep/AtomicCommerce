@@ -8,7 +8,16 @@ from app.api.v1.models import (
 from fastapi import HTTPException
 from app.models_sql import Review, Reply, User
 from sqlalchemy import select, func, or_
+from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
+from app.utils.redis import (
+    product_reply_invalidation,
+    product_review_invalidation,
+    cache,
+    cache_version,
+    cached,
+)
+import asyncio
 
 logger = get_logger("product_reply")
 
@@ -16,13 +25,15 @@ logger = get_logger("product_reply")
 async def reply(reply, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
+        logger.warning("unauthorized attempt at create reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
     stmt = select(Review).where(
         Review.product_id == reply.product_id, Review.id == reply.review_id
     )
     rep = (await db.execute(stmt)).scalar_one_or_none()
     if not rep:
-        raise HTTPException(status_code=494, detail="review not found")
+        logger.error("user %s, tried replying to a non-existent review", user_id)
+        raise HTTPException(status_code=404, detail="review not found")
     new_reply = Reply(
         user_id=user_id,
         product_id=reply.product_id,
@@ -30,80 +41,144 @@ async def reply(reply, db, payload):
         reply_text=reply.reply_text,
     )
     try:
+        rep.reply_count = (rep.reply_count or 0) + 1
         db.add(new_reply)
         await db.commit()
-        await db.refresh(new_reply)
+        await asyncio.gather(
+            product_reply_invalidation(), product_review_invalidation()
+        )
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
+        logger.error("database error occured while making reply user: %s", user_id)
+        raise HTTPException(status_code=400, detail="databaase error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error occured while making reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("reply successfully saved in database reviewer: %s", user_id)
     return {"messsage": "reply successfully posted"}
 
 
-async def view_replies(product_id, review_id, page, limit, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="not a registered user")
+async def view_replies(product_id, review_id, page, limit, db):
     offset = (page - 1) * limit
+    version = await cache_version("product_reply_key")
+    cache_key = f"product_reply:v{version}:{product_id}:{review_id}:{page}:{limit}"
+    reply_cache = await cache(cache_key)
+    if reply_cache:
+        logger.info("cache hit for product_id '%s', page: %s", product_id, page)
+        return StandardResponse(**reply_cache)
     stmt = (
         select(Reply)
+        .join(Reply.user)
+        .options(selectinload(Reply.user))
         .where(Reply.product_id == product_id, Reply.review_id == review_id)
         .order_by(
-            or_(User.role == "Admin", User.role == "Owner").desc(), Reply.time_of_post
+            or_(
+                User.role == "Admin", User.role == "Owner", User.role == "customer_care"
+            ).desc(),
+            Reply.time_of_post.desc(),
         )
     )
-    total = (
-        await db.execute(select(func.count()).select_from(stmt.subquery))
-    ).scalar() or 0
-    reply = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
+    total_gather, reply_gather = await asyncio.gather(
+        db.execute(
+            select(func.count(Reply.id)).where(
+                Reply.product_id == product_id, Reply.review_id == review_id
+            )
+        ),
+        db.execute(stmt.offset(offset).limit(limit)),
+    )
+    total = total_gather.scalar() or 0
+    logger.info("total reply found for review_id '%s' is %s", review_id, total)
+    reply = reply_gather.scalars().all()
     if not reply:
-        raise HTTPException(status_code=404, detail="no replies available")
+        logger.info("review_id '%s' has no replies", review_id)
+        return StandardResponse(
+            status="success", message="no replies available", data=None
+        )
     data = PaginatedMetadata[ReplyResponse](
         items=[ReplyResponse.model_validate(rep) for rep in reply],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
-    return StandardResponse(status="success", message="replies", data=data)
+    response = StandardResponse(status="success", message="reviews", data=data)
+    await cached(cache_key, response, ttl=36000)
+    logger.info("search for replies successfully returned data")
+    return response
 
 
 async def update(reply, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
+        logger.warning("unauthorized attempt at edit reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
     stmt = select(Reply).where(
         Reply.user_id == user_id,
         Reply.product_id == reply.product_id,
         Reply.id == reply.id,
     )
-    replies = (await db.execute(stmt)).scalars().all()
-    if not replies:
-        raise HTTPException(status_code=404, detail="review not found")
-    replies.reply_text = reply.reply_text
+    db_reply = (await db.execute(stmt)).scalar_one_or_none()
+    if not db_reply:
+        logger.error("user: %s, tried editing a non-existent reply", user_id)
+        raise HTTPException(status_code=404, detail="reply not found")
+    db_reply.reply_text = reply.reply_text
     try:
-        replies.edited = True
+        db_reply.edited = True
         await db.commit()
-        await db.refresh(replies)
+        await asyncio.gather(
+            product_reply_invalidation(), product_review_invalidation()
+        )
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
+        logger.error("database error occured while editing reply user: %s", user_id)
+        raise HTTPException(status_code=400, detail="databaase error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error occured while editing reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
-    return {"message": "review edited successfully"}
+    logger.info("reply update by user '%s' successfully saved in database", user_id)
+    return {"messsage": "reply successfully edited"}
 
 
 async def delete_reply(reply, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
+        logger.warning("unauthorized attempt at delete_reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = select(Reply).where(
-        Reply.user_id == user_id,
-        Reply.product_id == reply.product_id,
-        Reply.id == reply.id,
+    stmt = (
+        select(Reply)
+        .options(selectinload(Reply.review))
+        .where(
+            Reply.user_id == user_id,
+            Reply.product_id == reply.product_id,
+            Reply.id == reply.id,
+        )
     )
-    replies = (await db.execute(stmt)).scalar_one_or_none()
-    if not replies:
-        raise HTTPException(status_code=404, detail="revie not found")
+    db_reply = (await db.execute(stmt)).scalar_one_or_none()
+    if not db_reply:
+        logger.error("user: %s, tried deleting a non-existent reply", user_id)
+        raise HTTPException(status_code=404, detail="reply not found")
     try:
-        await db.delete(replies)
+        await db.delete(db_reply)
+        db_reply.review.reply_count = max(0, (db_reply.review.reply_count or 1) - 1)
         await db.commit()
-        await db.refresh(replies)
+        await asyncio.gather(
+            product_reply_invalidation(), product_review_invalidation()
+        )
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
+        logger.error("database error occured while deleting reply user: %s", user_id)
+        raise HTTPException(status_code=400, detail="databaase error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error occured while deleting reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
-    return {"message": "deleted review"}
+    logger.info("user '%s' successfully deleted their reply", user_id)
+    return {"message": "deleted reply"}

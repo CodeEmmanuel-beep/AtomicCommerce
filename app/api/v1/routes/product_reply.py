@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from app.services import product_reply_service
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.models import (
-    ReplyRes,
+    Reply,
     StandardResponse,
     PaginatedMetadata,
     ReplyResponse,
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/replies", tags=["Product_Reply"])
 
 @router.post("/create_reply")
 async def post_reply(
-    reply: ReplyRes,
+    reply: Reply,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
@@ -34,13 +34,11 @@ async def reply_list(
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
     db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
 ):
     return await product_reply_service.view_replies(
         product_id=product_id,
         review_id=review_id,
         db=db,
-        payload=payload,
         page=page,
         limit=limit,
     )
@@ -48,7 +46,7 @@ async def reply_list(
 
 @router.put("/edit_reply")
 async def update_reply(
-    reply: ReplyRes,
+    reply: Reply,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
@@ -57,7 +55,7 @@ async def update_reply(
 
 @router.delete("/delete_reply")
 async def delete_one(
-    reply: ReplyRes,
+    reply: Reply,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):

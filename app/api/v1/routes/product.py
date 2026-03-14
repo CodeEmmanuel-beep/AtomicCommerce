@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, Query
 import os
 from app.database.get import get_db
 from app.auth.verify_jwt import verify_token
@@ -9,7 +9,6 @@ from app.api.v1.models import (
     StandardResponse,
     ProductObj,
 )
-from typing import List
 from app.services import product_service
 from app.utils.supabase_url import _supabase
 
@@ -49,7 +48,7 @@ async def product_change(
     response_model_exclude_defaults=True,
 )
 async def list_products(
-    seed: float = 5,
+    seed: float = 0.5,
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
