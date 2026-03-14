@@ -61,33 +61,6 @@ async def create_roles(
     )
 
 
-@router.post("/deactivate_admin")
-async def delete_admin(
-    username: str,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await auth_service.delete_admin(username=username, db=db, payload=payload)
-
-
-@router.post("/make_customer_care")
-async def create_customer_care(
-    username: str,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await auth_service.create_admin(username=username, db=db, payload=payload)
-
-
-@router.post("/deactivate_customer_care")
-async def delete_customer_care(
-    username: str,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await auth_service.delete_admin(username=username, db=db, payload=payload)
-
-
 @router.post("/refresh")
 async def refresh_token(request: Request, response: Response):
     return await auth_service.refresh_token(request=request, response=response)

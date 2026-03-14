@@ -8,7 +8,7 @@ from app.api.v1.models import (
 from app.models_sql import Cart, CartItem, Product
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.utils.redis import cache, cached, cart_invalidation, cache_version
@@ -353,7 +353,7 @@ async def delete_one(
     return {"message": "cart item deleted"}
 
 
-async def delete(
+async def delete_all(
     cart_id,
     db,
     payload,

@@ -70,7 +70,7 @@ async def retrieve(
 async def change_quanity(
     cart_id: int,
     cartitem_id: int,
-    new_quntity,
+    new_quntity: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
@@ -81,6 +81,15 @@ async def change_quanity(
         db=db,
         payload=payload,
     )
+
+
+@router.put("/update_cart")
+async def update__cart(
+    cart_id: int,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await cart_service.update_cart(cart_id=cart_id, db=db, payload=payload)
 
 
 @router.delete("/delete_cartitem")
@@ -96,7 +105,7 @@ async def delete_one(
 
 
 @router.delete("/delete_cart")
-async def delete_all(
+async def delete_cart(
     cart_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
