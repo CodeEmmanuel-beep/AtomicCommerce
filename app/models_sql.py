@@ -10,9 +10,11 @@ from sqlalchemy import (
     Date,
     Numeric,
     UniqueConstraint,
+    JSON,
 )
 from sqlalchemy.orm import relationship, mapped_column, Mapped
 from sqlalchemy import func
+from datetime import datetime
 
 
 class User(Base):
@@ -34,6 +36,7 @@ class User(Base):
     replies = relationship("Reply", back_populates="user")
     orders = relationship("Order", back_populates="user")
     carts = relationship("Cart", back_populates="user")
+    companies = relationship("Company", back_populates="user")
 
 
 class Messaging(Base):
@@ -51,6 +54,23 @@ class Messaging(Base):
     time_of_chat = Column(DateTime(timezone=True), server_default=func.now)
 
     user = relationship("User", back_populates="messages")
+
+
+class Company(Base):
+    __tablename__ = "companies"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    owner_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    company_photo: Mapped[dict] = mapped_column(JSON)
+    company_name: Mapped[str] = mapped_column(String, unique=True)
+    business_type: Mapped[str] = mapped_column(String)
+    category_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("categories.id"), index=True
+    )
+    approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    founded: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    user = relationship("User", back_populates="companies")
+    category = relationship("Category", back_populates="companies")
 
 
 class Reply(Base):
@@ -82,7 +102,7 @@ class Product(Base):
     product_price = Column(Numeric(precision=12, scale=2))
     category_id = Column(Integer, ForeignKey("categories.id"), index=True)
     product_availability = Column(String, default="available")
-    is_deleted: Mapped(bool) = mapped_column(Boolean, default=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
     review = relationship(
         "Review", back_populates="product", cascade="all, delete-orphan"
@@ -144,7 +164,7 @@ class Review(Base):
     )
     review_text = Column(String)
     ratings = Column(Integer)
-    reply_count: Mapped(int) = mapped_column(Integer, default=0)
+    reply_count: Mapped[int] = mapped_column(Integer, default=0)
     edited = Column(Boolean, default=False)
     date_of_review = Column(
         DateTime(timezone=True), server_default=func.now(), index=True
@@ -164,6 +184,7 @@ class Category(Base):
     name = Column(String, unique=True)
 
     products = relationship("Product", back_populates="category")
+    companies = relationship("Company", back_populates="category")
 
 
 class CartItem(Base):
