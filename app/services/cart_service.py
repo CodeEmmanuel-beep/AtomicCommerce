@@ -33,9 +33,6 @@ async def create_cart(
         db.add(cart)
         await db.commit()
         await cart_invalidation(user_id=user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while creating cart")
@@ -101,9 +98,6 @@ async def shopping(cart, db, payload):
         )
         await db.commit()
         await cart_invalidation(user_id=user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while adding product to cart")
@@ -241,9 +235,6 @@ async def edit_quantity(cart_id, cartitem_id, new_quantity, db, payload):
         cart.total_quantity += difference
         await db.commit()
         await cart_invalidation(user_id=user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.exception("Failed to commit")
@@ -279,9 +270,6 @@ async def update_cart(cart_id, db, payload):
     try:
         await db.commit()
         await cart_invalidation(user_id=user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -332,9 +320,6 @@ async def delete_one(
         cart.total_quantity -= result.quantity
         await db.commit()
         await cart_invalidation(user_id=user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -371,9 +356,6 @@ async def delete_all(
         await db.delete(result)
         await db.commit()
         await cart_invalidation(user_id=user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error(

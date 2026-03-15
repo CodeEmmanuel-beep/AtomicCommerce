@@ -107,6 +107,9 @@ async def create(
         await cart_global_invalidation()
         await order_global_invalidation()
         await product_invalidation()
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         if uploaded_file:

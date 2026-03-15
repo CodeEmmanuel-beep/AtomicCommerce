@@ -41,13 +41,13 @@ async def product_reply_invalidation():
     return value
 
 
-async def company_review_invalidation():
+async def store_review_invalidation():
     value = await redis_client.incr("company_review_key")
     await redis_client.expire("company_review_key", 18000)
     return value
 
 
-async def company_reply_invalidation():
+async def store_reply_invalidation():
     value = await redis_client.incr("company_reply_key")
     await redis_client.expire("company_reply_key", 18000)
     return value

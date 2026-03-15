@@ -38,7 +38,7 @@ def run_migrations_offline():
     script output.
 
     """
-    url = settings.SYNC_DATABASE_URL
+    url = settings.DATABASE_URL
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -61,7 +61,7 @@ def run_migrations_online():
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        url=settings.SYNC_DATABASE_URL,
+        url=settings.DATABASE_URL,
     )
 
     with connectable.connect() as connection:

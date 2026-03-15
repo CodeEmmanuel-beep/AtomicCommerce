@@ -10,7 +10,7 @@ from app.models_sql import Review, Reply, User
 from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError
 
-logger = get_logger("product_reply")
+logger = get_logger("store_reply")
 
 
 async def reply(reply, db, payload):
@@ -51,10 +51,8 @@ async def view_replies(review_id, page, limit, db, payload):
             or_(User.role == "Admin", User.role == "Owner").desc(), Reply.time_of_post
         )
     )
-    subq=stmt.subquery()
-    total = (
-        await db.execute(select(func.count()).select_from(subq))
-    ).scalar() or 0
+    subq = stmt.subquery()
+    total = (await db.execute(select(func.count()).select_from(subq))).scalar() or 0
     reply = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not reply:
         raise HTTPException(status_code=404, detail="no replies available")

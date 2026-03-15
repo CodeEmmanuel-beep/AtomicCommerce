@@ -165,6 +165,7 @@ class ReviewResponse(BaseModel):
 class Review(BaseModel):
     id: int | None = None
     product_id: int
+    store_id: int
     review_text: str
     ratings: int
     date_of_review: Optional[datetime]

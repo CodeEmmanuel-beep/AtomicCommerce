@@ -47,9 +47,6 @@ async def reply(reply, db, payload):
         await asyncio.gather(
             product_reply_invalidation(), product_review_invalidation()
         )
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error occured while making reply user: %s", user_id)
@@ -129,9 +126,6 @@ async def update(reply, db, payload):
         await asyncio.gather(
             product_reply_invalidation(), product_review_invalidation()
         )
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error occured while editing reply user: %s", user_id)
@@ -169,9 +163,6 @@ async def delete_reply(reply, db, payload):
         await asyncio.gather(
             product_reply_invalidation(), product_review_invalidation()
         )
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error occured while deleting reply user: %s", user_id)

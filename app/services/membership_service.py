@@ -48,9 +48,6 @@ async def make_member(membership_type, db, payload):
     try:
         db.add(member)
         await db.commit()
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -84,9 +81,6 @@ async def update(membership_type, db, payload):
         await db.commit()
         await db.refresh(change)
         await member_invalidation(user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -372,9 +366,6 @@ async def pause_membership(db, payload):
     pause.pause_date = today
     try:
         await db.commit()
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -411,9 +402,6 @@ async def reactivate_membership(db, payload):
     try:
         await db.commit()
         await asyncio.gather(member_invalidation(user_id), member_global_invalidation())
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -453,9 +441,6 @@ async def restore_membership(membership_id, db, payload):
     try:
         await db.commit()
         await member_global_invalidation()
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -497,9 +482,6 @@ async def delete_member(db, payload):
     member.delete_date = today
     try:
         await db.commit()
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error(

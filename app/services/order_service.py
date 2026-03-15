@@ -41,9 +41,6 @@ async def create_orders(db, payload):
         db.add(order)
         await db.commit()
         await order_invalidation(user_id=user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while creating order")
@@ -110,10 +107,8 @@ async def create_order_items(cart_id, order_id, db, payload):
         )
         if update_result.rowcount == 0:
             raise HTTPException(status_code=409, detail="cart already checked out")
+        await db.commit()
         await asyncio.gather(order_invalidation(user_id), cart_invalidation(user_id))
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         logger.error("Database integrity error while creating order items")
         raise HTTPException(status_code=400, detail="database error")
@@ -256,9 +251,6 @@ async def cancel_order(
     try:
         await db.commit()
         await order_invalidation(user_id=user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while cancelling order")
@@ -290,9 +282,6 @@ async def delete_order(
     try:
         await db.commit()
         await order_invalidation(user_id=user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while deleting order")

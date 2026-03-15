@@ -10,7 +10,6 @@ from sqlalchemy import (
     Date,
     Numeric,
     UniqueConstraint,
-    JSON,
 )
 from sqlalchemy.orm import relationship, mapped_column, Mapped
 from sqlalchemy import func
@@ -36,7 +35,7 @@ class User(Base):
     replies = relationship("Reply", back_populates="user")
     orders = relationship("Order", back_populates="user")
     carts = relationship("Cart", back_populates="user")
-    companies = relationship("Company", back_populates="user")
+    stores = relationship("Store", back_populates="user")
 
 
 class Messaging(Base):
@@ -51,26 +50,28 @@ class Messaging(Base):
     seen = Column(Boolean, default=False)
     sender_deleted = Column(Boolean, default=False, index=True)
     receiver_deleted = Column(Boolean, default=False, index=True)
-    time_of_chat = Column(DateTime(timezone=True), server_default=func.now)
+    time_of_chat = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="messages")
 
 
-class Company(Base):
-    __tablename__ = "companies"
+class Store(Base):
+    __tablename__ = "stores"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     owner_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
-    company_photo: Mapped[dict] = mapped_column(JSON)
-    company_name: Mapped[str] = mapped_column(String, unique=True)
+    store_photo: Mapped[str] = mapped_column(String)
+    store_name: Mapped[str] = mapped_column(String, unique=True)
     business_type: Mapped[str] = mapped_column(String)
     category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("categories.id"), index=True
     )
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     founded: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
-    user = relationship("User", back_populates="companies")
-    category = relationship("Category", back_populates="companies")
+    user = relationship("User", back_populates="stores")
+    category = relationship("Category", back_populates="stores")
+    review = relationship("Review", back_populates="store")
 
 
 class Reply(Base):
@@ -78,18 +79,14 @@ class Reply(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True)
     edited = Column(Boolean, default=False)
-    product_id = Column(
-        Integer, ForeignKey("productss.id", ondelete="CASCADE"), index=True
-    )
     review_id = Column(
         Integer, ForeignKey("reviews.id", ondelete="CASCADE"), index=True
     )
     reply_text = Column(String)
     time_of_post = Column(DateTime(timezone=True), server_default=func.now())
 
-    __table_args__ = UniqueConstraint("user_id", "review_id", name="user_reply_review")
     user = relationship("User", back_populates="replies")
-    review = relationship("Review", back_populates="reply")
+    review = relationship("Review", back_populates="replies")
     product = relationship("Product", back_populates="reply")
 
 
@@ -104,12 +101,7 @@ class Product(Base):
     product_availability = Column(String, default="available")
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    review = relationship(
-        "Review", back_populates="product", cascade="all, delete-orphan"
-    )
-    reply = relationship(
-        "Reply", back_populates="product", cascade="all, delete-orphan"
-    )
+    review = relationship("Review", back_populates="product")
     cart = relationship("Cart", back_populates="product")
     category = relationship("Category", back_populates="products")
     orderitems = relationship("OrderItem", back_populates="product")
@@ -159,9 +151,8 @@ class Review(Base):
     __tablename__ = "reviews"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True)
-    product_id = Column(
-        Integer, ForeignKey("products.id", ondelete="CASCADE"), index=True
-    )
+    product_id = Column(Integer, ForeignKey("products.id"), index=True)
+    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
     review_text = Column(String)
     ratings = Column(Integer)
     reply_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -170,11 +161,15 @@ class Review(Base):
         DateTime(timezone=True), server_default=func.now(), index=True
     )
 
-    __table_args__ = UniqueConstraint(
-        "user_id", "product_id", name="user_product_review"
+    __table_args__ = (
+        UniqueConstraint("user_id", "product_id", name="user_product_review"),
+    )
+    __table_args__ = (
+        UniqueConstraint("user_id", "store_id", name="user_store_review"),
     )
     user = relationship("User", back_populates="reviews")
     product = relationship("Product", back_populates="review")
+    store = relationship("Store", back_populates="review")
     reply = relationship("Reply", back_populates="review", cascade="all, delete-orphan")
 
 
@@ -184,7 +179,7 @@ class Category(Base):
     name = Column(String, unique=True)
 
     products = relationship("Product", back_populates="category")
-    companies = relationship("Company", back_populates="category")
+    stores = relationship("Store", back_populates="category")
 
 
 class CartItem(Base):
@@ -208,7 +203,7 @@ class Cart(Base):
     member_id = Column(Integer, ForeignKey("memberships.id", ondelete="CASCADE"))
     check_out: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     total_quantity = Column(Float, default=0)
-    created_at = Column(DateTime(timezone=True), server_default=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     user = relationship("User", back_populates="carts")
     cartitems = relationship(

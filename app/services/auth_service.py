@@ -174,9 +174,6 @@ async def create_role(username, role, db, payload):
     admin.role = role
     try:
         await db.commit()
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.exception("database error occured while creating role")
