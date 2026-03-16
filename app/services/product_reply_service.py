@@ -1,6 +1,6 @@
 from app.logs.logger import get_logger
 from app.api.v1.models import (
-    ReplyResponse,
+    ProductReplyResponse,
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
@@ -12,7 +12,6 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.utils.redis import (
     product_reply_invalidation,
-    product_review_invalidation,
     cache,
     cache_version,
     cached,
@@ -41,22 +40,20 @@ async def reply(reply, db, payload):
         reply_text=reply.reply_text,
     )
     try:
-        rep.reply_count = (rep.reply_count or 0) + 1
+        rep.product_reply_count = (rep.product_reply_count or 0) + 1
         db.add(new_reply)
         await db.commit()
-        await asyncio.gather(
-            product_reply_invalidation(), product_review_invalidation()
-        )
+        await product_reply_invalidation()
     except IntegrityError:
         await db.rollback()
         logger.error("database error occured while making reply user: %s", user_id)
-        raise HTTPException(status_code=400, detail="databaase error")
+        raise HTTPException(status_code=400, detail="dataaase error")
     except Exception:
         await db.rollback()
         logger.exception("error occured while making reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info("reply successfully saved in database reviewer: %s", user_id)
-    return {"messsage": "reply successfully posted"}
+    logger.info("reply successfully saved in database responder: %s", user_id)
+    return {"message": "reply successfully posted"}
 
 
 async def view_replies(product_id, review_id, page, limit, db):
@@ -95,11 +92,11 @@ async def view_replies(product_id, review_id, page, limit, db):
         return StandardResponse(
             status="success", message="no replies available", data=None
         )
-    data = PaginatedMetadata[ReplyResponse](
-        items=[ReplyResponse.model_validate(rep) for rep in reply],
+    data = PaginatedMetadata[ProductReplyResponse](
+        items=[ProductReplyResponse.model_validate(rep) for rep in reply],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
-    response = StandardResponse(status="success", message="reviews", data=data)
+    response = StandardResponse(status="success", message="replies", data=data)
     await cached(cache_key, response, ttl=36000)
     logger.info("search for replies successfully returned data")
     return response
@@ -123,19 +120,17 @@ async def update(reply, db, payload):
     try:
         db_reply.edited = True
         await db.commit()
-        await asyncio.gather(
-            product_reply_invalidation(), product_review_invalidation()
-        )
+        await product_reply_invalidation()
     except IntegrityError:
         await db.rollback()
         logger.error("database error occured while editing reply user: %s", user_id)
-        raise HTTPException(status_code=400, detail="databaase error")
+        raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
         logger.exception("error occured while editing reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("reply update by user '%s' successfully saved in database", user_id)
-    return {"messsage": "reply successfully edited"}
+    return {"message": "reply successfully edited"}
 
 
 async def delete_reply(reply, db, payload):
@@ -157,16 +152,16 @@ async def delete_reply(reply, db, payload):
         logger.error("user: %s, tried deleting a non-existent reply", user_id)
         raise HTTPException(status_code=404, detail="reply not found")
     try:
-        await db.delete(db_reply)
-        db_reply.review.reply_count = max(0, (db_reply.review.reply_count or 1) - 1)
-        await db.commit()
-        await asyncio.gather(
-            product_reply_invalidation(), product_review_invalidation()
+        db_reply.review.product_reply_count = max(
+            0, (db_reply.review.product_reply_count or 0) - 1
         )
+        await db.delete(db_reply)
+        await db.commit()
+        await product_reply_invalidation()
     except IntegrityError:
         await db.rollback()
         logger.error("database error occured while deleting reply user: %s", user_id)
-        raise HTTPException(status_code=400, detail="databaase error")
+        raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
         logger.exception("error occured while deleting reply user: %s", user_id)

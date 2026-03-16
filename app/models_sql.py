@@ -10,10 +10,24 @@ from sqlalchemy import (
     Date,
     Numeric,
     UniqueConstraint,
+    Table,
 )
 from sqlalchemy.orm import relationship, mapped_column, Mapped
 from sqlalchemy import func
 from datetime import datetime
+
+store_staffs = Table(
+    "store_staffs",
+    Base.metadata,
+    Column("users_id", ForeignKey("users.id"), primary_key=True, index=True),
+    Column("stores_id", ForeignKey("stores.id"), primary_key=True, index=True),
+)
+store_owners = Table(
+    "store_owners",
+    Base.metadata,
+    Column("users_id", ForeignKey("users.id"), primary_key=True, index=True),
+    Column("stores_id", ForeignKey("stores.id"), primary_key=True, index=True),
+)
 
 
 class User(Base):
@@ -35,7 +49,8 @@ class User(Base):
     replies = relationship("Reply", back_populates="user")
     orders = relationship("Order", back_populates="user")
     carts = relationship("Cart", back_populates="user")
-    stores = relationship("Store", back_populates="user")
+    owners = relationship("Store", secondary=store_owners, back_populates="user_owners")
+    staffs = relationship("Store", secondary=store_staffs, back_populates="user_staffs")
 
 
 class Messaging(Base):
@@ -58,7 +73,6 @@ class Messaging(Base):
 class Store(Base):
     __tablename__ = "stores"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    owner_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
     store_photo: Mapped[str] = mapped_column(String)
     store_name: Mapped[str] = mapped_column(String, unique=True)
     business_type: Mapped[str] = mapped_column(String)
@@ -69,9 +83,11 @@ class Store(Base):
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     founded: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
-    user = relationship("User", back_populates="stores")
+    user_owners = relationship("User", secondary=store_owners, back_populates="owners")
+    user_staffs = relationship("User", secondary=store_staffs, back_populates="staffs")
     category = relationship("Category", back_populates="stores")
     review = relationship("Review", back_populates="store")
+    replies = relationship("Reply", back_populates="store")
 
 
 class Reply(Base):
@@ -82,12 +98,15 @@ class Reply(Base):
     review_id = Column(
         Integer, ForeignKey("reviews.id", ondelete="CASCADE"), index=True
     )
+    product_id = Column(Integer, ForeignKey("products.id"), index=True)
+    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
     reply_text = Column(String)
     time_of_post = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="replies")
     review = relationship("Review", back_populates="replies")
-    product = relationship("Product", back_populates="reply")
+    product = relationship("Product", back_populates="replies")
+    store = relationship("Store", back_populates="replies")
 
 
 class Product(Base):
@@ -99,9 +118,11 @@ class Product(Base):
     product_price = Column(Numeric(precision=12, scale=2))
     category_id = Column(Integer, ForeignKey("categories.id"), index=True)
     product_availability = Column(String, default="available")
+    stock_quantity = Column(Integer, default=0)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
     review = relationship("Review", back_populates="product")
+    replies = relationship("Reply", back_populates="product")
     cart = relationship("Cart", back_populates="product")
     category = relationship("Category", back_populates="products")
     orderitems = relationship("OrderItem", back_populates="product")
@@ -155,7 +176,8 @@ class Review(Base):
     store_id = Column(Integer, ForeignKey("stores.id"), index=True)
     review_text = Column(String)
     ratings = Column(Integer)
-    reply_count: Mapped[int] = mapped_column(Integer, default=0)
+    product_reply_count: Mapped[int] = mapped_column(Integer, default=0)
+    store_reply_count: Mapped[int] = mapped_column(Integer, default=0)
     edited = Column(Boolean, default=False)
     date_of_review = Column(
         DateTime(timezone=True), server_default=func.now(), index=True

@@ -127,6 +127,7 @@ async def logins(login, response, db):
             "sub": user.username,
             "user_id": user.id,
             "nationality": user.nationality,
+            "role": user.role,
         },
         expire_delta=token_expires,
     )
@@ -136,6 +137,7 @@ async def logins(login, response, db):
             "sub": user.username,
             "user_id": user.id,
             "nationality": user.nationality,
+            "role": user.role,
         }
     )
     response.set_cookie(
@@ -197,6 +199,7 @@ async def refresh_token(request, response):
     name = payload.get("name")
     user_id = payload.get("user_id")
     nationality = payload.get("nationality")
+    role = payload.get("role")
     expire = timedelta(days=7)
     new_access = create_access_token(
         data={
@@ -204,6 +207,7 @@ async def refresh_token(request, response):
             "name": name,
             "user_id": user_id,
             "nationality": nationality,
+            "role": role,
         },
     )
     new_token = create_refresh_token(
@@ -212,6 +216,7 @@ async def refresh_token(request, response):
             "name": name,
             "user_id": user_id,
             "nationality": nationality,
+            "role": role,
         },
         expire_delta=expire,
     )
