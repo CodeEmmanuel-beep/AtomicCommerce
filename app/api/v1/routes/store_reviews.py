@@ -11,7 +11,7 @@ from app.api.v1.models import (
 )
 
 
-router = APIRouter(prefix="/reviews", tags=["Company_Reviews"])
+router = APIRouter(prefix="/reviews", tags=["Store_Reviews"])
 
 
 @router.post("/post_review")

@@ -53,12 +53,25 @@ class StandardResponse(BaseModel, Generic[T]):
     data: Optional[T]
 
 
-class ReplyResponse(BaseModel):
+class ProductReplyResponse(BaseModel):
     id: int
     role: List[str] = Field(default_factory=list)
     edited: bool = Field(default=False)
     profile: ProfileResponse
     reply_text: str
+    product_reply_count: int = Field(default=0)
+    time_of_post: Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StoreReplyResponse(BaseModel):
+    id: int
+    role: List[str] = Field(default_factory=list)
+    edited: bool = Field(default=False)
+    profile: ProfileResponse
+    reply_text: str
+    store_reply_count: int = Field(default=0)
     time_of_post: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
