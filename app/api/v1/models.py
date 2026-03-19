@@ -4,6 +4,7 @@ from datetime import datetime, date
 from app.utils.supabase_url import get_public_url
 from decimal import Decimal
 import orjson
+from enum import Enum
 
 T = TypeVar("T")
 
@@ -26,12 +27,49 @@ class ProfileResponse(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
+    profile_picture: str
     name: str
     username: str
     email: str
     nationality: str
     address: str
-    profile_picture: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BusinessType(str, Enum):
+    beauty_and_hair = "beauty and hair"
+    skincare = "skincare"
+    hair = "hair"
+    electronics = "electronics"
+    fashion = "fashion"
+    kitchen_wares = "kitchen wares"
+    groceries = "groceries"
+    fruits_and_vegetables = "fruits and vegetables"
+    footwear = "footwear"
+    bags = "bags"
+    luggages = "luggages"
+    games = "games"
+    computers = "computers"
+
+
+class StoreObj(BaseModel):
+    store_photo: str
+    store_name: str
+    owners: List[int]
+    business_type: BusinessType
+    store_email: str | None = None
+    store_contact: str | None = None
+
+
+class StoreResponse(BaseModel):
+    id: int
+    store_photo: str
+    store_name: str
+    business_type: BusinessType
+    average_ratings: float = Field(default_factory=float)
+    approved: bool = Field(default=False)
+    founded: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -53,25 +91,12 @@ class StandardResponse(BaseModel, Generic[T]):
     data: Optional[T]
 
 
-class ProductReplyResponse(BaseModel):
+class ReplyResponse(BaseModel):
     id: int
     role: List[str] = Field(default_factory=list)
     edited: bool = Field(default=False)
     profile: ProfileResponse
     reply_text: str
-    product_reply_count: int = Field(default=0)
-    time_of_post: Optional[datetime]
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class StoreReplyResponse(BaseModel):
-    id: int
-    role: List[str] = Field(default_factory=list)
-    edited: bool = Field(default=False)
-    profile: ProfileResponse
-    reply_text: str
-    store_reply_count: int = Field(default=0)
     time_of_post: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
@@ -163,12 +188,25 @@ class PaymentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ReviewResponse(BaseModel):
+class ProductReviewResponse(BaseModel):
     id: int
     profile: ProfileResponse
     edited: bool = Field(default=False)
     review_text: str
     ratings: int
+    product_reply_count: int = Field(default=0)
+    date_of_review: Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StoreReviewResponse(BaseModel):
+    id: int
+    profile: ProfileResponse
+    edited: bool = Field(default=False)
+    review_text: str
+    ratings: int
+    store_reply_count: int = Field(default=0)
     reply: List[ReplyResponse] = Field(default_factory=list)
     date_of_review: Optional[datetime]
 

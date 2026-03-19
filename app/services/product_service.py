@@ -78,7 +78,8 @@ async def create(
         else:
             prod.image = None
     except Exception as e:
-        logger.exception("could not save product primary image")
+        logger.exception("could not save product image")
+        await db.rollback()
         if uploaded_file:
             await cleaned_up(
                 get_supabase,

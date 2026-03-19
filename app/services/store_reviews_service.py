@@ -1,6 +1,6 @@
 from app.logs.logger import get_logger
 from app.api.v1.models import (
-    ReviewResponse,
+    StoreReviewResponse,
     PaginatedMetadata,
     StandardResponse,
     PaginatedResponse,
@@ -96,8 +96,8 @@ async def view_reviews(store_id, page, limit, db):
         return StandardResponse(
             status="success", message="no reviews available", data=None
         )
-    data = PaginatedMetadata[ReviewResponse](
-        items=[ReviewResponse.model_validate(rev) for rev in review],
+    data = PaginatedMetadata[StoreReviewResponse](
+        items=[StoreReviewResponse.model_validate(rev) for rev in review],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = StandardResponse(status="success", message="reviews", data=data)

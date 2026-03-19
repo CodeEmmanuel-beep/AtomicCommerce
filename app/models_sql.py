@@ -11,7 +11,9 @@ from sqlalchemy import (
     Numeric,
     UniqueConstraint,
     Table,
+    Enum as SQLEnum,
 )
+from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped
 from sqlalchemy import func
 from datetime import datetime
@@ -70,15 +72,33 @@ class Messaging(Base):
     user = relationship("User", back_populates="messages")
 
 
+class BusinessType(str, Enum):
+    beauty_and_hair = "beauty and hair"
+    skincare = "skincare"
+    hair = "hair"
+    electronics = "electronics"
+    fashion = "fashion"
+    kitchen_wares = "kitchen wares"
+    groceries = "groceries"
+    fruits_and_vegetables = "fruits and vegetables"
+    footwear = "footwear"
+    bags = "bags"
+    luggages = "luggages"
+    games = "games"
+    computers = "computers"
+
+
 class Store(Base):
     __tablename__ = "stores"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     store_photo: Mapped[str] = mapped_column(String)
     store_name: Mapped[str] = mapped_column(String, unique=True)
-    business_type: Mapped[str] = mapped_column(String)
+    business_type: Mapped[BusinessType] = mapped_column(SQLEnum(BusinessType))
     category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("categories.id"), index=True
     )
+    store_email: Mapped[str] = mapped_column(String, nullable=True)
+    store_contact: Mapped[str] = mapped_column(String, nullable=True)
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     founded: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -88,6 +108,16 @@ class Store(Base):
     category = relationship("Category", back_populates="stores")
     review = relationship("Review", back_populates="store")
     replies = relationship("Reply", back_populates="store")
+    addresses = relationship("StoreAddress", back_populates="store")
+
+
+class StoreAddress(Base):
+    __tablename__ = "store_addresses"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"))
+    address: Mapped[str] = mapped_column(String)
+
+    store = relationship("Store", back_populates="addresses")
 
 
 class Reply(Base):
