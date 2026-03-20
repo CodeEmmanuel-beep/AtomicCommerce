@@ -1,9 +1,10 @@
 from fastapi import HTTPException
-from app.models_sql import Store, Category, User, store_owners
+from app.models_sql import Store, Category, User, store_owners, store_staffs
 from app.api.v1.models import StandardResponse
 from app.logs.logger import get_logger
 from app.api.v1.models import StoreResponse
-from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
+from sqlalchemy import func, select, text, or_
 from sqlalchemy.exc import IntegrityError
 import asyncio
 import uuid
@@ -123,3 +124,163 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
             )
         logger.exception("error while creating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
+
+
+async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at add_owner_staff endpoint")
+        raise HTTPException(
+            status_code=401, detail="only registered users can access this endpoint"
+        )
+    (await db.execute(text("SELECT pg_advisory_xact_lock(:id)", {"id": store_id})))
+    store_check = (
+        await db.execute(
+            select(Store)
+            .options(selectinload(Store.user_owners), selectinload(Store.user_staffs))
+            .where(Store.id == store_id)
+        )
+    ).scalar_one_or_none()
+    check_stmt = select(
+        select(store_owners.c.users_id)
+        .where(
+            store_owners.c.users_id == user_id,
+            store_owners.c.stores_id == store_id,
+        )
+        .scalar_subquery()
+        .label("store_owner"),
+        select(store_owners.c.users_id)
+        .where(
+            store_owners.c.users_id == owner_id,
+            store_owners.c.stores_id == store_id,
+        )
+        .scalar_subquery()
+        .label("already_owner"),
+        select(store_owners.c.users_id)
+        .where(
+            store_owners.c.users_id == staff_id,
+            store_owners.c.stores_id == store_id,
+        )
+        .scalar_subquery()
+        .label("owner_already"),
+        select(store_staffs.c.users_id)
+        .where(
+            store_staffs.c.users_id == staff_id,
+            store_staffs.c.stores_id == store_id,
+        )
+        .scalar_subquery()
+        .label("already_staff"),
+        select(store_staffs.c.users_id)
+        .where(
+            store_staffs.c.users_id == owner_id,
+            store_staffs.c.stores_id == store_id,
+        )
+        .scalar_subquery()
+        .label("staff_already"),
+        select(func.count())
+        .where(store_owners.c.users_id == owner_id)
+        .scalar_subquery()
+        .label("owner_count"),
+        select(func.count())
+        .where(store_staffs.c.users_id == staff_id)
+        .scalar_subquery()
+        .label("staff_count"),
+    )
+    result = (await db.execute(check_stmt)).mappings().first()
+    if not store_check:
+        logger.error(
+            "user: %s, tried accessing a non existent store at the add_owners_staffs endpoint",
+            user_id,
+        )
+        raise HTTPException(status_code=404, detail="store not found")
+    if not result["store_owner"]:
+        logger.warning(
+            "user: %s, tried accessing a restricted endpoint 'add_owners_staffs endpoint'",
+            user_id,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    if owner_id and result["already_owner"]:
+        logger.warning(
+            "user: %s, tried making owner '%s', when they are already an owner in the same store",
+            user_id,
+            owner_id,
+        )
+        raise HTTPException(
+            status_code=400, detail="the user is already an owner of this store"
+        )
+    if staff_id and result["owner_already"]:
+        logger.warning(
+            "user: %s, tried making staff '%s', when they are already an owner in the same store",
+            user_id,
+            staff_id,
+        )
+        raise HTTPException(
+            status_code=400, detail="the user is already an owner of this store"
+        )
+    if staff_id and result["already_staff"]:
+        logger.warning(
+            "user: %s, tried making staff '%s', when they are already a staff in the same store",
+            user_id,
+            staff_id,
+        )
+        raise HTTPException(
+            status_code=400, detail="the user is already a staff of this store"
+        )
+    if owner_id and result["already_staff"]:
+        logger.warning(
+            "user: %s, tried making owner '%s', when they are already a staff in the same store",
+            user_id,
+            owner_id,
+        )
+        raise HTTPException(
+            status_code=400, detail="the user is already a staff of this store"
+        )
+    if owner_id and result["owner_count"] > 10:
+        logger.warning("owner: %s, already owns 10 stores")
+        raise HTTPException(status_code=400, detail="owner already owns 10 store")
+    if staff_id and result["staff_count"] > 2:
+        logger.warning("staff: %s, already works in 2 stores")
+        raise HTTPException(status_code=400, detail="staff already works in 2 store")
+    intended_id = owner_id if owner_id else staff_id
+    user_obj = await db.get(User, intended_id)
+    if not user_obj:
+        logger.error(
+            "user: %s, inputed an invalid user_id in add_owner_staff endpoint invalid_id: %s",
+            user_id,
+            intended_id,
+        )
+        raise HTTPException(status_code=404, detail="user not found")
+    if not owner_id and not staff_id:
+        logger.warning("user: %s, tried executing a null field", user_id)
+        raise HTTPException(
+            status_code=400, detail="you must add either a new staff or a new owner"
+        )
+    if owner_id and staff_id:
+        logger.warning(
+            "user: %s, tried adding a staff and owner at the same time", user_id
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="you must add either a new staff or a new owner not both at once",
+        )
+    if owner_id is not None:
+        store_check.user_owners.append(user_obj)
+    if staff_id is not None:
+        store_check.user_staffs.append(user_obj)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.error(
+            "database error occured at the add_owners_staffs_endpoint, user afffected: %s",
+            user_id,
+        )
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "rollback occured at the add_owners_staffs_endpoint, user afffected: %s",
+            user_id,
+        )
+        raise HTTPException(status_code=500, detail="internal server error")
+    return {"message": "personnel added"}

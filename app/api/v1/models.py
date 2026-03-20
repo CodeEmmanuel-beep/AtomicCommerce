@@ -54,7 +54,6 @@ class BusinessType(str, Enum):
 
 
 class StoreObj(BaseModel):
-    store_photo: str
     store_name: str
     owners: List[int]
     business_type: BusinessType
