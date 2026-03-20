@@ -1,0 +1,33 @@
+# 1. The Heavy Stuff (RAM/Storage Hogs)
+.venv/
+venv/
+env/
+bin/
+lib/
+share/
+
+# 2. Python "Trash" (Source of Silent Bugs)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 3. Environment & Secrets (Security Guard)
+.env
+.env.*
+!.env.example
+
+# 4. OS/IDE Bloat
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+
+# 5. Docker files (Don't copy the builder into itself)
+Dockerfile
+docker-compose.yml
+.dockerignore
