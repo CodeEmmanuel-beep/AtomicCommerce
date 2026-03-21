@@ -61,7 +61,7 @@ def run_migrations_online():
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        url=settings.SYYNC_DATABASE_URL,
+        url=settings.SYNC_DATABASE_URL,
     )
 
     with connectable.connect() as connection:

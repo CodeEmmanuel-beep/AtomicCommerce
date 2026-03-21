@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.staticfiles import StaticFiles
 import time
 from app.api.v1.routes import auth
 from app.exceptions import (
@@ -8,7 +7,7 @@ from app.exceptions import (
     validation_error_handler,
 )
 from pydantic import ValidationError
-from app.exceptions import get_logger
+from app.logs.logger import get_logger
 from contextlib import asynccontextmanager
 from supabase import create_async_client
 from app.database.config import settings
@@ -35,7 +34,7 @@ async def requests(request: Request, call_next):
         logger.error(
             f"{request.method}-{request.url.path}|error:{exc}|duration:{duration:.3f}s"
         )
-
+        raise
     duration = time.time() - start
     logger = get_logger("requests")
     logger.info(
@@ -51,10 +50,4 @@ def home():
     }
 
 
-app.mount("/images", StaticFiles(directory="images"), name="images")
-
-
 app.include_router(auth.router)
-app.add_exception_handler(HTTPException, http_exceptions_handler())
-app.add_exception_handler(Exception, exceptions_handler())
-app.add_exception_handler(ValidationError, validation_error_handler())
