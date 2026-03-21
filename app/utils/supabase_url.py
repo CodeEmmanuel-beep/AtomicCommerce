@@ -32,5 +32,5 @@ async def cleaned_up(get_supabase, file, context_1="str", context_2="str"):
             logger.error("%s %s", context_1, clean_up)
         else:
             logger.info("%s %s", context_2, file)
-    except Exception as e:
+    except Exception:
         logger.exception("CRITICAL STORAGE ERROR")

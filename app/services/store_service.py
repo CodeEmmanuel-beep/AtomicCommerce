@@ -4,7 +4,7 @@ from app.api.v1.models import StandardResponse
 from app.logs.logger import get_logger
 from app.api.v1.models import StoreResponse
 from sqlalchemy.orm import selectinload
-from sqlalchemy import func, select, text, or_
+from sqlalchemy import func, select, text, and_, exists
 from sqlalchemy.exc import IntegrityError
 import asyncio
 import uuid
@@ -129,11 +129,11 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
 async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("unauthorized attempt at add_owner_staff endpoint")
+        logger.warning("unauthorized attempt at add_owners_staffs endpoint")
         raise HTTPException(
             status_code=401, detail="only registered users can access this endpoint"
         )
-    (await db.execute(text("SELECT pg_advisory_xact_lock(:id)", {"id": store_id})))
+    (await db.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": store_id}))
     store_check = (
         await db.execute(
             select(Store)
@@ -215,7 +215,7 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
             staff_id,
         )
         raise HTTPException(
-            status_code=400, detail="the user is already an owner of this store"
+            status_code=400, detail="this user is already an owner of this store"
         )
     if staff_id and result["already_staff"]:
         logger.warning(
@@ -233,7 +233,7 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
             owner_id,
         )
         raise HTTPException(
-            status_code=400, detail="the user is already a staff of this store"
+            status_code=400, detail="this user is already a staff of this store"
         )
     if owner_id and result["owner_count"] > 10:
         logger.warning("owner: %s, already owns 10 stores")
@@ -245,7 +245,7 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
     user_obj = await db.get(User, intended_id)
     if not user_obj:
         logger.error(
-            "user: %s, inputed an invalid user_id in add_owner_staff endpoint invalid_id: %s",
+            "user: %s, inputed an invalid user_id in add_owners_staffs endpoint invalid_id: %s",
             user_id,
             intended_id,
         )
@@ -272,15 +272,82 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
     except IntegrityError:
         await db.rollback()
         logger.error(
-            "database error occured at the add_owners_staffs_endpoint, user afffected: %s",
+            "database error occured at the add_owners_staffs endpoint, user afffected: %s",
             user_id,
         )
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
         logger.exception(
-            "rollback occured at the add_owners_staffs_endpoint, user afffected: %s",
+            "rollback occured at the add_owners_staffs endpoint, user afffected: %s",
             user_id,
         )
         raise HTTPException(status_code=500, detail="internal server error")
     return {"message": "personnel added"}
+
+
+async def delete_staff(store_id, staff_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at delete_staff endpoint")
+        raise HTTPException(
+            status_code=401, detail="only registered users can access this endpoint"
+        )
+    (await db.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": store_id}))
+    check_stmt = (
+        select(Store).where(
+            and_(Store.id == store_id),
+            exists().where(
+                and_(
+                    store_owners.c.users_id == user_id,
+                    store_owners.c.stores_id == store_id,
+                )
+            ),
+            exists().where(
+                and_(
+                    store_staffs.c.users_id == staff_id,
+                    store_staffs.c.stores_id == store_id,
+                )
+            ),
+        )
+    ).cte("check_stmt")
+    result = await db.execute(
+        select(Store)
+        .options(selectinload(Store.user_staffs))
+        .where(Store.id == store_id)
+        .join(check_stmt, Store.id == check_stmt.c.id)
+    )
+    store_check = result.scalar_one_or_none()
+    if not store_check:
+        logger.error(
+            "user: %s, hit a permission errror at the delete_staff endpoint",
+            user_id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="permission error, verify the store and staff before proceeding",
+        )
+    staff_obj = next((s for s in store_check.user_staffs if s.id == staff_id), None)
+    if not staff_obj:
+        logger.error(
+            "an alien user id bypassed cte check,s alien_user_id: %s", staff_id
+        )
+        raise HTTPException(status_code=404, detail="Staff member not found in store")
+    store_check.user_staffs.remove(staff_obj)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.error(
+            "database error occured at the delete_staff endpoint, user afffected: %s",
+            user_id,
+        )
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "rollback occured at the delete_staff endpoint, user afffected: %s",
+            user_id,
+        )
+        raise HTTPException(status_code=500, detail="internal server error")
+    return {"message": "personnel deleted"}
