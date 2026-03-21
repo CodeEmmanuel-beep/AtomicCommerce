@@ -1,11 +1,7 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from strawberry.fastapi import GraphQLRouter
-import strawberry
 import time
 from app.api.v1.routes import auth
-from strawberry.types import Info
-from app.api.v1.routes.auth import graph_refresh
 from app.exceptions import (
     exceptions_handler,
     http_exceptions_handler,
@@ -58,22 +54,7 @@ def home():
 app.mount("/images", StaticFiles(directory="images"), name="images")
 
 
-@strawberry.type
-class Querry:
-    @strawberry.field
-    def hello(self, name: str = "World") -> str:
-        return f"hello dear {name}!"
-
-    def me(self, info: Info) -> str:
-        user = graph_refresh(info)
-        return f"HELLO {user['name']}"
-
-
-schema = strawberry.Schema(query=Querry)
-graph = GraphQLRouter(schema, graphiql=True)
-
-app.include_router(graph, prefix="/check")
 app.include_router(auth.router)
-app.include_router(HTTPException, http_exceptions_handler)
-app.include_router(Exception, exceptions_handler)
-app.include_router(ValidationError, validation_error_handler)
+app.add_exception_handler(HTTPException, http_exceptions_handler())
+app.add_exception_handler(Exception, exceptions_handler())
+app.add_exception_handler(ValidationError, validation_error_handler())
