@@ -1,12 +1,23 @@
 from fastapi import FastAPI, HTTPException, Request
 import time
-from app.api.v1.routes import auth
-from app.exceptions import (
-    exceptions_handler,
-    http_exceptions_handler,
-    validation_error_handler,
+from app.api.v1.routes import (
+    auth,
+    product,
+    product_reply,
+    product_reviews,
+    store_reply,
+    store_reviews,
+    cart,
+    category,
+    order,
+    membership,
 )
-from pydantic import ValidationError
+from app.exceptions import (
+    make_exception_handler,
+    make_http_exception_handler,
+    make_validation_error_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from app.logs.logger import get_logger
 from contextlib import asynccontextmanager
 from supabase import create_async_client
@@ -51,3 +62,15 @@ def home():
 
 
 app.include_router(auth.router)
+app.include_router(product.router)
+app.include_router(category.router)
+app.include_router(cart.router)
+app.include_router(order.router)
+app.include_router(product_reviews.router)
+app.include_router(product_reply.router)
+app.include_router(membership.router)
+app.include_router(store_reviews.router)
+app.include_router(store_reply.router)
+app.add_exception_handler(RequestValidationError, make_validation_error_handler())
+app.add_exception_handler(HTTPException, make_http_exception_handler())
+app.add_exception_handler(Exception, make_exception_handler())
