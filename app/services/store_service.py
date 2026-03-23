@@ -2,7 +2,7 @@ from fastapi import HTTPException
 from app.models_sql import Store, Category, User, store_owners, store_staffs
 from app.api.v1.models import StandardResponse
 from app.logs.logger import get_logger
-from app.api.v1.models import StoreResponse
+from app.api.v1.models import StoreResponse, PaginatedMetadata, PaginatedResponse
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func, select, text, and_, exists
 from sqlalchemy.exc import IntegrityError
@@ -11,6 +11,7 @@ import uuid
 from app.utils.supabase_url import cleaned_up
 from werkzeug.utils import secure_filename
 from app.database.config import settings
+from app.utils.redis import cache, cache_version, cached, store_invalidation
 
 
 logger = get_logger("store")
@@ -57,16 +58,19 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
         raise HTTPException(
             status_code=400, detail="you can not create a store you do not own"
         )
-    category_gather, count_gather, user_gather = await asyncio.gather(
-        db.execute(select(Category).where(Category.name == storeobj.business_type)),
-        db.execute(
-            select(store_owners.c.users_id, func.count(store_owners.c.stores_id))
-            .where(store_owners.c.users_id.in_(storeobj.owners))
-            .group_by(store_owners.c.users_id)
-        ),
-        db.execute(select(User).where(User.id.in_(storeobj.owners))),
+    category_stmt = await db.execute(
+        select(Category).where(Category.name == storeobj.business_type)
     )
-    user_data = user_gather.scalars().all()
+    count_stmt = await db.execute(
+        select(store_owners.c.users_id, func.count(store_owners.c.stores_id))
+        .where(store_owners.c.users_id.in_(storeobj.owners))
+        .group_by(store_owners.c.users_id)
+    )
+    user_data = (
+        (await db.execute(select(User).where(User.id.in_(storeobj.owners))))
+        .scalars()
+        .all()
+    )
     if len(user_data) != len(storeobj.owners):
         logger.warning(
             "user: %s, tried making a non-existent user a shop owner", user_id
@@ -74,14 +78,14 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
         raise HTTPException(
             status_code=400, detail="all owners must be registered users"
         )
-    count = dict(count_gather.all())
+    count = dict(count_stmt.all())
     for owner_id, store_count in count.items():
         if store_count > 10:
             logger.warning("a user tried owning more than 10 stores user: %s", owner_id)
             raise HTTPException(
                 status_code=400, detail="a user can not own more than 10 stores"
             )
-    category = category_gather.scalar_one_or_none()
+    category = category_stmt.scalar_one_or_none()
     if not category:
         logger.error("Category '%s' not found in database", storeobj.business_type)
         raise HTTPException(
@@ -99,6 +103,7 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
     try:
         db.add(new_store)
         await db.commit()
+        await store_invalidation()
     except HTTPException:
         await db.rollback()
         raise
@@ -124,6 +129,58 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
             )
         logger.exception("error while creating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
+
+
+async def view_stores_by_business_type(seed, business_type, page, limit, db):
+    offset = (page - 1) * limit
+    version = await cache_version("store_key")
+    cache_key = f"store_view:v{version}:{seed}:{business_type}:{page}:{limit}"
+    store_cache = await cache(cache_key)
+    if store_cache:
+        logger.info(f"cache hit for {business_type} at view store endpoint")
+        return StandardResponse(**store_cache)
+    total = None
+    store_type = None
+    async with db.connection() as conn:
+        (await conn.execute(text("SELECT setseed(:s)"), {"s": seed}))
+        stmt = (
+            select(Store)
+            .where(Store.business_type == business_type, Store.approved)
+            .order_by(func.random())
+            .offset(offset)
+            .limit(limit)
+        )
+        store_type = (await conn.execute(stmt)).scalars().all()
+        total = (
+            await conn.execute(
+                select(func.count(Store.id)).where(
+                    Store.business_type == business_type, Store.approved
+                )
+            )
+        ).scalar() or 0
+    logger.info(
+        "total stores found with business type '%s' is '%s'", business_type, total
+    )
+    if not store_type:
+        logger.info(
+            "search for store with business type: %s, returned an empty list",
+            business_type,
+        )
+        return StandardResponse(
+            status="success",
+            message="no store available with this business type",
+            data=None,
+        )
+    data = PaginatedMetadata[StoreResponse](
+        items=[StoreResponse.model_validate(s_t) for s_t in store_type],
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+    )
+    response = StandardResponse(
+        status="success", message=f"available {business_type} stores", data=data
+    )
+    await cached(cache_key, response, ttl=36000)
+    logger.info("search for store with business type: %s, returned data", business_type)
+    return response
 
 
 async def add_owner_staff(store_id, owner_id, staff_id, db, payload):

@@ -66,7 +66,7 @@ async def reply(reply, db, payload):
 
 async def view_replies(store_id, review_id, page, limit, db):
     offset = (page - 1) * limit
-    version = await cache_version("product_reply_key")
+    version = await cache_version("store_reply_key")
     cache_key = f"product_reply:v{version}:{store_id}:{review_id}:{page}:{limit}"
     reply_cache = await cache(cache_key)
     if reply_cache:

@@ -23,6 +23,19 @@ async def cache_version(key: str):
         return 1
 
 
+async def cache(key: str):
+    value = await redis_client.get(key)
+    if value:
+        return orjson.loads(value)
+    return None
+
+
+async def cached(key: str, data, ttl=60):
+    data = data.model_dump(exclude_none=True, exclude_defaults=True)
+    payload = jsonable_encoder(data)
+    await redis_client.set(key, orjson.dumps(payload), ex=ttl)
+
+
 async def product_invalidation():
     value = await redis_client.incr("product_key")
     await redis_client.expire("product_key", 18000)
@@ -42,28 +55,21 @@ async def product_reply_invalidation():
 
 
 async def store_review_invalidation():
-    value = await redis_client.incr("company_review_key")
-    await redis_client.expire("company_review_key", 18000)
+    value = await redis_client.incr("store_review_key")
+    await redis_client.expire("store_review_key", 18000)
     return value
 
 
 async def store_reply_invalidation():
-    value = await redis_client.incr("company_reply_key")
-    await redis_client.expire("company_reply_key", 18000)
+    value = await redis_client.incr("store_reply_key")
+    await redis_client.expire("store_reply_key", 18000)
     return value
 
 
-async def cache(key: str):
-    value = await redis_client.get(key)
-    if value:
-        return orjson.loads(value)
-    return None
-
-
-async def cached(key: str, data, ttl=60):
-    data = data.model_dump(exclude_none=True, exclude_defaults=True)
-    payload = jsonable_encoder(data)
-    await redis_client.set(key, orjson.dumps(payload), ex=ttl)
+async def store_invalidation():
+    value = await redis_client.incr("store_key")
+    await redis_client.expire("company_review_key", 18000)
+    return value
 
 
 async def order_invalidation(user_id: int):

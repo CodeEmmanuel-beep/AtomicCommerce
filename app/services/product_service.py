@@ -273,16 +273,21 @@ async def list_products(
         raise HTTPException(
             status_code=400, detail="page number and limit must be greater than 0"
         )
-    (await db.execute(text("SELECT setseed(:s)"), {"s": seed}))
     version = await cache_version("product_key")
     cache_key = f"product:{version}:{seed}:{page}:{limit}"
     product_cache = await cache(cache_key)
     if product_cache and isinstance(product_cache, dict):
         logger.info("Cache hit for products")
         return StandardResponse(**product_cache)
-    stmt = select(Product).where(~Product.is_deleted).order_by(func.random())
-    total = (await db.execute(select(func.count(Product.id)))).scalar() or 0
-    products = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
+    total = None
+    products = None
+    async with db.connection() as conn:
+        (await conn.execute(text("SELECT setseed(:s)"), {"s": seed}))
+        stmt = select(Product).where(~Product.is_deleted).order_by(func.random())
+        products = (
+            (await conn.execute(stmt.offset(offset).limit(limit))).scalars().all()
+        )
+        total = (await conn.execute(select(func.count(Product.id)))).scalar() or 0
     if not products:
         logger.warning("all products queried, but none found")
         return StandardResponse(

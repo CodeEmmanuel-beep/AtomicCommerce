@@ -67,7 +67,7 @@ async def store_review(review, db, payload):
 
 async def view_reviews(store_id, page, limit, db):
     offset = (page - 1) * limit
-    version = await cache_version("product_review_key")
+    version = await cache_version("store_review_key")
     cache_key = f"store_review:v{version}:{store_id}:{page}:{limit}"
     review_cache = await cache(cache_key)
     if review_cache:

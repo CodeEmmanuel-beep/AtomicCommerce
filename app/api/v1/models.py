@@ -70,6 +70,10 @@ class StoreResponse(BaseModel):
     approved: bool = Field(default=False)
     founded: datetime
 
+    @computed_field
+    def photo_upload(self) -> str | None:
+        return get_public_url(self.store_photo)
+
     model_config = ConfigDict(from_attributes=True)
 
 
