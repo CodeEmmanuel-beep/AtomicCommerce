@@ -61,7 +61,7 @@ async def cache(key: str):
 
 
 async def cached(key: str, data, ttl=60):
-    data = data.model_dump(exclude_None=True, exclude_defaults=True)
+    data = data.model_dump(exclude_none=True, exclude_defaults=True)
     payload = jsonable_encoder(data)
     await redis_client.set(key, orjson.dumps(payload), ex=ttl)
 

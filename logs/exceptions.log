@@ -1,0 +1,7 @@
+2026-03-23 09:06:08,858-WARNING-UNHANDLED ERROR: PATH-/store_replies/view_store_replies/1/1| ERROR BaseModel.model_dump() got an unexpected keyword argument 'exclude_None'
+2026-03-23 09:14:46,108-WARNING-UNHANDLED ERROR: PATH-/store_replies/view_store_replies/1/1| ERROR 2 validation errors:
+  {'type': 'missing', 'loc': ('response', 'data', 'items'), 'msg': 'Field required', 'input': StandardResponse(status='success', message='no replies available', data=None)}
+  {'type': 'missing', 'loc': ('response', 'data', 'pagination'), 'msg': 'Field required', 'input': StandardResponse(status='success', message='no replies available', data=None)}
+
+  File "/app/app/api/v1/routes/store_reply.py", line 25, in store_reply_list
+    GET /store_replies/view_store_replies/{store_id}/{review_id}
