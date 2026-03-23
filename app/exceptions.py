@@ -2,15 +2,19 @@ from fastapi import Request, status, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 import logging
+import os
 
 
 def get_logger(name: str):
+    logs = "logs"
+    os.makedirs(logs, exist_ok=True)
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
-    handler = logging.FileHandler(f"{name}.log")
+    handler = logging.FileHandler(f"{logs}/{name}.log")
     formatter = logging.Formatter("%(asctime)s-%(levelname)s-%(message)s")
     handler.setFormatter(formatter)
     if not logger.handlers:
+        logger.propagate = False
         logger.addHandler(handler)
     return logger
 

@@ -110,4 +110,4 @@ async def delete_cart(
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await cart_service.delete(cart_id=cart_id, db=db, payload=payload)
+    return await cart_service.delete_all(cart_id=cart_id, db=db, payload=payload)

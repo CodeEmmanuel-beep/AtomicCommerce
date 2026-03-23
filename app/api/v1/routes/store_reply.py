@@ -10,11 +10,11 @@ from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
 from app.services import store_reply_service
 
-router = APIRouter(prefix="/replies", tags=["Store_Reply"])
+router = APIRouter(prefix="/store_replies", tags=["Store_Reply"])
 
 
-@router.post("/create_reply")
-async def post_reply(
+@router.post("/create_store_reply")
+async def post_store_reply(
     reply: Reply,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
@@ -23,12 +23,12 @@ async def post_reply(
 
 
 @router.get(
-    "/view_replies/{store_id}/{review_id}",
+    "/view_store_replies/{store_id}/{review_id}",
     response_model=StandardResponse[PaginatedMetadata[ReplyResponse]],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def reply_list(
+async def store_reply_list(
     store_id: int,
     review_id: int,
     page: int = Query(1, ge=1),
@@ -44,8 +44,8 @@ async def reply_list(
     )
 
 
-@router.put("/edit_reply")
-async def update_reply(
+@router.put("/edit_store_reply")
+async def update_store_reply(
     reply: Reply,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
@@ -53,8 +53,8 @@ async def update_reply(
     return await store_reply_service.update(reply=reply, db=db, payload=payload)
 
 
-@router.delete("/delete_reply")
-async def delete_one(
+@router.delete("/store_reply_delete")
+async def delete_store_reply(
     reply: Reply,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),

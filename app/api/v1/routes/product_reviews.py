@@ -4,18 +4,18 @@ from app.database.get import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services import product_reviews_service
 from app.api.v1.models import (
-    ReviewResponse,
+    ProductReviewResponse,
     Review,
     StandardResponse,
     PaginatedMetadata,
 )
 
 
-router = APIRouter(prefix="/reviews", tags=["Product_Reviews"])
+router = APIRouter(prefix="/product_reviews", tags=["Product_Reviews"])
 
 
-@router.post("/post_review")
-async def create_review(
+@router.post("/post_product_review")
+async def create_product_review(
     review: Review,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
@@ -26,12 +26,12 @@ async def create_review(
 
 
 @router.get(
-    "/view_reviews/{product_id}",
-    response_model=StandardResponse[PaginatedMetadata[ReviewResponse]],
+    "/view_product_reviews/{product_id}",
+    response_model=StandardResponse[PaginatedMetadata[ProductReviewResponse]],
     response_model_exclude_defaults=True,
     response_model_exclude_none=True,
 )
-async def review_list(
+async def product_review_list(
     product_id: int,
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
@@ -42,8 +42,8 @@ async def review_list(
     )
 
 
-@router.put("/edit_reviews")
-async def reviews_update(
+@router.put("/edit_product_review")
+async def product_review_update(
     review: Review,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
@@ -51,8 +51,8 @@ async def reviews_update(
     return await product_reviews_service.update(review=review, db=db, payload=payload)
 
 
-@router.delete("/delete_reviews/{product_id}")
-async def delete_one(
+@router.delete("/product_review_delete/{product_id}")
+async def delete_product_review(
     product_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),

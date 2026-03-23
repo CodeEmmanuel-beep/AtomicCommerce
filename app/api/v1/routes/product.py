@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, Query
-import os
 from app.database.get import get_db
 from app.auth.verify_jwt import verify_token
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +13,6 @@ from app.utils.supabase_url import _supabase
 
 
 router = APIRouter(prefix="/product", tags=["Products"])
-os.makedirs("images", exist_ok=True)
 
 
 @router.post("add_product")

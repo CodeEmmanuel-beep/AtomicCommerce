@@ -50,6 +50,7 @@ class User(Base):
     reviews = relationship("Review", back_populates="user")
     replies = relationship("Reply", back_populates="user")
     orders = relationship("Order", back_populates="user")
+    messages = relationship("Messaging", back_populates="user")
     carts = relationship("Cart", back_populates="user")
     owners = relationship("Store", secondary=store_owners, back_populates="user_owners")
     staffs = relationship("Store", secondary=store_staffs, back_populates="user_staffs")
@@ -153,9 +154,8 @@ class Product(Base):
 
     review = relationship("Review", back_populates="product")
     replies = relationship("Reply", back_populates="product")
-    cart = relationship("Cart", back_populates="product")
+    cart_items = relationship("CartItem", back_populates="product")
     category = relationship("Category", back_populates="products")
-    orderitems = relationship("OrderItem", back_populates="product")
 
 
 class Payment(Base):
@@ -222,7 +222,9 @@ class Review(Base):
     user = relationship("User", back_populates="reviews")
     product = relationship("Product", back_populates="review")
     store = relationship("Store", back_populates="review")
-    reply = relationship("Reply", back_populates="review", cascade="all, delete-orphan")
+    replies = relationship(
+        "Reply", back_populates="review", cascade="all, delete-orphan"
+    )
 
 
 class Category(Base):
@@ -241,7 +243,7 @@ class CartItem(Base):
     quantity = Column(Float, default=1)
     product_id = Column(Integer, ForeignKey("products.id"), index=True)
 
-    product = relationship("Product", back_populates="cart")
+    product = relationship("Product", back_populates="cart_items")
     cart = relationship("Cart", back_populates="cartitems")
     orderitems = relationship(
         "OrderItem", back_populates="cartitems", cascade="all, delete-orphan"

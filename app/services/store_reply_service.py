@@ -84,17 +84,15 @@ async def view_replies(store_id, review_id, page, limit, db):
             Reply.time_of_post.desc(),
         )
     )
-    total_gather, reply_gather = await asyncio.gather(
-        db.execute(
+    total = (
+        await db.execute(
             select(func.count(Reply.id)).where(
                 Reply.store_id == store_id, Reply.review_id == review_id
             )
-        ),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    total = total_gather.scalar() or 0
+        )
+    ).scalar() or 0
     logger.info("total reply found for review_id '%s' is %s", review_id, total)
-    reply = reply_gather.scalars().all()
+    reply = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not reply:
         logger.info("review_id '%s' has no replies", review_id)
         return StandardResponse(
@@ -104,8 +102,9 @@ async def view_replies(store_id, review_id, page, limit, db):
         items=[ReplyResponse.model_validate(rep) for rep in reply],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
-    response = StandardResponse(status="success", message="replies", data=data)
-    await cached(cache_key, response, ttl=36000)
+    response = {"data": data}
+    full_response = StandardResponse(status="success", message="replies", data=response)
+    await cached(cache_key, full_response, ttl=36000)
     logger.info("search for replies successfully returned data")
     return response
 

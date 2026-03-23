@@ -27,6 +27,9 @@ services:
  e_marketplace:
   build: .
   container_name: marketplace_api
+  volumes:
+   - .:/app
+   - ./logs:/app/logs
   ports:
    - 8000:8000
   env_file:
