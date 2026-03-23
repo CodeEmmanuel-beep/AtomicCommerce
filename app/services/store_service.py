@@ -1,20 +1,27 @@
 from fastapi import HTTPException
 from app.models_sql import Store, Category, User, store_owners, store_staffs
-from app.api.v1.models import StandardResponse
 from app.logs.logger import get_logger
-from app.api.v1.models import StoreResponse, PaginatedMetadata, PaginatedResponse
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func, select, text, and_, exists
 from sqlalchemy.exc import IntegrityError
 import asyncio
 import uuid
+from app.utils.helper import view_store_helper
 from app.utils.supabase_url import cleaned_up
 from werkzeug.utils import secure_filename
 from app.database.config import settings
-from app.utils.redis import cache, cache_version, cached, store_invalidation
-
+from app.utils.redis import store_invalidation
+import re
 
 logger = get_logger("store")
+
+
+def generate_slug(name: str) -> str:
+    name = name.lower().strip()
+    name = re.sub(r"[^\w\s-]", "", name)
+    name = re.sub(r"[\s_-]+", "-", name)
+    name = re.sub(r"^-+|-+$", "", name)
+    return name
 
 
 async def store_creation(storeobj, store_photo, db, payload, get_supabase):
@@ -24,13 +31,16 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
         raise HTTPException(
             status_code=401, detail="only registered users can own a store"
         )
-    stmt = select(Store).where(Store.store_name == storeobj.store_name)
-    store = (await db.execute(stmt)).scalar_one_or_none()
-    if store:
-        logger.error(
-            "user: %s, tried duplicating store name '%s'", user_id, storeobj.store_name
+    if not re.fullmatch(r"[A-Za-z\s]+", storeobj.store_name):
+        raise HTTPException(status_code=400, detail="store names should be in letters")
+    store_slug = generate_slug(storeobj.store_name)
+    stmt = select(Store).where(Store.slug == store_slug)
+    existing_slug = (await db.execute(stmt)).scalar_one_or_none()
+    if existing_slug:
+        logger.warning("Slug collision for name: %s", storeobj.store_name)
+        raise HTTPException(
+            status_code=400, detail="This store name is too similar to an existing one"
         )
-        raise HTTPException(status_code=400, detail="store name already taken")
     filename = None
     try:
         filename = f"{uuid.uuid4()}_{secure_filename(store_photo.filename)}"
@@ -94,6 +104,7 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
     new_store = Store(
         store_photo=store_photo,
         store_name=storeobj.store_name,
+        slug=store_slug,
         business_type=storeobj.business_type,
         category_id=category.id,
         store_email=storeobj.store_email,
@@ -132,55 +143,19 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
 
 
 async def view_stores_by_business_type(seed, business_type, page, limit, db):
-    offset = (page - 1) * limit
-    version = await cache_version("store_key")
-    cache_key = f"store_view:v{version}:{seed}:{business_type}:{page}:{limit}"
-    store_cache = await cache(cache_key)
-    if store_cache:
-        logger.info(f"cache hit for {business_type} at view store endpoint")
-        return StandardResponse(**store_cache)
-    total = None
-    store_type = None
-    async with db.connection() as conn:
-        (await conn.execute(text("SELECT setseed(:s)"), {"s": seed}))
-        stmt = (
-            select(Store)
-            .where(Store.business_type == business_type, Store.approved)
-            .order_by(func.random())
-            .offset(offset)
-            .limit(limit)
-        )
-        store_type = (await conn.execute(stmt)).scalars().all()
-        total = (
-            await conn.execute(
-                select(func.count(Store.id)).where(
-                    Store.business_type == business_type, Store.approved
-                )
-            )
-        ).scalar() or 0
-    logger.info(
-        "total stores found with business type '%s' is '%s'", business_type, total
+    return await view_store_helper(
+        seed, business_type, Store.business_type, page, limit, db
     )
-    if not store_type:
-        logger.info(
-            "search for store with business type: %s, returned an empty list",
-            business_type,
-        )
-        return StandardResponse(
-            status="success",
-            message="no store available with this business type",
-            data=None,
-        )
-    data = PaginatedMetadata[StoreResponse](
-        items=[StoreResponse.model_validate(s_t) for s_t in store_type],
-        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+
+
+async def view_stores_by_product_name(seed, product_name, page, limit, db):
+    return await view_store_helper(
+        seed, product_name, Store.category.product_name, page, limit, db
     )
-    response = StandardResponse(
-        status="success", message=f"available {business_type} stores", data=data
-    )
-    await cached(cache_key, response, ttl=36000)
-    logger.info("search for store with business type: %s, returned data", business_type)
-    return response
+
+
+async def view_stores_by_store_name(seed, store_name, page, limit, db):
+    return await view_store_helper(seed, store_name, Store.store_name, page, limit, db)
 
 
 async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
