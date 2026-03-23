@@ -16,7 +16,6 @@ from app.utils.redis import (
     cache_version,
     cached,
 )
-import asyncio
 
 logger = get_logger("product_reply")
 
@@ -76,17 +75,15 @@ async def view_replies(product_id, review_id, page, limit, db):
             Reply.time_of_post.desc(),
         )
     )
-    total_gather, reply_gather = await asyncio.gather(
-        db.execute(
+    total = (
+        await db.execute(
             select(func.count(Reply.id)).where(
                 Reply.product_id == product_id, Reply.review_id == review_id
             )
-        ),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    total = total_gather.scalar() or 0
+        )
+    ).scalar() or 0
     logger.info("total reply found for review_id '%s' is %s", review_id, total)
-    reply = reply_gather.scalars().all()
+    reply = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not reply:
         logger.info("review_id '%s' has no replies", review_id)
         return StandardResponse(

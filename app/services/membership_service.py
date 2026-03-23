@@ -165,21 +165,19 @@ async def view_active_members(page, limit, db, payload):
         )
         .where(Membership.is_active, ~Membership.is_deleted)
     )
-    total_gather, members_gather = await asyncio.gather(
-        db.execute(
+    total = (
+        await db.execute(
             select(func.count())
             .select_from(Membership)
             .where(Membership.is_active, ~Membership.is_deleted)
-        ),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    members = members_gather.scalars().all()
+        )
+    ).scalar() or 0
+    members = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not members:
         logger.info("active members search returned an empty list")
         return StandardResponse(
             status="success", message="no active member found", data=None
         )
-    total = total_gather.scalar() or 0
     logger.info("total number of active members %s", total)
     data = PaginatedMetadata[MembershipRes](
         items=[MembershipRes.model_validate(mem) for mem in members],
@@ -217,21 +215,19 @@ async def view_inactive_members(page, limit, db, payload):
         )
         .where(~Membership.is_active, ~Membership.is_deleted)
     )
-    total_gather, members_gather = await asyncio.gather(
-        db.execute(
+    total = (
+        await db.execute(
             select(func.count())
             .select_from(Membership)
             .where(~Membership.is_active, ~Membership.is_deleted)
-        ),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    members = members_gather.scalars().all()
+        )
+    ).scalar() or 0
+    members = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not members:
         logger.info("inactive members search returned an empty list")
         return StandardResponse(
             status="success", message="no inactive member found", data=None
         )
-    total = total_gather.scalar() or 0
     logger.info("total number of inactive members %s", total)
     data = PaginatedMetadata[MembershipRes](
         items=[MembershipRes.model_validate(mem) for mem in members],
@@ -269,21 +265,19 @@ async def view_paused_members(page, limit, db, payload):
         )
         .where(Membership.is_pause, ~Membership.is_deleted)
     )
-    total_gather, members_gather = await asyncio.gather(
-        db.execute(
+    total = (
+        await db.execute(
             select(func.count())
             .select_from(Membership)
             .where(Membership.is_pause, ~Membership.is_deleted)
-        ),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    members = members_gather.scalars().all()
+        )
+    ).scalar() or 0
+    members = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not members:
         logger.info("paused members search returned an empty list")
         return StandardResponse(
             status="success", message="no paused member found", data=None
         )
-    total = total_gather.scalar() or 0
     logger.info("total number of paused members %s", total)
     data = PaginatedMetadata[MembershipRes](
         items=[MembershipRes.model_validate(mem) for mem in members],
@@ -321,19 +315,17 @@ async def view_deleted_members(page, limit, db, payload):
         )
         .where(Membership.is_deleted)
     )
-    total_gather, members_gather = await asyncio.gather(
-        db.execute(
+    total = (
+        await db.execute(
             select(func.count()).select_from(Membership).where(Membership.is_deleted)
-        ),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    members = members_gather.scalars().all()
+        )
+    ).scalar() or 0
+    members = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not members:
         logger.info("deleted members search returned an empty list")
         return StandardResponse(
             status="success", message="no deleted member found", data=None
         )
-    total = total_gather.scalar() or 0
     logger.info("total number of deleted members %s", total)
     data = PaginatedMetadata[MembershipRes](
         items=[MembershipRes.model_validate(mem) for mem in members],

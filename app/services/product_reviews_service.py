@@ -10,7 +10,6 @@ from fastapi import HTTPException, status, Response
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
-import asyncio
 from app.utils.redis import cache, cache_version, cached, product_review_invalidation
 
 logger = get_logger("product_reviews")
@@ -81,23 +80,21 @@ async def view_reviews(product_id, page, limit, db):
         .where(Review.product_id == product_id, ~Product.is_deleted)
         .order_by(Review.date_of_review.desc())
     )
-    total_review_gather, review_gather = await asyncio.gather(
-        db.execute(
+    total = (
+        await db.execute(
             select(func.count(Review.id)).where(Review.product_id == product_id)
-        ),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    total_review = total_review_gather.scalar() or 0
-    review = review_gather.scalars().all()
+        )
+    ).scalar() or 0
+    review = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not review:
         logger.info("search for review returned an empty list")
         return StandardResponse(
             status="success", message="no reviews available", data=None
         )
-    logger.info("total reviews for product %s, is: %s", product_id, total_review)
+    logger.info("total reviews for product %s, is: %s", product_id, total)
     data = PaginatedMetadata[ProductReviewResponse](
         items=[ProductReviewResponse.model_validate(rev) for rev in review],
-        pagination=PaginatedResponse(page=page, limit=limit, total=total_review),
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = StandardResponse(status="success", message="reviews", data=data)
     await cached(cache_key, response, ttl=36000)

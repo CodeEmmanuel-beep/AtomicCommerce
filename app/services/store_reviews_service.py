@@ -11,7 +11,6 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.utils.redis import store_review_invalidation, cache, cache_version, cached
-import asyncio
 
 logger = get_logger("store_reviews")
 
@@ -84,13 +83,13 @@ async def view_reviews(store_id, page, limit, db):
         .where(Review.store_id == store_id, ~Store.is_deleted)
         .order_by(Review.date_of_review.desc())
     )
-    total_gather, review_gather = await asyncio.gather(
-        db.execute(select(func.count(Review.id)).where(Review.store_id == store_id)),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    total = total_gather.scalar() or 0
+    total = (
+        await db.execute(
+            select(func.count(Review.id)).where(Review.store_id == store_id)
+        )
+    ).scalar() or 0
     logger.info("total reviews for store %s, is: %s", store_id, total)
-    review = review_gather.scalars().all()
+    review = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not review:
         logger.info("search for review returned an empty list")
         return StandardResponse(

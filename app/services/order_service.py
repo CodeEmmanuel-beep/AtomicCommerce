@@ -145,17 +145,15 @@ async def view_orders(page, limit, db, payload):
         )
         .where(Order.user_id == user_id, ~Order.order_delete)
     )
-    total_gather, order_gather = await asyncio.gather(
-        db.execute(
+    total = (
+        await db.execute(
             select(func.count())
             .select_from(Order)
             .where(Order.user_id == user_id, ~Order.order_delete)
-        ),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    total = total_gather.scalar() or 0
+        )
+    ).scalar() or 0
     logger.info(f"Total orders found: {total} for user_id: {user_id}")
-    order = order_gather.scalars().all()
+    order = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not order:
         return StandardResponse(status="success", message="no orders found", data=None)
     logger.info(f"Preparing paginated response for orders of user_id: {user_id}")

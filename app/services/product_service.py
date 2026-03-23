@@ -281,12 +281,8 @@ async def list_products(
         logger.info("Cache hit for products")
         return StandardResponse(**product_cache)
     stmt = select(Product).where(~Product.is_deleted).order_by(func.random())
-    total_gather, product_gather = await asyncio.gather(
-        db.execute(select(func.count(Product.id))),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    total = total_gather.scalar() or 0
-    products = product_gather.scalars().all()
+    total = (await db.execute(select(func.count(Product.id)))).scalar() or 0
+    products = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not products:
         logger.warning("all products queried, but none found")
         return StandardResponse(
@@ -333,16 +329,14 @@ async def search_product(product_name, category, page, limit, db):
     if category is not None:
         logger.info("filltering products by category %s", category)
         stmt = stmt.where(Category.name.ilike(f"%{category}%"))
-    result_gather, total_gather = await asyncio.gather(
-        db.execute(stmt.offset(offset).limit(limit)),
-        db.execute(select(func.count()).select_from(stmt.subquery())),
-    )
-    result = result_gather.scalars().all()
+    result = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not result:
         return StandardResponse(
             status="success", message="your search has returned 0 result", data=None
         )
-    total = total_gather.scalar() or 0
+    total = (
+        await db.execute(select(func.count()).select_from(stmt.subquery()))
+    ).scalar() or 0
     logger.info("total products querried %s", total)
     data = PaginatedMetadata[ProductResponse](
         items=[ProductResponse.model_validate(res) for res in result],

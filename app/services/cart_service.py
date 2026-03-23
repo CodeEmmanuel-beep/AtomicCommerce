@@ -13,8 +13,6 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.utils.redis import cache, cached, cart_invalidation, cache_version
 
-import asyncio
-
 logger = get_logger("cart")
 
 
@@ -133,15 +131,13 @@ async def retrieve_all(page, limit, db, payload):
         .options(selectinload(Cart.cartitems).selectinload(CartItem.product))
         .where(Cart.user_id == user_id, ~Cart.check_out)
     )
-    total_gather, cart_gather = await asyncio.gather(
-        db.execute(
+    total = (
+        await db.execute(
             select(func.count()).select_from(Cart).where(Cart.user_id == user_id)
-        ),
-        db.execute(stmt.offset(offset).limit(limit)),
-    )
-    total = total_gather.scalar() or 0
+        )
+    ).scalar() or 0
     logger.info(f"Total {total} carts found for user {user_id}")
-    carts = cart_gather.scalars().all()
+    carts = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not carts:
         logger.error("search for carts returned an empty list for user %s", user_id)
         return StandardResponse(status="success", message="no cart found", data=None)
