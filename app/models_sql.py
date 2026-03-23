@@ -92,16 +92,23 @@ class BusinessType(str, Enum):
 class Store(Base):
     __tablename__ = "stores"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    store_photo: Mapped[str] = mapped_column(String)
-    store_name: Mapped[str] = mapped_column(String, unique=True)
-    business_type: Mapped[BusinessType] = mapped_column(SQLEnum(BusinessType))
+    business_logo: Mapped[str] = mapped_column(String, nullable=True)
+    store_photo: Mapped[str] = mapped_column(String, nullable=False)
+    store_name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    store_description: Mapped[str] = mapped_column(String)
+    slug: Mapped[str] = mapped_column(
+        String(255), nullable=False, unique=True, index=True
+    )
+    business_type: Mapped[BusinessType] = mapped_column(
+        SQLEnum(BusinessType), index=True
+    )
     category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("categories.id"), index=True
     )
     store_email: Mapped[str] = mapped_column(String, nullable=True)
     store_contact: Mapped[str] = mapped_column(String, nullable=True)
-    approved: Mapped[bool] = mapped_column(Boolean, default=False)
-    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    approved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     founded: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     user_owners = relationship("User", secondary=store_owners, back_populates="owners")
