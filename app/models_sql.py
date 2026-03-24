@@ -95,6 +95,9 @@ class Store(Base):
     business_logo: Mapped[str] = mapped_column(String, nullable=True)
     store_photo: Mapped[str] = mapped_column(String, nullable=False)
     store_name: Mapped[str] = mapped_column(String, unique=True, index=True)
+    motto: Mapped[str] = mapped_column(String)
+    edited_name: Mapped[bool] = mapped_column(Boolean, default=False)
+    store_previous_name: Mapped[str] = mapped_column(String, index=True)
     store_description: Mapped[str] = mapped_column(String)
     slug: Mapped[str] = mapped_column(
         String(255), nullable=False, unique=True, index=True

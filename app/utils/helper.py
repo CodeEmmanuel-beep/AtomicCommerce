@@ -6,10 +6,16 @@ from app.api.v1.models import (
     StoreResponse,
     PaginatedResponse,
 )
+from fastapi import HTTPException
+import uuid
+from werkzeug.utils import secure_filename
 from sqlalchemy.orm import selectinload
 from app.logs.logger import get_logger
 from app.models_sql import Store, Category
 from enum import Enum
+from app.utils.supabase_url import cleaned_up
+from app.database.config import settings
+from io import BytesIO
 
 logger = get_logger("helper")
 
@@ -68,3 +74,61 @@ async def view_store_helper(seed, search_value, filter_column, page, limit, db):
     await cached(cache_key, response, ttl=36000)
     logger.info("search for stores returned data")
     return response
+
+
+async def upload_photo_helper(photo, db, payload, get_supabase):
+    user_id = payload.get("user_id")
+    filename = None
+    max_size = 5 * 1024 * 1024
+    allowed_types = ["image/jpeg", "image/webp", "image/png"]
+    total_size = 0
+    file_byte = b""
+    with BytesIO() as buffer:
+        try:
+            if photo.content_type not in allowed_types:
+                logger.warning(
+                    "user '%s', tried uploading an invalid file type: %s",
+                    user_id,
+                    photo.content_type,
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
+                )
+            filename = f"{uuid.uuid4()}_{secure_filename(photo.filename)}"
+            while chunk := await photo.read(1024 * 1024):
+                total_size += len(chunk)
+                if total_size > max_size:
+                    logger.warning(
+                        "user: %s, tried uploading a file larger than file limit, file size '%s'",
+                        user_id,
+                        total_size,
+                    )
+                    raise HTTPException(
+                        status_code=400, detail="File too large. Max 5MB."
+                    )
+                buffer.write(chunk)
+            file_byte = buffer.getvalue()
+            upload_photo = await get_supabase.storage.from_(settings.BUCKET).upload(
+                filename, file_byte, {"content-type": photo.content_type}
+            )
+            if hasattr(upload_photo, "error"):
+                logger.error("error uploading store photo %s", upload_photo)
+                raise HTTPException(
+                    status_code=500, detail="error uploading store photo"
+                )
+            return filename
+        except HTTPException:
+            await db.rollback()
+            raise
+        except Exception:
+            await db.rollback()
+            if filename:
+                await cleaned_up(
+                    get_supabase,
+                    filename,
+                    context_1="error removing orphaned store photo",
+                    context_2="successfully removed orphaned store photo",
+                )
+                logger.exception("error saving store photo")
+                raise HTTPException(status_code=500, detail="error saving store photo")

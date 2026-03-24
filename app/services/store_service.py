@@ -1,17 +1,24 @@
 from fastapi import HTTPException
-from app.models_sql import Store, Category, User, store_owners, store_staffs
+from app.models_sql import (
+    Store,
+    Category,
+    User,
+    store_owners,
+    store_staffs,
+    StoreAddress,
+)
+from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func, select, text, and_, exists
 from sqlalchemy.exc import IntegrityError
 import asyncio
-import uuid
-from app.utils.helper import view_store_helper
+from app.utils.helper import view_store_helper, upload_photo_helper
 from app.utils.supabase_url import cleaned_up
-from werkzeug.utils import secure_filename
 from app.database.config import settings
 from app.utils.redis import store_invalidation
 import re
+import regex
 
 logger = get_logger("store")
 
@@ -31,7 +38,7 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
         raise HTTPException(
             status_code=401, detail="only registered users can own a store"
         )
-    if not re.fullmatch(r"[A-Za-z\s]+", storeobj.store_name):
+    if not regex.fullmatch(r"^[\p{L}\s]+$", storeobj.store_name):
         raise HTTPException(status_code=400, detail="store names should be in letters")
     store_slug = generate_slug(storeobj.store_name)
     stmt = select(Store).where(Store.slug == store_slug)
@@ -41,28 +48,6 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
         raise HTTPException(
             status_code=400, detail="This store name is too similar to an existing one"
         )
-    filename = None
-    try:
-        filename = f"{uuid.uuid4()}_{secure_filename(store_photo.filename)}"
-        file_byte = await store_photo.read()
-        upload_photo = await get_supabase.storage.from_(settings.BUCKET).upload(
-            filename, file_byte, {"content-type": store_photo.content_type}
-        )
-        if hasattr(upload_photo, "error"):
-            logger.error("error uploading store photo %s", upload_photo)
-            raise HTTPException(status_code=500, detail="error uploading store photo")
-    except Exception:
-        await db.rollback()
-        if filename:
-            await cleaned_up(
-                get_supabase,
-                filename,
-                context_1="error removing orphaned store photo",
-                context_2="successfully removed orphaned store photo",
-            )
-            logger.exception("error saving store photo")
-            raise HTTPException(status_code=500, detail="error saving store photo")
-    store_photo = filename
     if user_id not in storeobj.owners:
         logger.error("user: %s, tried being a third party creator")
         raise HTTPException(
@@ -101,6 +86,7 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
         raise HTTPException(
             status_code=500, detail="Store category configuration error"
         )
+    store_photo = await upload_photo_helper(store_photo, db, payload, get_supabase)
     new_store = Store(
         store_photo=store_photo,
         store_name=storeobj.store_name,
@@ -120,10 +106,104 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
         raise
     except IntegrityError:
         await db.rollback()
-        if filename:
+        await cleaned_up(
+            get_supabase,
+            store_photo,
+            context_1="error removing orphaned store photo",
+            context_2="successfully removed orphaned store photo",
+        )
+        logger.error("database error while creating store for user '%s'", user_id)
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        await cleaned_up(
+            get_supabase,
+            store_photo,
+            context_1="error removing orphaned store photo",
+            context_2="successfully removed orphaned store photo",
+        )
+        logger.exception("error while creating store for user '%s'", user_id)
+        raise HTTPException(status_code=500, detail="internal server error")
+
+
+async def store_update(
+    storeupdate, business_logo, store_photo, db, payload, get_supabase
+):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at store_creation endpoint")
+        raise HTTPException(
+            status_code=401, detail="only registered users can own a store"
+        )
+    if not regex.fullmatch(r"^[\p{L}\s]+$", storeupdate.store_name):
+        raise HTTPException(status_code=400, detail="store names should be in letters")
+    stmt = select(Store).where(
+        Store.id == storeupdate.store_id,
+        Store.approved,
+        Store.user_owners.any(User.id == user_id),
+    )
+    store_map = (await db.execute(stmt)).scalar_one_or_none()
+    if not store_map:
+        logger.warning(
+            "user: %s, tried to edit store with store_id: %s, when they are",
+            user_id,
+            storeupdate.store_id,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    if store_map.edited_name and storeupdate.store_name:
+        logger.warning(
+            "user: %s, tried to edit store with store_id: %s, name more than once",
+            user_id,
+            storeupdate.store_id,
+        )
+        raise HTTPException(
+            status_code=400, detail="Store name cannot be changed morethan once"
+        )
+    old_photo = []
+    filename_link = []
+    if store_photo:
+        old_photo.append(store_map.store_photo) if store_map.store_photo else None
+        filename = await upload_photo_helper(store_photo, db, payload, get_supabase)
+        store_map.store_photo = filename
+        filename_link.append(filename)
+    if business_logo:
+        old_photo.append(store_map.business_logo) if store_map.business_logo else None
+        filename = await upload_photo_helper(business_logo, db, payload, get_supabase)
+        store_map.business_logo = filename
+        filename_link.append(filename)
+    if storeupdate.store_name:
+        store_map.store_previous_name = store_map.store_name
+        store_map.store_name = storeupdate.store_name
+        store_map.edited_name = True
+    if storeupdate.motto:
+        store_map.motto = storeupdate.motto
+    if storeupdate.store_description:
+        store_map.store_description = storeupdate.store_description
+    if storeupdate.store_contact:
+        store_map.store_contact = storeupdate.store_contact
+    if storeupdate.business_type:
+        store_map.business_type = storeupdate.business_type
+    if storeupdate.store_email:
+        store_map.store_email = storeupdate.store_email
+    try:
+        await db.commit()
+        if old_photo:
             await cleaned_up(
                 get_supabase,
-                filename,
+                old_photo,
+                context_1="error removing orphaned store photo",
+                context_2="successfully removed orphaned store photo",
+            )
+        await store_invalidation()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except IntegrityError:
+        await db.rollback()
+        if filename_link:
+            await cleaned_up(
+                get_supabase,
+                filename_link,
                 context_1="error removing orphaned store photo",
                 context_2="successfully removed orphaned store photo",
             )
@@ -131,14 +211,44 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
-        if filename:
+        if filename_link:
             await cleaned_up(
                 get_supabase,
-                filename,
+                filename_link,
                 context_1="error removing orphaned store photo",
                 context_2="successfully removed orphaned store photo",
             )
         logger.exception("error while creating store for user '%s'", user_id)
+        raise HTTPException(status_code=500, detail="internal server error")
+
+
+async def approve_stores(store_id, db, payload):
+    user_id = payload.get("user_id")
+    owner = payload.get("role")
+    if not user_id or owner != "Owner":
+        logger.warning("unauthorized attempt at approve_storea endpoint")
+        raise HTTPException(status_code=401, detail="restricted")
+    approved = (
+        await db.execute(
+            select(Store).where(
+                Store.id == store_id, ~Store.is_deleted, ~Store.approved
+            )
+        )
+    ).scalar_one_or_none()
+    if not approved:
+        logger.error("owner tried approving a store that is not eligible for approval")
+        raise HTTPException(status_code=400, detail="eligible store not found")
+    approved.approved = True
+    approved.founded = datetime.now(timezone.utc)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.error("database error while approving store '%s'", store_id)
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error while approving store '%s'", store_id)
         raise HTTPException(status_code=500, detail="internal server error")
 
 
@@ -328,7 +438,7 @@ async def delete_staff(store_id, staff_id, db, payload):
     (await db.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": store_id}))
     check_stmt = (
         select(Store).where(
-            and_(Store.id == store_id),
+            and_(Store.id == store_id, Store.approved),
             exists().where(
                 and_(
                     store_owners.c.users_id == user_id,
@@ -346,7 +456,7 @@ async def delete_staff(store_id, staff_id, db, payload):
     result = await db.execute(
         select(Store)
         .options(selectinload(Store.user_staffs))
-        .where(Store.id == store_id)
+        .where(Store.id == store_id, Store.approved)
         .join(check_stmt, Store.id == check_stmt.c.id)
     )
     store_check = result.scalar_one_or_none()

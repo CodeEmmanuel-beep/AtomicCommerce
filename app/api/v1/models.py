@@ -61,10 +61,23 @@ class StoreObj(BaseModel):
     store_contact: str | None = None
 
 
+class StoreUpdate(BaseModel):
+    store_id: int
+    store_name: str | None
+    motto: str | None
+    business_type: BusinessType | None
+    store_description: str | None
+    store_email: str | None = None
+    store_contact: str | None = None
+
+
 class StoreResponse(BaseModel):
     id: int
+    business_logo: str
     store_photo: str
     store_name: str
+    motto: str
+    description: str
     business_type: BusinessType
     average_ratings: float = Field(default_factory=float)
     approved: bool = Field(default=False)
