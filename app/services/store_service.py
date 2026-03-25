@@ -297,6 +297,22 @@ async def view_store_data(store_id, db):
     }
 
 
+async def view_store_deetails(store_id, db):
+    target_store = (
+        await db.execute(select(Store).where(Store.id == store_id, Store.approved))
+    ).scalar_one_or_none()
+    if not target_store:
+        logger.error("user tried accessing an unvailable store: %s", store_id)
+        raise HTTPException(status_code=404, detail="store not found")
+    data = {
+        "business_logo": target_store.business_logo,
+        "store_previous_name": target_store.store_previous_name,
+        "motto": target_store.motto,
+        "store_description": target_store.store_description,
+    }
+    return {k: v for k, v in data.items() if v is not None}
+
+
 async def view_stores_by_business_type(seed, business_type, page, limit, db):
     return await view_store_helper(
         seed, business_type, Store.business_type, page, limit, db
