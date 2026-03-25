@@ -6,6 +6,8 @@ from app.models_sql import (
     store_owners,
     store_staffs,
     StoreAddress,
+    Review,
+    Order,
 )
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
@@ -15,7 +17,6 @@ from sqlalchemy.exc import IntegrityError
 import asyncio
 from app.utils.helper import view_store_helper, upload_photo_helper
 from app.utils.supabase_url import cleaned_up
-from app.database.config import settings
 from app.utils.redis import store_invalidation
 import re
 import regex
@@ -250,6 +251,50 @@ async def approve_stores(store_id, db, payload):
         await db.rollback()
         logger.exception("error while approving store '%s'", store_id)
         raise HTTPException(status_code=500, detail="internal server error")
+
+
+async def view_store_data(store_id, db):
+    target_store = select(
+        (select(Store).where(Store.id == store_id, Store.approved))
+        .scalar_subquery()
+        .label("approved_store"),
+        (
+            select(func.count(Order.id))
+            .where(Order.store_id == store_id)
+            .scalar_subquery()
+            .label("store_orders")
+        ),
+        select(func.max(Order.created_at))
+        .where(Order.store_id == store_id)
+        .scalar_subquery()
+        .label("last_order"),
+        select(func.count(Review.ratings))
+        .where(Review.store_id == store_id)
+        .scalar_subquery()
+        .label("total_ratings"),
+        select(func.avg(Review.ratings))
+        .where(Review.store_id == store_id)
+        .scalar_subquery()
+        .label("avg_ratings"),
+    )
+    result = await db.execute(target_store)
+    row = result.first()
+    if not row.approved_store:
+        logger.error("user tried accessing an unvailable store: %s", store_id)
+        raise HTTPException(status_code=404, detail="store not found")
+    (
+        approved_store,
+        store_orders,
+        last_order,
+        store_total_ratings,
+        store_average_ratings,
+    ) = row
+    return {
+        "store_total_orders": store_orders or 0,
+        "last_order": last_order,
+        "store_total_ratings": store_total_ratings or 0,
+        "store_average_ratings": round(float(store_average_ratings or 0), 2),
+    }
 
 
 async def view_stores_by_business_type(seed, business_type, page, limit, db):
