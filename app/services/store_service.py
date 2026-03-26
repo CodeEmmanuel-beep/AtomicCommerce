@@ -8,11 +8,12 @@ from app.models_sql import (
     StoreAddress,
     Review,
     Order,
+    Payment,
 )
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload
-from sqlalchemy import func, select, text, and_, exists
+from sqlalchemy import func, select, text, and_, exists, cast, Date
 from sqlalchemy.exc import IntegrityError
 import asyncio
 from app.utils.helper import view_store_helper, upload_photo_helper
@@ -223,7 +224,7 @@ async def store_update(
         raise HTTPException(status_code=500, detail="internal server error")
 
 
-async def approve_stores(store_id, db, payload):
+async def approve_stores(slug, db, payload):
     user_id = payload.get("user_id")
     owner = payload.get("role")
     if not user_id or owner != "Owner":
@@ -231,9 +232,7 @@ async def approve_stores(store_id, db, payload):
         raise HTTPException(status_code=401, detail="restricted")
     approved = (
         await db.execute(
-            select(Store).where(
-                Store.id == store_id, ~Store.is_deleted, ~Store.approved
-            )
+            select(Store).where(Store.slug == slug, ~Store.is_deleted, ~Store.approved)
         )
     ).scalar_one_or_none()
     if not approved:
@@ -245,11 +244,11 @@ async def approve_stores(store_id, db, payload):
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        logger.error("database error while approving store '%s'", store_id)
+        logger.error("database error while approving store '%s'", slug)
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
-        logger.exception("error while approving store '%s'", store_id)
+        logger.exception("error while approving store '%s'", slug)
         raise HTTPException(status_code=500, detail="internal server error")
 
 
@@ -297,20 +296,91 @@ async def view_store_data(store_id, db):
     }
 
 
-async def view_store_deetails(store_id, db):
+async def view_store_details(slug, db):
     target_store = (
-        await db.execute(select(Store).where(Store.id == store_id, Store.approved))
+        await db.execute(select(Store).where(Store.slug == slug, Store.approved))
     ).scalar_one_or_none()
     if not target_store:
-        logger.error("user tried accessing an unvailable store: %s", store_id)
+        logger.error("user tried accessing an unvailable store: %s", slug)
         raise HTTPException(status_code=404, detail="store not found")
     data = {
-        "business_logo": target_store.business_logo,
         "store_previous_name": target_store.store_previous_name,
         "motto": target_store.motto,
         "store_description": target_store.store_description,
+        "founded": target_store.founded,
     }
     return {k: v for k, v in data.items() if v is not None}
+
+
+async def view_overall_performance(slug, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at th view overall performance endpoint")
+        raise HTTPException(status_code=401, detail="unauthorized access")
+    target_store = (
+        await db.execute(
+            select(Store).where(
+                Store.slug == slug,
+                Store.user_owners.any(User.id == user_id),
+                Store.approved,
+            )
+        )
+    ).scalar_one_or_none()
+    if not target_store:
+        logger.warning("user: %s, tried experienced permission err: %s", user_id, slug)
+        raise HTTPException(status_code=403, detail="restricted access")
+    total_gross_sales = (
+        await db.execute(
+            select(func.sum(Payment.amount_paid))
+            .join(Order, Order.id == Payment.order_id)
+            .where(Order.store_id == target_store.id, Payment.status == "approved")
+        ).scalar()
+        or 0
+    )
+    daily_sales = (
+        select(
+            cast(Payment.payment_date, Date).label("day"),
+            func.sum(Payment.amount_paid).label("daily_sale"),
+        )
+        .join(Order, Payment.order_id == Order.id)
+        .where(Order.store_id == target_store.id, Payment.status == "approved")
+        .group_by(cast(Payment.payment_date, Date))
+        .cte("daily_turnover")
+    )
+    avg_daily = select(func.avg(daily_sales.c.daily_sale))
+    average_sales = (await db.execute(avg_daily)).scalar() or 0
+    average_sales_per_day = round(float(average_sales or 0), 2)
+    extreme_sale_row = (
+        select(Payment.payment_date, Payment.amount_paid)
+        .join(Order, Order.id == Payment.order_id)
+        .where(Order.store_id == target_store.id, Payment.status == "approved")
+    )
+    lowest_sale_row = (
+        await db.execute(extreme_sale_row.order_by(Payment.amount_paid.asc()).limit(1))
+    ).first()
+    lowest_sale = (
+        {"date": lowest_sale_row[0], "sales": float(lowest_sale_row[1])}
+        if lowest_sale_row
+        else 0
+    )
+    highest_sale_row = (
+        await db.execute(extreme_sale_row.order_by(Payment.amount_paid.desc()).limit(1))
+    ).first()
+    highest_sale = (
+        {"date": highest_sale_row[0], "sales": float(highest_sale_row[1])}
+        if highest_sale_row
+        else 0
+    )
+    average_sales_per_week = round(average_sales_per_day * 7, 2)
+    average_sales_per_month = round(average_sales_per_day * 30, 2)
+    return {
+        "total_gross_sales": float(total_gross_sales),
+        "highest_sales": highest_sale,
+        "lowest_sales": lowest_sale,
+        "average_sales_per_day": average_sales_per_day or 0,
+        "average_sales_per_week": average_sales_per_week or 0,
+        "average_sales_per_month": average_sales_per_month or 0,
+    }
 
 
 async def view_stores_by_business_type(seed, business_type, page, limit, db):
