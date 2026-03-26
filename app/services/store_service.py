@@ -23,6 +23,7 @@ import re
 from datetime import date
 from dateutil.relativedelta import relativedelta
 import regex
+from app.utils.redis import cache, cached
 
 logger = get_logger("store")
 
@@ -255,16 +256,22 @@ async def approve_stores(slug, db, payload):
 
 
 async def view_store_data(store_id, db):
+    cache_key = f"store_data:{store_id}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info("cache hit at view store data endpoint for store %s", store_id)
+        return cached_data
+    store_exists = (
+        await db.execute(select(Store).where(Store.id == store_id, Store.approved))
+    ).scalar_one_or_none()
+    if not store_exists:
+        logger.error("user tried accessing an unvailable store: %s", store_id)
+        raise HTTPException(status_code=404, detail="store not found")
     target_store = select(
-        (select(Store).where(Store.id == store_id, Store.approved))
+        func.count(Order.id)
+        .where(Order.store_id == store_id)
         .scalar_subquery()
-        .label("approved_store"),
-        (
-            select(func.count(Order.id))
-            .where(Order.store_id == store_id)
-            .scalar_subquery()
-            .label("store_orders")
-        ),
+        .label("store_orders"),
         select(func.max(Order.created_at))
         .where(Order.store_id == store_id)
         .scalar_subquery()
@@ -280,25 +287,29 @@ async def view_store_data(store_id, db):
     )
     result = await db.execute(target_store)
     row = result.first()
-    if not row or not row.approved_store:
-        logger.error("user tried accessing an unvailable store: %s", store_id)
-        raise HTTPException(status_code=404, detail="store not found")
     (
-        approved_store,
         store_orders,
         last_order,
         store_total_ratings,
         store_average_ratings,
     ) = row
-    return {
+    data = {
         "store_total_orders": store_orders or 0,
         "last_order": last_order,
         "store_total_ratings": store_total_ratings or 0,
         "store_average_ratings": round(float(store_average_ratings or 0), 2),
     }
+    await cached(cache_key, data, ttl=300)
+    logger.info("data returned at view store data endpoint for store: %s", store_id)
+    return data
 
 
 async def view_store_details(slug, db):
+    cache_key = f"store_details:{slug}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info("cache hit at view store details endpoint for store: %s", slug)
+        return cached_data
     target_store = (
         await db.execute(select(Store).where(Store.slug == slug, Store.approved))
     ).scalar_one_or_none()
@@ -311,14 +322,26 @@ async def view_store_details(slug, db):
         "store_description": target_store.store_description,
         "founded": target_store.founded,
     }
-    return {k: v for k, v in data.items() if v is not None}
+    data = {k: v for k, v in data.items() if v is not None}
+    await cached(cache_key, data, ttl=300)
+    logger.info(
+        "data returned at view store details endpoint for store: %s", target_store.id
+    )
+    return data
 
 
 async def view_overall_performance(slug, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("unauthorized attempt at th view overall performance endpoint")
+        logger.warning("unauthorized attempt at the view overall performance endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
+    cache_key = f"overall_performance:{slug}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info(
+            "cache hit at the view overall performance endpoint for store: %s", slug
+        )
+        return cached_data
     target_store = (
         await db.execute(
             select(Store).where(
@@ -382,7 +405,7 @@ async def view_overall_performance(slug, db, payload):
     )
     average_sales_per_week = round(average_sales_per_day * 7, 2)
     average_sales_per_month = round(average_sales_per_day * 30, 2)
-    return {
+    data = {
         "total_gross_sales": round(float(total_gross_sales or 0), 2),
         "highest_sales": highest_sale,
         "lowest_sales": lowest_sale,
@@ -390,13 +413,25 @@ async def view_overall_performance(slug, db, payload):
         "average_sales_per_week": average_sales_per_week or 0,
         "average_sales_per_month": average_sales_per_month or 0,
     }
+    await cached(cache_key, data, ttl=300)
+    logger.info(
+        "data returned at view overall performance endpoint for store: %s", slug
+    )
+    return data
 
 
 async def view_current_performance(slug, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("unauthorized attempt at th view overall performance endpoint")
+        logger.warning("unauthorized attempt at the view current performance endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
+    cache_key = f"current_performance:{slug}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info(
+            "cache hit at the view current performance endpoint for store: %s", slug
+        )
+        return cached_data
     target_store = (
         await db.execute(
             select(Store).where(
@@ -453,7 +488,7 @@ async def view_current_performance(slug, db, payload):
     lowest_sale = (
         {"date": lowest_sale_row[0], "sales": float(lowest_sale_row[1])}
         if lowest_sale_row
-        else 0
+        else None
     )
     highest_sale_row = (
         await db.execute(extreme_sale_row.order_by(Payment.amount_paid.desc()).limit(1))
@@ -461,7 +496,7 @@ async def view_current_performance(slug, db, payload):
     highest_sale = (
         {"date": highest_sale_row[0], "sales": float(highest_sale_row[1])}
         if highest_sale_row
-        else 0
+        else None
     )
     ratings_orders__check = select(
         (
@@ -493,7 +528,7 @@ async def view_current_performance(slug, db, payload):
     result_check = await db.execute(ratings_orders__check)
     row = result_check.first()
     orders, last_order, ratings, avg_ratings = row
-    return {
+    data = {
         "orders_this_month": orders,
         "day_of_last_order": last_order,
         "total_ratings_this_month": ratings or 0,
@@ -503,6 +538,11 @@ async def view_current_performance(slug, db, payload):
         "lowest_sales": lowest_sale,
         "daily_average": round(float(daily_avg or 0), 2),
     }
+    await cached(cache_key, data, ttl=300)
+    logger.info(
+        "data returned at view current performance endpoint for store: %s", slug
+    )
+    return data
 
 
 async def view_stores_by_business_type(seed, business_type, page, limit, db):
