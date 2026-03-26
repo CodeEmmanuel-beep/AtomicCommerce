@@ -134,7 +134,7 @@ class Store(Base):
 class StoreAddress(Base):
     __tablename__ = "store_addresses"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"))
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
     address: Mapped[str] = mapped_column(String)
 
     store = relationship("Store", back_populates="addresses")
@@ -306,7 +306,9 @@ class Cart(Base):
     __tablename__ = "carts"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True)
-    member_id = Column(Integer, ForeignKey("memberships.id", ondelete="CASCADE"))
+    member_id = Column(
+        Integer, ForeignKey("memberships.id", ondelete="CASCADE"), index=True
+    )
     check_out: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     total_quantity = Column(Float, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)

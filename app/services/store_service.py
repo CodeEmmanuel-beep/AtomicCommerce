@@ -13,13 +13,15 @@ from app.models_sql import (
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload
-from sqlalchemy import func, select, text, and_, exists, cast, Date
+from sqlalchemy import func, select, text, and_, exists, cast, Date, Float
 from sqlalchemy.exc import IntegrityError
 import asyncio
 from app.utils.helper import view_store_helper, upload_photo_helper
 from app.utils.supabase_url import cleaned_up
 from app.utils.redis import store_invalidation
 import re
+from datetime import date
+from dateutil.relativedelta import relativedelta
 import regex
 
 logger = get_logger("store")
@@ -271,14 +273,14 @@ async def view_store_data(store_id, db):
         .where(Review.store_id == store_id)
         .scalar_subquery()
         .label("total_ratings"),
-        select(func.avg(Review.ratings))
+        select(func.avg(cast(Review.ratings, Float)))
         .where(Review.store_id == store_id)
         .scalar_subquery()
         .label("avg_ratings"),
     )
     result = await db.execute(target_store)
     row = result.first()
-    if not row.approved_store:
+    if not row or not row.approved_store:
         logger.error("user tried accessing an unvailable store: %s", store_id)
         raise HTTPException(status_code=404, detail="store not found")
     (
@@ -329,11 +331,18 @@ async def view_overall_performance(slug, db, payload):
     if not target_store:
         logger.warning("user: %s, tried experienced permission err: %s", user_id, slug)
         raise HTTPException(status_code=403, detail="restricted access")
+    today = date.today()
+    if today < target_store.founded + relativedelta(months=1):
+        return {
+            "message": "performance statistics are revealed one month after onboarding"
+        }
     total_gross_sales = (
         await db.execute(
             select(func.sum(Payment.amount_paid))
             .join(Order, Order.id == Payment.order_id)
-            .where(Order.store_id == target_store.id, Payment.status == "approved")
+            .where(
+                Order.store_id == target_store.id, Payment.payment_status == "approved"
+            )
         ).scalar()
         or 0
     )
@@ -343,7 +352,7 @@ async def view_overall_performance(slug, db, payload):
             func.sum(Payment.amount_paid).label("daily_sale"),
         )
         .join(Order, Payment.order_id == Order.id)
-        .where(Order.store_id == target_store.id, Payment.status == "approved")
+        .where(Order.store_id == target_store.id, Payment.payment_status == "approved")
         .group_by(cast(Payment.payment_date, Date))
         .cte("daily_turnover")
     )
@@ -353,8 +362,91 @@ async def view_overall_performance(slug, db, payload):
     extreme_sale_row = (
         select(Payment.payment_date, Payment.amount_paid)
         .join(Order, Order.id == Payment.order_id)
-        .where(Order.store_id == target_store.id, Payment.status == "approved")
+        .where(Order.store_id == target_store.id, Payment.payment_status == "approved")
     )
+    lowest_sale_row = (
+        await db.execute(extreme_sale_row.order_by(Payment.amount_paid.asc()).limit(1))
+    ).first()
+    lowest_sale = (
+        {"date": lowest_sale_row[0], "sales": float(lowest_sale_row[1])}
+        if lowest_sale_row
+        else None
+    )
+    highest_sale_row = (
+        await db.execute(extreme_sale_row.order_by(Payment.amount_paid.desc()).limit(1))
+    ).first()
+    highest_sale = (
+        {"date": highest_sale_row[0], "sales": float(highest_sale_row[1])}
+        if highest_sale_row
+        else None
+    )
+    average_sales_per_week = round(average_sales_per_day * 7, 2)
+    average_sales_per_month = round(average_sales_per_day * 30, 2)
+    return {
+        "total_gross_sales": round(float(total_gross_sales or 0), 2),
+        "highest_sales": highest_sale,
+        "lowest_sales": lowest_sale,
+        "average_sales_per_day": average_sales_per_day or 0,
+        "average_sales_per_week": average_sales_per_week or 0,
+        "average_sales_per_month": average_sales_per_month or 0,
+    }
+
+
+async def view_current_performance(slug, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at th view overall performance endpoint")
+        raise HTTPException(status_code=401, detail="unauthorized access")
+    target_store = (
+        await db.execute(
+            select(Store).where(
+                Store.slug == slug,
+                Store.user_owners.any(User.id == user_id),
+                Store.approved,
+            )
+        )
+    ).scalar_one_or_none()
+    if not target_store:
+        logger.warning("user: %s, tried experienced permission err: %s", user_id, slug)
+        raise HTTPException(status_code=403, detail="restricted access")
+    today = date.today()
+    gross_sales_this_month = (
+        await db.execute(
+            select(func.sum(Payment.amount_paid))
+            .join(Order, Payment.order_id == Order.id)
+            .where(
+                Order.store_id == target_store.id,
+                Payment.payment_status == "approved",
+                Payment.payment_date >= today.replace(day=1),
+            )
+        ).scalar()
+        or 0
+    )
+    extreme_sale_row = (
+        select(Payment.payment_date, Payment.amount_paid)
+        .join(Order, Order.id == Payment.order_id)
+        .where(
+            Order.store_id == target_store.id,
+            Payment.payment_status == "approved",
+            Payment.payment_date >= today.replace(day=1),
+        )
+    )
+    turnover = (
+        select(
+            cast(Payment.payment_date, Date),
+            func.sum(Payment.amount_paid).label("daily_sum"),
+        )
+        .join(Order, Payment.order_id == Order.id)
+        .where(
+            Order.store_id == target_store.id,
+            Payment.payment_status == "approved",
+            Payment.payment_date >= today.replace(day=1),
+        )
+        .group_by(cast(Payment.payment_date, Date))
+        .cte("monthly_average")
+    )
+    result = select(func.avg(cast(turnover.c.daily_sum, Float)))
+    daily_avg = (await db.execute(result)).scalar() or 0
     lowest_sale_row = (
         await db.execute(extreme_sale_row.order_by(Payment.amount_paid.asc()).limit(1))
     ).first()
@@ -371,15 +463,45 @@ async def view_overall_performance(slug, db, payload):
         if highest_sale_row
         else 0
     )
-    average_sales_per_week = round(average_sales_per_day * 7, 2)
-    average_sales_per_month = round(average_sales_per_day * 30, 2)
+    ratings_orders__check = select(
+        (
+            select(func.count(Order.id))
+            .where(
+                Order.store_id == target_store.id,
+                Order.created_at >= today.replace(day=1),
+            )
+            .scalar_subquery()
+        ),
+        select(func.max(Order.created_at))
+        .where(
+            Order.store_id == target_store.id, Order.created_at >= today.replace(day=1)
+        )
+        .scalar_subquery(),
+        select(func.count(Review.ratings))
+        .where(
+            Review.store_id == target_store.id,
+            Review.date_of_review >= today.replace(day=1),
+        )
+        .scalar_subquery(),
+        select(func.avg(cast(Review.ratings, Float)))
+        .where(
+            Review.store_id == target_store.id,
+            Review.date_of_review >= today.replace(day=1),
+        )
+        .scalar_subquery(),
+    )
+    result_check = await db.execute(ratings_orders__check)
+    row = result_check.first()
+    orders, last_order, ratings, avg_ratings = row
     return {
-        "total_gross_sales": float(total_gross_sales),
+        "orders_this_month": orders,
+        "day_of_last_order": last_order,
+        "total_ratings_this_month": ratings or 0,
+        "average_ratings_this_month": round(float(avg_ratings or 0), 2),
+        "gross_sales_this_month": round(float(gross_sales_this_month or 0), 2),
         "highest_sales": highest_sale,
         "lowest_sales": lowest_sale,
-        "average_sales_per_day": average_sales_per_day or 0,
-        "average_sales_per_week": average_sales_per_week or 0,
-        "average_sales_per_month": average_sales_per_month or 0,
+        "daily_average": round(float(daily_avg or 0), 2),
     }
 
 
