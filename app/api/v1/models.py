@@ -1,5 +1,12 @@
-from pydantic import BaseModel, ConfigDict, Field, computed_field
-from typing import Optional, List, TypeVar, Generic
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    model_validator,
+    ValidationInfo,
+)
+from typing import Optional, List, TypeVar, Generic, Any
 from datetime import datetime, date
 from app.utils.supabase_url import get_public_url
 from decimal import Decimal
@@ -97,6 +104,47 @@ class StoreAccountDetail(BaseModel):
     account_number: str
     tax_identification_number: str
     identification_number: str
+
+
+class StoreAccountResponse(BaseModel):
+    account_name: str
+    account_number: str
+    tax_identification_number: str
+    identification_number: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def decryption(cls, data: Any, info: ValidationInfo) -> Any:
+        context = info.context
+        if not context:
+            raise ValueError("Validation context is missing. Cannot decrypt data.")
+        cipher = info.context.get("cipher")
+        if not cipher:
+            raise ValueError("cipher key not found")
+        sensitive_fields = [
+            "account_number",
+            "tax_identification_number",
+            "identification_number",
+        ]
+        for field in sensitive_fields:
+            value = (
+                data.get(field, None)
+                if isinstance(data, dict)
+                else getattr(data, field, None)
+            )
+            if value is None:
+                raise ValueError(f"{field} is missing in the data for decryption.")
+            try:
+                decrypted_field = cipher.decrypt(value).decode()
+                if isinstance(data, dict):
+                    data[field] = decrypted_field
+                else:
+                    setattr(data, field, decrypted_field)
+            except Exception:
+                raise ValueError({"error decrypting sensitive fields"})
+        return data
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StoreAddressDetail(BaseModel):

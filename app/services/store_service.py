@@ -11,6 +11,12 @@ from app.models_sql import (
     Order,
     Payment,
 )
+from app.api.v1.models import (
+    PaginatedMetadata,
+    PaginatedResponse,
+    StandardResponse,
+    StoreAccountResponse,
+)
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload
@@ -309,6 +315,47 @@ async def add_finance_details(store_id, finance_details, db, payload, cipher):
         await db.rollback()
         logger.exception("error while adding finance details for store '%s'", store_id)
         raise HTTPException(status_code=500, detail="internal server error")
+
+
+async def view_financial_details(store_id, db, payload, cipher):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at view_financial_details endpoint")
+        raise HTTPException(
+            status_code=401, detail="unauthorized, you must be a registered user"
+        )
+    allowed_roles = ["Owner", "Admin"]
+    store_account = (
+        await db.execute(
+            select(StoreAccount)
+            .options(selectinload(StoreAccount.store).selectinload(Store.user_owners))
+            .where(StoreAccount.store_id == store_id)
+        )
+    ).scalar_one_or_none()
+    if not store_account:
+        logger.warning(
+            "user: %s, tried to view a finance details of a non-existent store, store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=404, detail="store not found")
+    owner_id = [owner.id for owner in store_account.store.user_owners]
+    if user_id not in owner_id and payload.role not in allowed_roles:
+        logger.warning(
+            "user: %s, attempted to bypass a restricted access in view financial details endpoint for store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    data = StoreAccountResponse.model_validate(
+        store_account, context={"cipher": cipher}
+    )
+    logger.info(
+        "store: %s, successfully returned data, sensitive fields decrypted for user: %s",
+        store_id,
+        user_id,
+    )
+    return data
 
 
 async def add_address(store_id, address_details, db, payload):
