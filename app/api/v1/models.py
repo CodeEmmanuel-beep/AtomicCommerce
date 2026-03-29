@@ -92,6 +92,13 @@ class StoreResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class StoreAccountDetail(BaseModel):
+    account_name: str
+    account_number: str
+    tax_identification_number: str
+    identification_number: str
+
+
 class PaginatedResponse(BaseModel):
     page: int
     limit: int

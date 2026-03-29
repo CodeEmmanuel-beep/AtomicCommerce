@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_MINUTES: int
     DB_NAME: str
     DB_USER: str
+    CIPHER_KEY: str
     DB_PASSWORD: str
     DATABASE_URL: str
     SYNC_DATABASE_URL: str

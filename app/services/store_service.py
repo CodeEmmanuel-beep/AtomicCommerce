@@ -6,6 +6,7 @@ from app.models_sql import (
     store_owners,
     store_staffs,
     StoreAddress,
+    StoreAccount,
     Review,
     Order,
     Payment,
@@ -255,6 +256,61 @@ async def approve_stores(slug, db, payload):
         raise HTTPException(status_code=500, detail="internal server error")
 
 
+async def add_finance_details(store_id, finance_details, db, payload, cipher):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at add_finance_details endpoint")
+        raise HTTPException(
+            status_code=401, detail="unauthorized, you must be a registered user"
+        )
+    store_check = (
+        await db.execute(
+            select(Store)
+            .options(selectinload(Store.accounts))
+            .where(Store.id == store_id, Store.user_owners.any(User.id == user_id))
+        )
+    ).scalar_one_or_none()
+    if not store_check:
+        logger.error(
+            "user: %s, tried to add finance details to a store not assigned, store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=404, detail="store not assigned")
+    if store_check.account.id:
+        logger.warning(
+            "user: %s, tried to add finance details more than once to store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(
+            status_code=400, detail="finance details can only be added once"
+        )
+    acc_num = cipher.encrypt(finance_details.account_number.encode())
+    tax_num = cipher.encrypt(finance_details.tax_identification_number.encode())
+    id_num = cipher.encrypt(finance_details.identification_number.encode())
+    account_detail = StoreAccount(
+        store_id=store_check.id,
+        account_name=finance_details.account_name,
+        account_number=acc_num,
+        tax_identification_number=tax_num,
+        identification_number=id_num,
+    )
+    try:
+        db.add(account_detail)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.error(
+            "database error while adding finance details for store '%s'", store_id
+        )
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error while adding finance details for store '%s'", store_id)
+        raise HTTPException(status_code=500, detail="internal server error")
+
+
 async def view_store_data(store_id, db):
     cache_key = f"store_data:{store_id}"
     cached_data = await cache(cache_key)
@@ -498,6 +554,7 @@ async def view_current_performance(slug, db, payload):
         if highest_sale_row
         else None
     )
+    today = date.today()
     ratings_orders__check = select(
         (
             select(func.count(Order.id))

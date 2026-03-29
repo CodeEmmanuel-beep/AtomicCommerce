@@ -22,16 +22,21 @@ from app.logs.logger import get_logger
 from contextlib import asynccontextmanager
 from supabase import create_async_client
 from app.database.config import settings
+from cryptography.fernet import Fernet
 
 
 @asynccontextmanager
-async def get_supabase(app: FastAPI):
+async def lifespan(app: FastAPI):
     supabase = await create_async_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
     app.state.supabase = supabase
+
+    if not settings.CIPHER_KEY:
+        raise RuntimeError("key not found")
+    app.state.cipher = Fernet(settings.CIPHER_KEY.encode())
     yield
 
 
-app = FastAPI(title="E Commerce", version="1.0", lifespan=get_supabase)
+app = FastAPI(title="E Commerce", version="1.0", lifespan=lifespan)
 
 
 @app.middleware("http")

@@ -12,18 +12,14 @@ from sqlalchemy import (
     UniqueConstraint,
     Table,
     Enum as SQLEnum,
-    TypeDecorator,
+    LargeBinary,
 )
 from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped
 from sqlalchemy import func
 from decimal import Decimal
 from datetime import datetime
-from cryptography.fernet import Fernet
 
-
-key = Fernet.generate_key()
-cipher = Fernet(key)
 
 store_staffs = Table(
     "store_staffs",
@@ -140,31 +136,16 @@ class StoreAddress(Base):
     store = relationship("Store", back_populates="addresses")
 
 
-class EncryptedString(TypeDecorator):
-    impl = String
-    cache_ok = True
-
-    def process_bind_param(self, value, dialect):
-        if value is not None:
-            return cipher.encrypt(value.encode()).decode()
-        return value
-
-    def process_result_value(self, value, dialect):
-        if value is not None:
-            return cipher.decrypt(value.encode()).decode()
-        return value
-
-
 class StoreAccount(Base):
     __tablename__ = "store_accounts"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
-    account_name: Mapped[str] = mapped_column(String, nullable=False)
-    account_number: Mapped[str] = mapped_column(EncryptedString, nullable=False)
-    tax_identification_number: Mapped[str] = mapped_column(
-        EncryptedString, nullable=False
+    account_name: Mapped[bytes] = mapped_column(String, nullable=False)
+    account_number: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    tax_identification_number: Mapped[bytes] = mapped_column(
+        LargeBinary, nullable=False
     )
-    identification_number: Mapped[str] = mapped_column(EncryptedString, nullable=False)
+    identification_number: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
 
     store = relationship("Store", back_populates="account")
 
