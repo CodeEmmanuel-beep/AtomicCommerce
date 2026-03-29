@@ -12,9 +12,6 @@ from app.models_sql import (
     Payment,
 )
 from app.api.v1.models import (
-    PaginatedMetadata,
-    PaginatedResponse,
-    StandardResponse,
     StoreAccountResponse,
 )
 from datetime import datetime, timezone
@@ -25,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 import asyncio
 from app.utils.helper import view_store_helper, upload_photo_helper
 from app.utils.supabase_url import cleaned_up
-from app.utils.redis import store_invalidation
+from app.utils.redis import store_invalidation, cache, cached
 import re
 from datetime import date
 from dateutil.relativedelta import relativedelta
@@ -319,10 +316,20 @@ async def add_finance_details(store_id, finance_details, db, payload, cipher):
 
 async def view_financial_details(store_id, db, payload, cipher):
     user_id = payload.get("user_id")
+    role = payload.get("role")
     if not user_id:
         logger.warning("unauthorized attempt at view_financial_details endpoint")
         raise HTTPException(
             status_code=401, detail="unauthorized, you must be a registered user"
+        )
+    cache_key = f"financial_details:{store_id}:{user_id}"
+    cached_detail = await cache(cache_key)
+    if cached_detail:
+        logger.info(
+            f"cache hit at view financial details endpoint for user '{user_id}'"
+        )
+        return StoreAccountResponse.model_validate(
+            cached_detail, context={"cipher": cipher}
         )
     allowed_roles = ["Owner", "Admin"]
     store_account = (
@@ -340,7 +347,7 @@ async def view_financial_details(store_id, db, payload, cipher):
         )
         raise HTTPException(status_code=404, detail="store not found")
     owner_id = [owner.id for owner in store_account.store.user_owners]
-    if user_id not in owner_id and payload.role not in allowed_roles:
+    if user_id not in owner_id and role not in allowed_roles:
         logger.warning(
             "user: %s, attempted to bypass a restricted access in view financial details endpoint for store: %s",
             user_id,
@@ -350,6 +357,7 @@ async def view_financial_details(store_id, db, payload, cipher):
     data = StoreAccountResponse.model_validate(
         store_account, context={"cipher": cipher}
     )
+    await cached(cache_key, store_account, ttl=300)
     logger.info(
         "store: %s, successfully returned data, sensitive fields decrypted for user: %s",
         store_id,
@@ -865,6 +873,7 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
             user_id,
         )
         raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("personnel added to store: %s", store_id)
     return {"message": "personnel added"}
 
 
@@ -932,4 +941,60 @@ async def delete_staff(store_id, staff_id, db, payload):
             user_id,
         )
         raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("staff '%s', removed from store: %s", staff_id, store_id)
     return {"message": "personnel deleted"}
+
+
+async def delete_store(store_id, db, payload):
+    user_id = payload.get("user_id")
+    role = payload.get("role")
+    if not user_id:
+        logger.warning("unauthorized attempt at delete_store endpoint")
+        raise HTTPException(
+            status_code=401, detail="only registered users can access this endpoint"
+        )
+    allowed_roles = ["Owner", "Admin"]
+    (await db.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": store_id}))
+    store_check = (
+        await db.execute(
+            select(Store)
+            .options(selectinload(Store.user_owners))
+            .where(
+                Store.id == store_id,
+                ~Store.is_deleted,
+            )
+        )
+    ).scalar_one_or_none()
+    if not store_check:
+        logger.error(
+            "user: %s, tried accessing a non existent store at the delete_store endpoint",
+            user_id,
+        )
+        raise HTTPException(status_code=404, detail="store not found")
+    owner_id = [owner.id for owner in store_check.user_owners]
+    if user_id not in owner_id and role not in allowed_roles:
+        logger.warning(
+            "user: %s attempted a restricted endpoint (deleted store)", user_id
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    store_check.is_deleted = True
+    store_check.approved = False
+    try:
+        await db.commit()
+        await store_invalidation()
+    except IntegrityError:
+        await db.rollback()
+        logger.error(
+            "database error occured at the delete_store endpoint, user afffected: %s",
+            user_id,
+        )
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "rollback occured at the delete_store endpoint, user afffected: %s",
+            user_id,
+        )
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("store '%s', deleted", store_id)
+    return {"message": "store deleted"}
