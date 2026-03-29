@@ -131,7 +131,10 @@ class StoreAddress(Base):
     __tablename__ = "store_addresses"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
-    address: Mapped[str] = mapped_column(String)
+    street: Mapped[str] = mapped_column(String, nullable=False)
+    city: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    country: Mapped[str] = mapped_column(String, nullable=False)
 
     store = relationship("Store", back_populates="addresses")
 

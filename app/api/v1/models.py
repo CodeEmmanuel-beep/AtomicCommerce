@@ -99,6 +99,13 @@ class StoreAccountDetail(BaseModel):
     identification_number: str
 
 
+class StoreAddressDetail(BaseModel):
+    street: str
+    city: str
+    state: str
+    country: str
+
+
 class PaginatedResponse(BaseModel):
     page: int
     limit: int

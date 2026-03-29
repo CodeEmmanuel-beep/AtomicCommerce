@@ -311,6 +311,49 @@ async def add_finance_details(store_id, finance_details, db, payload, cipher):
         raise HTTPException(status_code=500, detail="internal server error")
 
 
+async def add_address(store_id, address_details, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at add_address endpoint")
+        raise HTTPException(
+            status_code=401, detail="unauthorized, you must be a registered user"
+        )
+    store_check = (
+        await db.execute(
+            select(Store).where(
+                Store.id == store_id, Store.user_owners.any(User.id == user_id)
+            )
+        )
+    ).scalar_one_or_none()
+    if not store_check:
+        logger.error(
+            "user: %s, tried to add address details to a store not assigned, store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=404, detail="store not assigned")
+    address_detail = StoreAddress(
+        store_id=store_check.id,
+        street=address_details.street,
+        city=address_details.city,
+        state=address_details.state,
+        country=address_details.country,
+    )
+    try:
+        db.add(address_detail)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.error(
+            "database error while adding address details for store '%s'", store_id
+        )
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error while adding address details for store '%s'", store_id)
+        raise HTTPException(status_code=500, detail="internal server error")
+
+
 async def view_store_data(store_id, db):
     cache_key = f"store_data:{store_id}"
     cached_data = await cache(cache_key)
