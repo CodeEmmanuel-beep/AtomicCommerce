@@ -125,6 +125,7 @@ class Store(Base):
     addresses = relationship("StoreAddress", back_populates="store")
     order = relationship("Order", back_populates="store", uselist=False)
     account = relationship("StoreAccount", back_populates="store")
+    products = relationship("Product", back_populates="store")
 
 
 class StoreAddress(Base):
@@ -175,6 +176,7 @@ class Reply(Base):
 class Product(Base):
     __tablename__ = "products"
     id = Column(Integer, primary_key=True, index=True)
+    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
     product_name = Column(String)
     primary_image = Column(String, nullable=False)
     image = Column(String, nullable=True)
@@ -184,6 +186,7 @@ class Product(Base):
     stock_quantity = Column(Integer, default=0)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    store = relationship("Store", back_populates="products")
     review = relationship("Review", back_populates="product")
     replies = relationship("Reply", back_populates="product")
     cart_items = relationship("CartItem", back_populates="product")
