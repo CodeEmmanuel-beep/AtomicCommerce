@@ -13,13 +13,16 @@ from app.models_sql import (
 )
 from app.api.v1.models import (
     StoreAccountResponse,
+    PaginatedMetadata,
+    PaginatedResponse,
+    StandardResponse,
+    StoreAddressDetails,
 )
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func, select, text, and_, exists, cast, Date, Float
 from sqlalchemy.exc import IntegrityError
-import asyncio
 from app.utils.helper import view_store_helper, upload_photo_helper
 from app.utils.supabase_url import cleaned_up
 from app.utils.redis import store_invalidation, cache, cached
@@ -27,7 +30,6 @@ import re
 from datetime import date
 from dateutil.relativedelta import relativedelta
 import regex
-from app.utils.redis import cache, cached
 
 logger = get_logger("store")
 
@@ -322,15 +324,6 @@ async def view_financial_details(store_id, db, payload, cipher):
         raise HTTPException(
             status_code=401, detail="unauthorized, you must be a registered user"
         )
-    cache_key = f"financial_details:{store_id}:{user_id}"
-    cached_detail = await cache(cache_key)
-    if cached_detail:
-        logger.info(
-            f"cache hit at view financial details endpoint for user '{user_id}'"
-        )
-        return StoreAccountResponse.model_validate(
-            cached_detail, context={"cipher": cipher}
-        )
     allowed_roles = ["Owner", "Admin"]
     store_account = (
         await db.execute(
@@ -341,11 +334,11 @@ async def view_financial_details(store_id, db, payload, cipher):
     ).scalar_one_or_none()
     if not store_account:
         logger.warning(
-            "user: %s, tried to view a finance details of a non-existent store, store: %s",
+            "user: %s, tried to view a non-existent finance details of store: %s",
             user_id,
             store_id,
         )
-        raise HTTPException(status_code=404, detail="store not found")
+        raise HTTPException(status_code=404, detail="store account not found")
     owner_id = [owner.id for owner in store_account.store.user_owners]
     if user_id not in owner_id and role not in allowed_roles:
         logger.warning(
@@ -357,7 +350,6 @@ async def view_financial_details(store_id, db, payload, cipher):
     data = StoreAccountResponse.model_validate(
         store_account, context={"cipher": cipher}
     )
-    await cached(cache_key, store_account, ttl=300)
     logger.info(
         "store: %s, successfully returned data, sensitive fields decrypted for user: %s",
         store_id,
@@ -698,6 +690,52 @@ async def view_current_performance(slug, db, payload):
         "data returned at view current performance endpoint for store: %s", slug
     )
     return data
+
+
+async def view_store_addresses(store_id, page, limit, db):
+    offset = (page - 1) * limit
+    cache_key = f"store_addresses:{store_id}:{page}:{limit}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info(
+            "cache hit at view store addresses endpoint for store: %s", store_id
+        )
+        return StandardResponse(**cached_data)
+    stmt = await db.execute(
+        select(StoreAddress, func.count(StoreAddress.id).over().label("total_count"))
+        .join(Store, StoreAddress.store_id == Store.id)
+        .where(Store.id == store_id, Store.approved)
+        .offset(offset)
+        .limit(limit)
+    )
+    store_address = stmt.all()
+    if not store_address:
+        logger.info("no addresses found for store: %s", store_id)
+        return StandardResponse(
+            status="success", message="no addresses found for this store", data=None
+        )
+    total = store_address[0].total_count
+    data = PaginatedMetadata[StoreAddressDetails](
+        items=[
+            StoreAddressDetails.model_validate(add.StoreAddress)
+            for add in store_address
+        ],
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+    )
+    full_response = StandardResponse(
+        status="success", message="store addresses retrieved", data=data
+    )
+    await cached(cache_key, full_response, ttl=300)
+    logger.info(
+        "data returned at view store addresses endpoint for store: %s", store_id
+    )
+    return full_response
+
+
+async def view_stores_by_category(seed, category_name, page, limit, db):
+    return await view_store_helper(
+        seed, category_name, Store.category.name, page, limit, db
+    )
 
 
 async def view_stores_by_business_type(seed, business_type, page, limit, db):

@@ -9,7 +9,7 @@ from app.api.v1.models import (
     PaginatedResponse,
 )
 from app.database.config import settings
-from app.models_sql import Product, User, Category
+from app.models_sql import Product, Store, Category, User
 from sqlalchemy import select, func, text
 from sqlalchemy.exc import IntegrityError
 import asyncio
@@ -22,6 +22,7 @@ from app.utils.redis import (
     cached,
     cache,
 )
+from app.utils.helper import file_generator
 from app.utils.supabase_url import cleaned_up
 
 logger = get_logger("products")
@@ -29,6 +30,9 @@ logger = get_logger("products")
 
 async def create(
     prod,
+    primary_image,
+    image,
+    category_name,
     get_supabase,
     db,
     payload,
@@ -36,18 +40,27 @@ async def create(
     user_id = payload.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="user not authenticated")
-    stmt = select(User).where(User.id == user_id)
-    admin = (await db.execute(stmt)).scalar_one_or_none()
-    if not admin or admin.role not in ["Admin", "Owner"]:
+    stmt = select(Store).where(
+        Store.id == prod.store_id, Store.user_owners.any(User.id == user_id)
+    )
+    owner = (await db.execute(stmt)).scalar_one_or_none()
+    if not owner:
         raise HTTPException(status_code=403, detail="not authorized")
     uploaded_file = []
     images = []
     tasks = []
+    files_allowed = ["image/jpeg", "image/png", "image/webp"]
     try:
-        filename = f"{uuid.uuid4()}_{secure_filename(prod.primary_image.filename)}"
-        file_byte = await prod.primary_image.read()
+        if primary_image.content_type not in files_allowed:
+            logger.warning(
+                "user: %s, tried uploading a file with an unsupported format",
+                user_id,
+            )
+            raise HTTPException(status_code=400, detail="file format not supported")
+        filename = f"{uuid.uuid4()}_{secure_filename(primary_image.filename)}"
+        file_byte = file_generator(primary_image, user_id)
         client = await get_supabase.storage.from_(settings.BUCKET).upload(
-            filename, file_byte, {"content-type": prod.primary_image.content_type}
+            filename, file_byte, {"content-type": primary_image.content_type}
         )
         if hasattr(client, "error"):
             logger.exception("could not upload product primary image %s", client)
@@ -56,16 +69,24 @@ async def create(
             )
         uploaded_file.append(filename)
         logger.info("saved product primary image")
-        if prod.image is not None:
+        if image is not None:
+            for img in image:
+                if img.content_type not in files_allowed:
+                    logger.warning(
+                        "user: %s, tried uploading  file with an unsupported format",
+                        user_id,
+                    )
+                    raise HTTPException(
+                        status_code=400, detail="file format not supported"
+                    )
             max_image = 7
-            if len(prod.image) > max_image:
+            if len(image) > max_image:
                 raise HTTPException(
                     status_code=400,
                     detail=f"maximum number of images allowed is {max_image}",
                 )
-            read_files = [file.read() for file in prod.image]
-            file_byte_list = await asyncio.gather(*read_files)
-            for file, file_byte in zip(prod.image, file_byte_list):
+            file_list = [file_generator(img, user_id) for img in image]
+            for file, file_byte in zip(image, file_list):
                 filenames = f"{uuid.uuid4()}_{secure_filename(file.filename)}"
                 tasks.append(
                     get_supabase.storage.from_(settings.BUCKET).upload(
@@ -76,7 +97,7 @@ async def create(
             await asyncio.gather(*tasks)
             uploaded_file.extend(images)
         else:
-            prod.image = None
+            image = None
     except Exception as e:
         logger.exception("could not save product image")
         await db.rollback()
@@ -94,12 +115,16 @@ async def create(
         )
     logger.info("saved product images, uploaded by user: %s", user_id)
     prod.primary_image = filename
+    category = (
+        await db.execute(select(Category).where(Category.name == category_name))
+    ).scalar_one_or_none()
     new_product = Product(
+        store_id=owner.id,
         product_name=prod.product_name,
         primary_image=filename,
         image=orjson.dumps(images).decode("utf-8"),
         product_price=prod.product_price,
-        category_id=prod.category_id,
+        category_id=category.id,
         product_availability=prod.product_availability,
     )
     try:
@@ -142,7 +167,6 @@ async def product_change(prod, db, payload, get_supabase):
     user_id = payload.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="user not authenticated")
-
     stmt = select(User).where(User.id == user_id)
     admin = (await db.execute(stmt)).scalar_one_or_none()
     if not admin or admin.role not in ["Admin", "Owner"]:

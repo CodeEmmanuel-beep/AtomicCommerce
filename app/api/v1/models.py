@@ -99,7 +99,7 @@ class StoreResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class StoreAccountDetail(BaseModel):
+class StoreAccountDetails(BaseModel):
     account_name: str
     account_number: str
     tax_identification_number: str
@@ -147,11 +147,13 @@ class StoreAccountResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class StoreAddressDetail(BaseModel):
+class StoreAddressDetails(BaseModel):
     street: str
     city: str
     state: str
     country: str
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PaginatedResponse(BaseModel):
@@ -203,9 +205,8 @@ class Chat(BaseModel):
 
 
 class ProductObj(BaseModel):
+    store_id: int
     product_name: str
-    primary_image: str
-    image: str
     product_price: float
     category_id: int
     product_availability: str

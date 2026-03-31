@@ -132,3 +132,20 @@ async def upload_photo_helper(photo, db, payload, get_supabase):
                 )
                 logger.exception("error saving store photo")
                 raise HTTPException(status_code=500, detail="error saving store photo")
+
+
+async def file_generator(file, user_id):
+    total_size = 0
+    max_image_size = 5 * 1024 * 1024
+    while chunk := await file.read(1024 * 1024):
+        total_size += len(chunk)
+        if total_size > max_image_size:
+            logger.warning(
+                "user: %s, tried uploading an image larger than the max size approved, image size attempted: %s",
+                user_id,
+                total_size,
+            )
+            raise HTTPException(
+                status_code=400, detail="image should not be morethan 5mb"
+            )
+        yield chunk
