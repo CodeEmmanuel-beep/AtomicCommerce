@@ -10,6 +10,7 @@ from app.models_sql import (
     Review,
     Order,
     Payment,
+    Product,
 )
 from app.api.v1.models import (
     StoreAccountResponse,
@@ -21,7 +22,7 @@ from app.api.v1.models import (
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload
-from sqlalchemy import func, select, text, and_, exists, cast, Date, Float
+from sqlalchemy import func, select, text, and_, exists, cast, Date, Float, update
 from sqlalchemy.exc import IntegrityError
 from app.utils.helper import view_store_helper, upload_photo_helper
 from app.utils.supabase_url import cleaned_up
@@ -996,7 +997,7 @@ async def delete_store(store_id, db, payload):
     store_check = (
         await db.execute(
             select(Store)
-            .options(selectinload(Store.user_owners))
+            .options(selectinload(Store.user_owners), selectinload(Store.products))
             .where(
                 Store.id == store_id,
                 ~Store.is_deleted,
@@ -1017,6 +1018,11 @@ async def delete_store(store_id, db, payload):
         raise HTTPException(status_code=403, detail="restricted access")
     store_check.is_deleted = True
     store_check.approved = False
+    (
+        await db.execute(
+            update(Product).where(Product.store_id == store_id).values(is_deleted=False)
+        )
+    )
     try:
         await db.commit()
         await store_invalidation()
