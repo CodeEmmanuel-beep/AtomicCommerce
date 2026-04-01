@@ -114,7 +114,7 @@ async def create(
             status_code=500, detail="could not save product primary image"
         )
     logger.info("saved product images, uploaded by user: %s", user_id)
-    prod.primary_image = filename
+    primary_image = filename
     category = (
         await db.execute(select(Category).where(Category.name == category_name))
     ).scalar_one_or_none()
@@ -163,7 +163,7 @@ async def create(
     return {"status": "success", "message": "product added to shelve"}
 
 
-async def product_change(prod, db, payload, get_supabase):
+async def product_change(prod, primary_image, image, db, payload, get_supabase):
     user_id = payload.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="user not authenticated")
@@ -178,39 +178,60 @@ async def product_change(prod, db, payload, get_supabase):
     uploaded_file = []
     images = []
     tasks = []
+    filename = None
     old_photo = []
-    if prod.image or prod.primary_image is not None:
+    if image or primary_image is not None:
         try:
-            if prod.primary_image is not None:
+            if primary_image is not None:
                 if product.primary_image:
                     old_photo.append(product.primary_image)
-                filename = (
-                    f"{uuid.uuid4()}_{secure_filename(prod.primary_image.filename)}"
-                )
-                file_byte = await prod.primary_image.read()
+                allowed_types = ["image/jpeg", "image/png", "image/webp"]
+                if primary_image.content_type not in allowed_types:
+                    logger.warning(
+                        "user: %s, tried uploading an unsupported file in product change endpoint, file_type: %s",
+                        user_id,
+                        primary_image.content_type,
+                    )
+                    raise HTTPException(
+                        status_code=400, detail="file type not supported"
+                    )
+                filename = f"{uuid.uuid4()}_{secure_filename(primary_image.filename)}"
+                file_byte = file_generator(primary_image, user_id)
                 response = await get_supabase.storage.from_(settings.BUCKET).upload(
                     filename,
                     file_byte,
-                    {"content-type": prod.primary_image.content_type},
+                    {"content-type": primary_image.content_type},
                 )
                 if hasattr(response, "error"):
                     logger.error("error updating product primary image %s", response)
                     raise HTTPException(status_code=500, detail="internal server error")
                 logger.info("updated product primary image")
-                product.primary_image = filename
                 uploaded_file.append(filename)
-            if prod.image is not None:
+            if image is not None:
                 if product.image and len(str(product.image)) > 2:
                     old_photo.extend(orjson.loads(product.image))
+                for img in image:
+                    if img.content_type not in [
+                        "image/jpeg",
+                        "image/png",
+                        "image/webp",
+                    ]:
+                        logger.warning(
+                            "user: %s, tried uploading an unsupported file in product change endpoint, file_type: %s",
+                            user_id,
+                            img.content_type,
+                        )
+                        raise HTTPException(
+                            status_code=400, detail="file type not supported"
+                        )
                 max_image = 7
-                if len(prod.image) > max_image:
+                if len(image) > max_image:
                     raise HTTPException(
                         status_code=400,
                         detail=f"maximum number of images allowed is {max_image}",
                     )
-                read_tasks = [file.read() for file in prod.image]
-                file_byte_list = await asyncio.gather(*read_tasks)
-                for file, file_byte in zip(prod.image, file_byte_list):
+                file_list = [file_generator(img, user_id) for img in image]
+                for file, file_byte in zip(image, file_list):
                     filenames = f"{uuid.uuid4()}_{secure_filename(file.filename)}"
                     tasks.append(
                         get_supabase.storage.from_(settings.BUCKET).upload(
@@ -221,8 +242,12 @@ async def product_change(prod, db, payload, get_supabase):
                     )
                     images.append(filenames)
                 await asyncio.gather(*tasks)
-                product.image = orjson.dumps(images).decode("utf-8")
                 uploaded_file.extend(images)
+                logger.info("updated product images, uploaded by user: %s", user_id)
+            product.primary_image = filename if filename else product.primary_image
+            product.image = (
+                orjson.dumps(images).decode("utf-8") if images else product.image
+            )
         except Exception as e:
             if uploaded_file:
                 await cleaned_up(

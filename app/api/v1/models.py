@@ -208,7 +208,6 @@ class ProductObj(BaseModel):
     store_id: int
     product_name: str
     product_price: float
-    category_id: int
     product_availability: str
 
 
