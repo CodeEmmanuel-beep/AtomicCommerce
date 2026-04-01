@@ -138,6 +138,7 @@ class StoreAddress(Base):
     city: Mapped[str] = mapped_column(String, nullable=False)
     state: Mapped[str] = mapped_column(String, nullable=False)
     country: Mapped[str] = mapped_column(String, nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     store = relationship("Store", back_populates="addresses")
 
