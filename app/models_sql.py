@@ -204,6 +204,7 @@ class Inventory(Base):
     )
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
     quantity: Mapped[int] = mapped_column(Integer, default=0)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     last_updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
