@@ -13,6 +13,7 @@ from sqlalchemy import (
     Table,
     Enum as SQLEnum,
     LargeBinary,
+    CheckConstraint,
 )
 from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped
@@ -126,6 +127,7 @@ class Store(Base):
     order = relationship("Order", back_populates="store", uselist=False)
     account = relationship("StoreAccount", back_populates="store")
     products = relationship("Product", back_populates="store")
+    inventories = relationship("Inventory", back_populates="store")
 
 
 class StoreAddress(Base):
@@ -191,6 +193,27 @@ class Product(Base):
     replies = relationship("Reply", back_populates="product")
     cart_items = relationship("CartItem", back_populates="product")
     category = relationship("Category", back_populates="products")
+    inventories = relationship("Inventory", back_populates="product")
+
+
+class Inventory(Base):
+    __tablename__ = "inventories"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id"), index=True
+    )
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    last_updated: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("store_id", "product_id", name="store_product_inventory"),
+        CheckConstraint("quantity >= 0", name="positive_quantity"),
+    )
+    product = relationship("Product", back_populates="inventories")
+    store = relationship("Store", back_populates="inventories")
 
 
 class Payment(Base):
