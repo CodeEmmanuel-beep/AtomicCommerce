@@ -9,8 +9,8 @@ from app.api.v1.models import (
     PaginatedResponse,
 )
 from app.database.config import settings
-from app.models_sql import Product, Store, Category, User
-from sqlalchemy import select, func, text
+from app.models_sql import Product, Store, Category, User, Inventory
+from sqlalchemy import select, func, text, update, or_
 from sqlalchemy.exc import IntegrityError
 import asyncio
 import orjson
@@ -40,10 +40,14 @@ async def create(
     if not user_id:
         raise HTTPException(status_code=401, detail="user not authenticated")
     stmt = select(Store).where(
-        Store.id == prod.store_id, Store.user_owners.any(User.id == user_id)
+        Store.id == prod.store_id,
+        or_(
+            Store.user_owners.any(User.id == user_id),
+            Store.user_staffs.any(User.id == user_id),
+        ),
     )
-    owner = (await db.execute(stmt)).scalar_one_or_none()
-    if not owner:
+    eligible = (await db.execute(stmt)).scalar_one_or_none()
+    if not eligible:
         raise HTTPException(status_code=403, detail="not authorized")
     uploaded_file = []
     images = []
@@ -118,7 +122,7 @@ async def create(
         await db.execute(select(Category).where(Category.name == prod.category_name))
     ).scalar_one_or_none()
     new_product = Product(
-        store_id=owner.id,
+        store_id=eligible.id,
         product_name=prod.product_name,
         primary_image=filename,
         image=orjson.dumps(images).decode("utf-8"),
@@ -170,8 +174,11 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
         select(Product)
         .join(Store, Product.store_id == Store.id)
         .where(
+            or_(
+                Store.user_owners.any(User.id == user_id),
+                Store.user_staffs.any(User.id == user_id),
+            ),
             Store.id == prod.store_id,
-            Store.user_owners.any(User.id == user_id),
             Product.id == prod.product_id,
             ~Product.is_deleted,
         )
@@ -409,37 +416,55 @@ async def search_product(product_name, category, page, limit, db):
     return full_response
 
 
-async def delete_one(product_id, db, payload, get_supabase):
+async def delete_one(store_id, product_id, background_task, db, payload, get_supabase):
     user_id = payload.get("user_id")
     username = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=403, detail="Unauthorized access.")
-    user = (
-        await db.execute(select(User).where(User.id == user_id))
+    store_product = (
+        await db.execute(
+            select(Product)
+            .join(Store, Product.store_id == Store.id)
+            .where(
+                Product.id == product_id,
+                Store.id == store_id,
+                or_(
+                    Store.user_owners.any(User.id == user_id),
+                    Store.user_staffs.any(User.id == user_id),
+                ),
+            )
+            .with_for_update()
+        )
     ).scalar_one_or_none()
-    if not user or user.role not in ["Admin", "Owner"]:
+    if not store_product:
         logger.warning(
-            f"{username}, tried deleting a product without admin powers, product id: {product_id}"
+            f"{username}, tried deleting a product with invalid credentials, product id: {product_id}"
         )
-        raise HTTPException(status_code=403, detail="Not authorized")
-    stmt = select(Product).where(Product.id == product_id)
-    data = (await db.execute(stmt)).scalar_one_or_none()
-    if not data:
-        logger.warning(
-            f"{username}, tried deleting a nonexistent product, product id: {product_id}"
+        raise HTTPException(status_code=403, detail="invalid credentials")
+    store_product.is_deleted = True
+    (
+        await db.execute(
+            update(Inventory)
+            .where(Inventory.product_id == product_id)
+            .values(is_deleted=True)
         )
-        raise HTTPException(status_code=404, detail="invalid field")
-    data.is_deleted = True
-    files_to_delete = orjson.loads(data.image) if data.image else []
+    )
+    files_to_delete = orjson.loads(store_product.image) if store_product.image else []
+    data_id = store_product.id
     try:
         await db.commit()
-        await asyncio.gather(
-            cart_global_invalidation(),
-            order_global_invalidation(),
-            product_invalidation(),
+        background_task.add_task(
+            cart_global_invalidation,
+        )
+        background_task.add_task(
+            order_global_invalidation,
+        )
+        background_task.add_task(
+            product_invalidation,
         )
         if files_to_delete:
-            await cleaned_up(
+            background_task.add_task(
+                cleaned_up,
                 get_supabase,
                 files_to_delete,
                 context_1="error removing orphaned product images",
@@ -459,7 +484,7 @@ async def delete_one(product_id, db, payload, get_supabase):
         "status": "success",
         "message": "deleted product",
         "data": {
-            "id": data.id,
+            "id": data_id,
             "username": username,
             "deleted": "Yes",
         },

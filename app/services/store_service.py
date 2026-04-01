@@ -11,6 +11,7 @@ from app.models_sql import (
     Order,
     Payment,
     Product,
+    Inventory,
 )
 from app.api.v1.models import (
     StoreAccountResponse,
@@ -1084,6 +1085,13 @@ async def remove_store(store_id, db, payload):
     (
         await db.execute(
             update(Product).where(Product.store_id == store_id).values(is_deleted=True)
+        )
+    )
+    (
+        await db.execute(
+            update(Inventory)
+            .where(Inventory.store_id == store_id)
+            .values(is_deleted=True)
         )
     )
     try:
