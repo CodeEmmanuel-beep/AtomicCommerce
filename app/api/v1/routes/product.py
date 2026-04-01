@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, UploadFile, File
+from fastapi import APIRouter, Depends, Query, UploadFile, File, BackgroundTasks
 from app.database.get import get_db
 from app.auth.verify_jwt import verify_token
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -86,13 +86,20 @@ async def list_one(
     )
 
 
-@router.delete("/delete", response_model=StandardResponse)
-async def delete_one(
+@router.delete("/delete/{store_id}/{product_id}", response_model=StandardResponse)
+async def delete_product(
+    store_id: int,
     product_id: int,
+    background_task: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
     get_supabase=Depends(_supabase),
 ):
     return await product_service.delete_one(
-        product_id=product_id, db=db, payload=payload, get_supabase=get_supabase
+        store_id=store_id,
+        product_id=product_id,
+        background_task=background_task,
+        db=db,
+        payload=payload,
+        get_supabase=get_supabase,
     )
