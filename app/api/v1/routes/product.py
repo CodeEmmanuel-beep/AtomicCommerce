@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile, File
 from app.database.get import get_db
 from app.auth.verify_jwt import verify_token
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,24 +18,38 @@ router = APIRouter(prefix="/product", tags=["Products"])
 @router.post("add_product")
 async def create_product(
     prod: ProductObj,
+    primary_image: UploadFile = File(...),
+    image: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
     get_supabase=Depends(_supabase),
 ):
     return await product_service.create(
-        prod=prod, db=db, payload=payload, get_supabase=get_supabase
+        prod=prod,
+        primary_image=primary_image,
+        image=image,
+        db=db,
+        payload=payload,
+        get_supabase=get_supabase,
     )
 
 
 @router.put("/edit_product")
 async def product_change(
     prod: ProductObj,
+    primary_image: UploadFile = File(...),
+    image: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
     get_supabse=Depends(_supabase),
 ):
     return await product_service.product_change(
-        prod=prod, db=db, payload=payload, get_supabase=get_supabse
+        prod=prod,
+        primary_image=primary_image,
+        image=image,
+        db=db,
+        payload=payload,
+        get_supabase=get_supabse,
     )
 
 

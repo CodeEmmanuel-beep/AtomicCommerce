@@ -10,7 +10,7 @@ from app.api.v1.models import (
 )
 from app.database.config import settings
 from app.models_sql import Product, Store, Category, User
-from sqlalchemy import select, func, text, exists
+from sqlalchemy import select, func, text
 from sqlalchemy.exc import IntegrityError
 import asyncio
 import orjson
@@ -32,7 +32,6 @@ async def create(
     prod,
     primary_image,
     image,
-    category_name,
     get_supabase,
     db,
     payload,
@@ -116,7 +115,7 @@ async def create(
     logger.info("saved product images, uploaded by user: %s", user_id)
     primary_image = filename
     category = (
-        await db.execute(select(Category).where(Category.name == category_name))
+        await db.execute(select(Category).where(Category.name == prod.category_name))
     ).scalar_one_or_none()
     new_product = Product(
         store_id=owner.id,
