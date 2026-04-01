@@ -205,6 +205,7 @@ class Chat(BaseModel):
 
 
 class ProductObj(BaseModel):
+    product_id: int
     store_id: int
     product_name: str
     product_price: float

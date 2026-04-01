@@ -34,6 +34,8 @@ import regex
 
 logger = get_logger("store")
 
+store_name_pattern = regex.compile(r"^[\p{L}\s]+$")
+
 
 def generate_slug(name: str) -> str:
     name = name.lower().strip()
@@ -50,7 +52,7 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
         raise HTTPException(
             status_code=401, detail="only registered users can own a store"
         )
-    if not regex.fullmatch(r"^[\p{L}\s]+$", storeobj.store_name):
+    if not store_name_pattern.fullmatch(storeobj.store_name):
         raise HTTPException(status_code=400, detail="store names should be in letters")
     store_slug = generate_slug(storeobj.store_name)
     stmt = select(Store).where(Store.slug == store_slug)
@@ -147,12 +149,16 @@ async def store_update(
         raise HTTPException(
             status_code=401, detail="only registered users can own a store"
         )
-    if not regex.fullmatch(r"^[\p{L}\s]+$", storeupdate.store_name):
+    if not store_name_pattern.fullmatch(storeupdate.store_name):
         raise HTTPException(status_code=400, detail="store names should be in letters")
-    stmt = select(Store).where(
-        Store.id == storeupdate.store_id,
-        Store.approved,
-        Store.user_owners.any(User.id == user_id),
+    stmt = (
+        select(Store)
+        .where(
+            Store.id == storeupdate.store_id,
+            Store.approved,
+            Store.user_owners.any(User.id == user_id),
+        )
+        .with_for_update()
     )
     store_map = (await db.execute(stmt)).scalar_one_or_none()
     if not store_map:
@@ -187,16 +193,17 @@ async def store_update(
         store_map.store_previous_name = store_map.store_name
         store_map.store_name = storeupdate.store_name
         store_map.edited_name = True
-    if storeupdate.motto:
-        store_map.motto = storeupdate.motto
-    if storeupdate.store_description:
-        store_map.store_description = storeupdate.store_description
-    if storeupdate.store_contact:
-        store_map.store_contact = storeupdate.store_contact
-    if storeupdate.business_type:
-        store_map.business_type = storeupdate.business_type
-    if storeupdate.store_email:
-        store_map.store_email = storeupdate.store_email
+    update_fields = [
+        "motto",
+        "store_description",
+        "store_contact",
+        "business_type",
+        "store_email",
+    ]
+    for field in update_fields:
+        value = getattr(storeupdate, field, None)
+        if value is not None:
+            setattr(store_map, field, value)
     try:
         await db.commit()
         if old_photo:
@@ -219,7 +226,7 @@ async def store_update(
                 context_1="error removing orphaned store photo",
                 context_2="successfully removed orphaned store photo",
             )
-        logger.error("database error while creating store for user '%s'", user_id)
+        logger.error("database error while updating store for user '%s'", user_id)
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
@@ -230,7 +237,7 @@ async def store_update(
                 context_1="error removing orphaned store photo",
                 context_2="successfully removed orphaned store photo",
             )
-        logger.exception("error while creating store for user '%s'", user_id)
+        logger.exception("error while updating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
 
 
@@ -747,7 +754,7 @@ async def view_stores_by_business_type(seed, business_type, page, limit, db):
 
 async def view_stores_by_product_name(seed, product_name, page, limit, db):
     return await view_store_helper(
-        seed, product_name, Store.category.product_name, page, limit, db
+        seed, product_name, Store.products.product_name, page, limit, db
     )
 
 

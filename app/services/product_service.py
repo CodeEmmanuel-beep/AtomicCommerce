@@ -10,7 +10,7 @@ from app.api.v1.models import (
 )
 from app.database.config import settings
 from app.models_sql import Product, Store, Category, User
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func, text, exists
 from sqlalchemy.exc import IntegrityError
 import asyncio
 import orjson
@@ -167,11 +167,17 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
     user_id = payload.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="user not authenticated")
-    stmt = select(User).where(User.id == user_id)
-    admin = (await db.execute(stmt)).scalar_one_or_none()
-    if not admin or admin.role not in ["Admin", "Owner"]:
-        raise HTTPException(status_code=403, detail="not authorized")
-    stmt = select(Product).where(Product.id == prod.product_id).with_for_update()
+    stmt = (
+        select(Product)
+        .join(Store, Product.store_id == Store.id)
+        .where(
+            Store.id == prod.store_id,
+            Store.user_owners.any(User.id == user_id),
+            Product.id == prod.product_id,
+            ~Product.is_deleted,
+        )
+        .with_for_update()
+    )
     product = (await db.execute(stmt)).scalar_one_or_none()
     if not product:
         raise HTTPException(status_code=403, detail="invalid id")
@@ -260,12 +266,11 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
                 raise e
             logger.exception("error updating product images")
             raise HTTPException(status_code=500, detail="error saving product image")
-    if prod.product_name is not None:
-        product.product_name = prod.product_name
-    if prod.product_price is not None:
-        product.product_price = prod.product_price
-    if prod.product_availability is not None:
-        product.product_availability = prod.product_availability
+    update_fields = ["product_name", "product_price", "product_availability"]
+    for field in update_fields:
+        val = getattr(prod, field, None)
+        if val is not None:
+            setattr(product, field, val)
     try:
         await db.commit()
         await asyncio.gather(
