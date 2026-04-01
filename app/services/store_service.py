@@ -923,7 +923,7 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
     return {"message": "personnel added"}
 
 
-async def delete_staff(store_id, staff_id, db, payload):
+async def remove_staff(store_id, staff_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at delete_staff endpoint")
@@ -991,7 +991,7 @@ async def delete_staff(store_id, staff_id, db, payload):
     return {"message": "personnel deleted"}
 
 
-async def delete_store(store_id, db, payload):
+async def remove_store(store_id, db, payload):
     user_id = payload.get("user_id")
     role = payload.get("role")
     if not user_id:
