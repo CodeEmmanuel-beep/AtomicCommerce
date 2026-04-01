@@ -229,6 +229,18 @@ async def delete_staff_by_id(
     )
 
 
+@router.delete("/delete_address/{store_id}/{address_id}")
+async def delete_address_by_id(
+    store_id: int,
+    address_id: int,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await store_service.remove_address(
+        store_id=store_id, address_id=address_id, db=db, payload=payload
+    )
+
+
 @router.delete("/delete_store/{store_id}")
 async def delete_store_by_id(
     store_id: int,
