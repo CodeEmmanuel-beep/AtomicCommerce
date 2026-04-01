@@ -991,6 +991,55 @@ async def remove_staff(store_id, staff_id, db, payload):
     return {"message": "personnel deleted"}
 
 
+async def remove_address(store_id, address_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at delete_address endpoint")
+        raise HTTPException(
+            status_code=401, detail="only registered users can access this endpoint"
+        )
+    check_stmt = (
+        select(StoreAddress)
+        .join(Store, StoreAddress.store_id == Store.id)
+        .where(
+            Store.id == store_id,
+            Store.user_owners.any(User.id == user_id),
+            StoreAddress.id == address_id,
+            ~StoreAddress.is_deleted,
+        )
+        .with_for_update(of=StoreAddress)
+    )
+    address_check = (await db.execute(check_stmt)).scalar_one_or_none()
+    if not address_check:
+        logger.error(
+            "user: %s, hit a permission errror at the delete_address endpoint",
+            user_id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="permission error, verify the store and address before proceeding",
+        )
+    address_check.is_deleted = True
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.error(
+            "database error occured at the delete_address endpoint, user afffected: %s",
+            user_id,
+        )
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "rollback occured at the delete_address endpoint, user afffected: %s",
+            user_id,
+        )
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("address '%s', removed from store: %s", address_id, store_id)
+    return {"message": "address deleted"}
+
+
 async def remove_store(store_id, db, payload):
     user_id = payload.get("user_id")
     role = payload.get("role")
@@ -1000,15 +1049,15 @@ async def remove_store(store_id, db, payload):
             status_code=401, detail="only registered users can access this endpoint"
         )
     allowed_roles = ["Owner", "Admin"]
-    (await db.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": store_id}))
     store_check = (
         await db.execute(
             select(Store)
-            .options(selectinload(Store.user_owners), selectinload(Store.products))
+            .options(selectinload(Store.user_owners))
             .where(
                 Store.id == store_id,
                 ~Store.is_deleted,
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if not store_check:
@@ -1027,7 +1076,14 @@ async def remove_store(store_id, db, payload):
     store_check.approved = False
     (
         await db.execute(
-            update(Product).where(Product.store_id == store_id).values(is_deleted=False)
+            update(StoreAddress)
+            .where(StoreAddress.store_id == store_id)
+            .values(is_deleted=True)
+        )
+    )
+    (
+        await db.execute(
+            update(Product).where(Product.store_id == store_id).values(is_deleted=True)
         )
     )
     try:
