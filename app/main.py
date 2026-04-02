@@ -11,6 +11,8 @@ from app.api.v1.routes import (
     category,
     order,
     membership,
+    store_analytics,
+    store,
 )
 from app.exceptions import (
     make_exception_handler,
@@ -74,6 +76,8 @@ app.include_router(order.router)
 app.include_router(product_reviews.router)
 app.include_router(product_reply.router)
 app.include_router(membership.router)
+app.include_router(store.router)
+app.include_router(store_analytics.router)
 app.include_router(store_reviews.router)
 app.include_router(store_reply.router)
 app.add_exception_handler(RequestValidationError, make_validation_error_handler())
