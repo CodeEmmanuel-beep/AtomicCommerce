@@ -186,7 +186,6 @@ class Product(Base):
     product_price = Column(Numeric(precision=12, scale=2))
     category_id = Column(Integer, ForeignKey("categories.id"), index=True)
     product_availability = Column(String, default="available")
-    stock_quantity = Column(Integer, default=0)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
     store = relationship("Store", back_populates="products")
@@ -204,7 +203,7 @@ class Inventory(Base):
         Integer, ForeignKey("products.id"), index=True
     )
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
-    quantity: Mapped[int] = mapped_column(Integer, default=0)
+    stock_quantity: Mapped[int] = mapped_column(Integer, default=0)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     last_updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
