@@ -134,6 +134,8 @@ async def store_creation(storeobj, store_photo, db, payload, get_supabase):
         )
         logger.exception("error while creating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("store: %s, created successfully", new_store.id)
+    return {"message": "store created"}
 
 
 async def store_update(
@@ -235,6 +237,8 @@ async def store_update(
             )
         logger.exception("error while updating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("store: %s, updated successfully", store_map.id)
+    return {"message": "store updated"}
 
 
 async def approve_stores(slug, db, payload):
@@ -263,6 +267,8 @@ async def approve_stores(slug, db, payload):
         await db.rollback()
         logger.exception("error while approving store '%s'", slug)
         raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("store: %s, approved successfully", slug)
+    return {"message": "store approved"}
 
 
 async def add_finance_details(store_id, finance_details, db, payload, cipher):
@@ -318,6 +324,8 @@ async def add_finance_details(store_id, finance_details, db, payload, cipher):
         await db.rollback()
         logger.exception("error while adding finance details for store '%s'", store_id)
         raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("finance details added to store: %s successfully", store_id)
+    return {"message": "finance details added"}
 
 
 async def view_financial_details(store_id, db, payload, cipher):
@@ -403,6 +411,8 @@ async def add_address(store_id, address_details, db, payload):
         await db.rollback()
         logger.exception("error while adding address details for store '%s'", store_id)
         raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("address details added to store: %s successfully", store_id)
+    return {"message": "address details added"}
 
 
 async def view_store_addresses(store_id, page, limit, db):
@@ -474,6 +484,19 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
         raise HTTPException(
             status_code=401, detail="only registered users can access this endpoint"
         )
+    if not owner_id and not staff_id:
+        logger.warning("user: %s, tried executing a null field", user_id)
+        raise HTTPException(
+            status_code=400, detail="you must add either a new staff or a new owner"
+        )
+    if owner_id and staff_id:
+        logger.warning(
+            "user: %s, tried adding a staff and owner at the same time", user_id
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="you must add either a new staff or a new owner not both at once",
+        )
     (await db.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": store_id}))
     store_check = (
         await db.execute(
@@ -540,36 +563,36 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
             user_id,
         )
         raise HTTPException(status_code=403, detail="restricted access")
-    if owner_id and result["already_owner"]:
+    if result["already_owner"]:
         logger.warning(
-            "user: %s, tried making owner '%s', when they are already an owner in the same store",
+            "user: %s, tried making user '%s', an owner, when they are already an owner in the same store",
             user_id,
             owner_id,
         )
         raise HTTPException(
             status_code=400, detail="the user is already an owner of this store"
         )
-    if staff_id and result["owner_already"]:
+    if result["owner_already"]:
         logger.warning(
-            "user: %s, tried making staff '%s', when they are already an owner in the same store",
+            "user: %s, tried making user '%s', a staff, when they are already an owner in the same store",
             user_id,
             staff_id,
         )
         raise HTTPException(
             status_code=400, detail="this user is already an owner of this store"
         )
-    if staff_id and result["already_staff"]:
+    if result["already_staff"]:
         logger.warning(
-            "user: %s, tried making staff '%s', when they are already a staff in the same store",
+            "user: %s, tried making user '%s', a staff, when they are already a staff in the same store",
             user_id,
             staff_id,
         )
         raise HTTPException(
             status_code=400, detail="the user is already a staff of this store"
         )
-    if owner_id and result["already_staff"]:
+    if result["staff_already"]:
         logger.warning(
-            "user: %s, tried making owner '%s', when they are already a staff in the same store",
+            "user: %s, tried making user '%s', an owner, when they are already a staff in the same store",
             user_id,
             owner_id,
         )
@@ -591,19 +614,6 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
             intended_id,
         )
         raise HTTPException(status_code=404, detail="user not found")
-    if not owner_id and not staff_id:
-        logger.warning("user: %s, tried executing a null field", user_id)
-        raise HTTPException(
-            status_code=400, detail="you must add either a new staff or a new owner"
-        )
-    if owner_id and staff_id:
-        logger.warning(
-            "user: %s, tried adding a staff and owner at the same time", user_id
-        )
-        raise HTTPException(
-            status_code=400,
-            detail="you must add either a new staff or a new owner not both at once",
-        )
     if owner_id is not None:
         store_check.user_owners.append(user_obj)
     if staff_id is not None:
