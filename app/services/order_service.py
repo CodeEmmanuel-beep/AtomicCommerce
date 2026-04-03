@@ -5,11 +5,12 @@ from app.api.v1.models import (
     StandardResponse,
     OrderItemRes,
 )
-from app.models_sql import Cart, Order, OrderItem, CartItem, Payment
+from app.database.async_config import AsyncSessionLocal
+from app.models_sql import Cart, Order, OrderItem, CartItem, Payment, Product, Inventory
 from datetime import datetime, timezone
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 from app.logs.logger import get_logger
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.utils.redis import (
@@ -23,6 +24,34 @@ import asyncio
 
 
 logger = get_logger("order")
+
+
+async def product_availability(product_ids: list[int]):
+    if isinstance(product_ids, int):
+        product_ids = [product_ids]
+    async with AsyncSessionLocal() as conn:
+        try:
+            async with conn.begin():
+                out_of_stock_ids = (
+                    select(Inventory.product_id)
+                    .where(Inventory.stock_quantity == 0)
+                    .scalar_subquery()
+                )
+                await conn.execute(
+                    update(Product)
+                    .where(
+                        and_(
+                            Product.id.in_(out_of_stock_ids),
+                            Product.id.in_(product_ids),
+                        ),
+                        Product.product_availability != "out_of_stock",
+                    )
+                    .values(product_availability="out_of_stock")
+                    .execution_options(synchronize_session="fetch")
+                )
+                logger.info("Background availability sync complete.")
+        except Exception:
+            logger.exception("failed to update product availability")
 
 
 async def create_orders(db, payload):
@@ -53,7 +82,9 @@ async def create_orders(db, payload):
     return {"status": "success", "message": "order successfully created"}
 
 
-async def create_order_items(cart_id, order_id, db, payload):
+async def create_order_items(
+    cart_id, order_id, background_tasks: BackgroundTasks, db, payload
+):
     user_id = payload.get("user_id")
     stmt = select(Order).where(Order.id == order_id).with_for_update()
     order = (await db.execute(stmt)).scalar_one_or_none()
@@ -107,6 +138,9 @@ async def create_order_items(cart_id, order_id, db, payload):
         )
         if update_result.rowcount == 0:
             raise HTTPException(status_code=409, detail="cart already checked out")
+        background_tasks.add_task(
+            product_availability, [item.product_id for item in new_orders]
+        )
         await db.commit()
         await asyncio.gather(order_invalidation(user_id), cart_invalidation(user_id))
     except IntegrityError:
