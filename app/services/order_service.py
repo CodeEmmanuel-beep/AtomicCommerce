@@ -54,7 +54,7 @@ async def product_availability(product_ids: list[int]):
             logger.exception("failed to update product availability")
 
 
-async def create_orders(db, payload):
+async def create_orders(store_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.error("Unauthorized attempt to create order")
@@ -64,6 +64,7 @@ async def create_orders(db, payload):
     logger.info(f"Creating order for user_id: {user_id}")
     order = Order(
         user_id=user_id,
+        store_id=store_id,
         created_at=datetime.now(timezone.utc),
     )
     try:
@@ -83,10 +84,14 @@ async def create_orders(db, payload):
 
 
 async def create_order_items(
-    cart_id, order_id, background_tasks: BackgroundTasks, db, payload
+    store_id, cart_id, order_id, background_tasks: BackgroundTasks, db, payload
 ):
     user_id = payload.get("user_id")
-    stmt = select(Order).where(Order.id == order_id).with_for_update()
+    stmt = (
+        select(Order)
+        .where(Order.id == order_id, Order.store_id == store_id)
+        .with_for_update()
+    )
     order = (await db.execute(stmt)).scalar_one_or_none()
     if not order:
         logger.error("No order created")
@@ -94,7 +99,12 @@ async def create_order_items(
     stmt = (
         select(Cart)
         .options(selectinload(Cart.cartitems).selectinload(CartItem.product))
-        .where(Cart.id == cart_id, ~Cart.check_out, Cart.user_id == user_id)
+        .where(
+            Cart.id == cart_id,
+            ~Cart.check_out,
+            Cart.user_id == user_id,
+            Cart.store_id == store_id,
+        )
     )
     result = await db.execute(stmt)
     carts = result.scalar_one_or_none()
@@ -153,7 +163,7 @@ async def create_order_items(
     return {"status": "success", "message": "order item successfully created"}
 
 
-async def view_orders(page, limit, db, payload):
+async def view_orders(store_id, page, limit, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.error("Unauthorized attempt to view orders")
@@ -164,7 +174,7 @@ async def view_orders(page, limit, db, payload):
             status_code=400, detail="page number and limit must be greater than 0"
         )
     version = await cache_version("order_key")
-    order_key = f"orders:v{version}:{user_id}:{page}:{limit}"
+    order_key = f"orders:v{version}:{user_id}:{store_id}:{page}:{limit}"
     cache_key = await cache(order_key)
     if cache_key:
         return StandardResponse(**cache_key)
@@ -177,13 +187,19 @@ async def view_orders(page, limit, db, payload):
             selectinload(Order.membership),
             selectinload(Order.user),
         )
-        .where(Order.user_id == user_id, ~Order.order_delete)
+        .where(
+            Order.user_id == user_id, Order.store_id == store_id, ~Order.order_delete
+        )
     )
     total = (
         await db.execute(
             select(func.count())
             .select_from(Order)
-            .where(Order.user_id == user_id, ~Order.order_delete)
+            .where(
+                Order.user_id == user_id,
+                Order.store_id == store_id,
+                ~Order.order_delete,
+            )
         )
     ).scalar() or 0
     logger.info(f"Total orders found: {total} for user_id: {user_id}")
@@ -200,7 +216,7 @@ async def view_orders(page, limit, db, payload):
     return StandardResponse(status="success", message="orders", data=data)
 
 
-async def view_order(order_id, page, limit, db, payload):
+async def view_order(store_id, order_id, page, limit, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.error("Unauthorized attempt to view order")
@@ -211,7 +227,7 @@ async def view_order(order_id, page, limit, db, payload):
             status_code=400, detail="page number and limit must be greater than 0"
         )
     version = await cache_version("order_key")
-    order_key = f"orders:v{version}:{user_id}:{order_id}:{page}:{limit}"
+    order_key = f"orders:v{version}:{user_id}:{store_id}:{order_id}:{page}:{limit}"
     cache_key = await cache(order_key)
     if cache_key:
         return StandardResponse(**cache_key)
@@ -225,7 +241,12 @@ async def view_order(order_id, page, limit, db, payload):
             selectinload(Order.user),
             selectinload(Order.membership),
         )
-        .where(Order.user_id == user_id, Order.id == order_id, ~Order.order_delete)
+        .where(
+            Order.user_id == user_id,
+            Order.store_id == store_id,
+            Order.id == order_id,
+            ~Order.order_delete,
+        )
     )
     order = (await db.execute(stmt.offset(offset).limit(limit))).scalar_one_or_none()
     logger.info(f"Fetched order details for order_id: {order_id}")
@@ -250,6 +271,7 @@ async def view_order(order_id, page, limit, db, payload):
 
 
 async def cancel_order(
+    store_id,
     order_id,
     db,
     payload,
@@ -260,17 +282,22 @@ async def cancel_order(
         raise HTTPException(status_code=401, detail="not authorized")
     stmt = (
         select(Order)
-        .join(Order.payment)
+        .join(Payment, Order.id == Payment.order_id, isouter=True)
+        .options(selectinload(Order.payment))
         .where(
-            Order.user_id == user_id, Order.id == order_id, Payment.order_id == order_id
+            Order.user_id == user_id,
+            Order.store_id == store_id,
+            Order.id == order_id,
         )
-    ).with_for_update()
+        .with_for_update()
+    )
     logger.info(f"Fetching order to cancel for order_id: {order_id}")
     result = (await db.execute(stmt)).scalar_one_or_none()
     if not result:
         logger.error(f"Order with order_id: {order_id} not found for cancellation")
         raise HTTPException(status_code=404, detail="order item not found")
-    if result.payment.status == "pending":
+    payment_status = result.payment.status if result.payment else "pending"
+    if payment_status == "pending":
         result.status = "Cancelled"
         logger.info(f"Order with order_id: {order_id} cancelled successfully")
     else:
@@ -296,6 +323,7 @@ async def cancel_order(
 
 
 async def delete_order(
+    store_id,
     order_id,
     db,
     payload,
@@ -304,12 +332,23 @@ async def delete_order(
     if not user_id:
         logger.error("Unauthorized attempt to delete order")
         raise HTTPException(status_code=401, detail="not authorized")
-    stmt = select(Order).where(Order.user_id == user_id, Order.id == order_id)
+    stmt = (
+        select(Order)
+        .where(
+            Order.user_id == user_id, Order.store_id == store_id, Order.id == order_id
+        )
+        .with_for_update()
+    )
     result = (await db.execute(stmt)).scalar_one_or_none()
     logger.info(f"Fetching order to delete for order_id: {order_id}")
     if not result:
         logger.error(f"Order with order_id: {order_id} not found for deletion")
         raise HTTPException(status_code=404, detail="order item not found")
+    if result.status not in ["Cancelled", "Delivered", "Completed"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete an active order. Please cancel it first.",
+        )
     result.order_delete = True
     try:
         await db.commit()
@@ -321,6 +360,6 @@ async def delete_order(
     except Exception:
         await db.rollback()
         logger.exception("error while deleting order")
-        raise HTTPException(status_code=400, detail="internal server error")
+        raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Order deletion process completed for order_id: {order_id}")
     return {"message": "order deleted"}
