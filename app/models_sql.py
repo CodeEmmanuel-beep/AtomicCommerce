@@ -128,6 +128,7 @@ class Store(Base):
     account = relationship("StoreAccount", back_populates="store")
     products = relationship("Product", back_populates="store")
     inventories = relationship("Inventory", back_populates="store")
+    carts = relationship("Cart", back_populates="store")
 
 
 class StoreAddress(Base):
@@ -317,6 +318,7 @@ class Cart(Base):
     __tablename__ = "carts"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
     member_id = Column(
         Integer, ForeignKey("memberships.id", ondelete="CASCADE"), index=True
     )
@@ -325,6 +327,7 @@ class Cart(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     user = relationship("User", back_populates="carts")
+    store = relationship("Store", back_populates="carts")
     cartitems = relationship(
         "CartItem", back_populates="cart", cascade="all, delete-orphan"
     )
