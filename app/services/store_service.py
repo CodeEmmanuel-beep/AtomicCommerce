@@ -15,7 +15,7 @@ from app.api.v1.models import (
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
-    StoreAddressDetails,
+    AddressDetails,
 )
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
@@ -438,11 +438,8 @@ async def view_store_addresses(store_id, page, limit, db):
             status="success", message="no addresses found for this store", data=None
         )
     total = store_address[0].total_count
-    data = PaginatedMetadata[StoreAddressDetails](
-        items=[
-            StoreAddressDetails.model_validate(add.StoreAddress)
-            for add in store_address
-        ],
+    data = PaginatedMetadata[AddressDetails](
+        items=[AddressDetails.model_validate(add.Address) for add in store_address],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     full_response = StandardResponse(
