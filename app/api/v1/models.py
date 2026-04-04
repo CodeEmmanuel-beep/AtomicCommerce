@@ -147,7 +147,7 @@ class StoreAccountResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class StoreAddressDetails(BaseModel):
+class AddressDetails(BaseModel):
     street: str
     city: str
     state: str

@@ -6,7 +6,7 @@ from app.api.v1.models import (
     StoreAccountResponse,
     BusinessType,
     PaginatedMetadata,
-    StoreAddressDetails,
+    AddressDetails,
     StoreObj,
     StoreResponse,
     StoreUpdate,
@@ -86,7 +86,7 @@ async def store_account_details(
 @router.post("/store_address")
 async def store_address_details(
     store_id: int,
-    address_details: StoreAddressDetails,
+    address_details: AddressDetails,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
@@ -130,7 +130,7 @@ async def view_store_account(
 
 @router.get(
     "/view_store_address_details/{store_id}",
-    response_model=StandardResponse[PaginatedMetadata[StoreAddressDetails]],
+    response_model=StandardResponse[PaginatedMetadata[AddressDetails]],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )

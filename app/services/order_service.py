@@ -346,7 +346,7 @@ async def delete_order(
     if not result:
         logger.error(f"Order with order_id: {order_id} not found for deletion")
         raise HTTPException(status_code=404, detail="order item not found")
-    if result.status not in ["Cancelled", "Delivered", "Completed"]:
+    if result.status not in ["cancelled", "delivered", "shipped"]:
         raise HTTPException(
             status_code=400,
             detail="Cannot delete an active order. Please cancel it first.",

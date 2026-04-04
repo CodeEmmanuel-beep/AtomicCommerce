@@ -131,7 +131,7 @@ class Store(Base):
     carts = relationship("Cart", back_populates="store")
 
 
-class StoreAddress(Base):
+class Address(Base):
     __tablename__ = "store_addresses"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)

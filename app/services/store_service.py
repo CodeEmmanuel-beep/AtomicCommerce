@@ -5,7 +5,7 @@ from app.models_sql import (
     User,
     store_owners,
     store_staffs,
-    StoreAddress,
+    Address,
     StoreAccount,
     Product,
     Inventory,
@@ -391,7 +391,7 @@ async def add_address(store_id, address_details, db, payload):
             store_id,
         )
         raise HTTPException(status_code=404, detail="store not assigned")
-    address_detail = StoreAddress(
+    address_detail = Address(
         store_id=store_check.id,
         street=address_details.street,
         city=address_details.city,
@@ -425,8 +425,8 @@ async def view_store_addresses(store_id, page, limit, db):
         )
         return StandardResponse(**cached_data)
     stmt = await db.execute(
-        select(StoreAddress, func.count(StoreAddress.id).over().label("total_count"))
-        .join(Store, StoreAddress.store_id == Store.id)
+        select(Address, func.count(Address.id).over().label("total_count"))
+        .join(Store, Address.store_id == Store.id)
         .where(Store.id == store_id, Store.approved)
         .offset(offset)
         .limit(limit)
@@ -714,15 +714,15 @@ async def remove_address(store_id, address_id, db, payload):
             status_code=401, detail="only registered users can access this endpoint"
         )
     check_stmt = (
-        select(StoreAddress)
-        .join(Store, StoreAddress.store_id == Store.id)
+        select(Address)
+        .join(Store, Address.store_id == Store.id)
         .where(
             Store.id == store_id,
             Store.user_owners.any(User.id == user_id),
-            StoreAddress.id == address_id,
-            ~StoreAddress.is_deleted,
+            Address.id == address_id,
+            ~Address.is_deleted,
         )
-        .with_for_update(of=StoreAddress)
+        .with_for_update(of=Address)
     )
     address_check = (await db.execute(check_stmt)).scalar_one_or_none()
     if not address_check:
@@ -791,9 +791,7 @@ async def remove_store(store_id, db, payload):
     store_check.approved = False
     (
         await db.execute(
-            update(StoreAddress)
-            .where(StoreAddress.store_id == store_id)
-            .values(is_deleted=True)
+            update(Address).where(Address.store_id == store_id).values(is_deleted=True)
         )
     )
     (
