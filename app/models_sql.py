@@ -334,6 +334,14 @@ class Cart(Base):
     membership = relationship("Membership", back_populates="carts")
 
 
+class OrderStatus(str, Enum):
+    pending = "pending"
+    processing = "processing"
+    shipped = "shipped"
+    delivered = "delivered"
+    cancelled = "cancelled"
+
+
 class Order(Base):
     __tablename__ = "orders"
     id = Column(Integer, primary_key=True, index=True)
@@ -344,7 +352,9 @@ class Order(Base):
     )
     total_quantity = Column(Float, default=0)
     order_delete = Column(Boolean, default=False)
-    status = Column(String, default="pending", index=True)
+    status = Column(
+        SQLEnum(OrderStatus), default=OrderStatus.pending, nullable=False, index=True
+    )
     total_amount = Column(Numeric(precision=12, scale=2), default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
