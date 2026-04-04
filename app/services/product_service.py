@@ -11,6 +11,7 @@ from app.api.v1.models import (
 from app.database.config import settings
 from app.models_sql import Product, Store, Category, User, Inventory
 from sqlalchemy import select, func, text, update, or_
+from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 import asyncio
 import orjson
@@ -343,7 +344,12 @@ async def list_products(
     products = None
     async with db.connection() as conn:
         (await conn.execute(text("SELECT setseed(:s)"), {"s": seed}))
-        stmt = select(Product).where(~Product.is_deleted).order_by(func.random())
+        stmt = (
+            select(Product)
+            .options(selectinload(Product.inventory))
+            .where(~Product.is_deleted)
+            .order_by(func.random())
+        )
         products = (
             (await conn.execute(stmt.offset(offset).limit(limit))).scalars().all()
         )
@@ -384,7 +390,12 @@ async def search_product(product_name, category, page, limit, db):
     if product_cache and isinstance(product_cache, dict):
         logger.info("Cache hit for searched products")
         return StandardResponse(**product_cache)
-    stmt = select(Product).join(Category).where(~Product.is_deleted)
+    stmt = (
+        select(Product)
+        .join(Category)
+        .options(selectinload(Product.inventory))
+        .where(~Product.is_deleted)
+    )
     if product_name is None and category is None:
         logger.error("user tried to execute an empty request")
         raise HTTPException(status_code=400, detail="all fields can not be left blank")

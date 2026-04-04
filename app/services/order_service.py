@@ -183,7 +183,8 @@ async def view_orders(store_id, page, limit, db, payload):
         .options(
             selectinload(Order.orderitems)
             .selectinload(OrderItem.cartitems)
-            .selectinload(CartItem.product),
+            .selectinload(CartItem.product)
+            .selectinload(Product.inventory),
             selectinload(Order.membership),
             selectinload(Order.user),
         )
@@ -236,7 +237,8 @@ async def view_order(store_id, order_id, page, limit, db, payload):
         .options(
             selectinload(Order.orderitems)
             .selectinload(OrderItem.cartitems)
-            .selectinload(CartItem.product),
+            .selectinload(CartItem.product)
+            .selectinload(Product.inventory),
             selectinload(Order.payment),
             selectinload(Order.user),
             selectinload(Order.membership),

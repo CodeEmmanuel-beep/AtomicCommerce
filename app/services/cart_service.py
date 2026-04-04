@@ -44,14 +44,14 @@ async def create_cart(
     return {"status": "success", "message": "cart successfully created"}
 
 
-async def shopping(store_id, cart, db, payload):
+async def shopping(cart, db, payload):
     user_id = payload.get("user_id")
     available = (
         await db.execute(
             select(
                 exists().where(
                     and_(
-                        Store.id == store_id,
+                        Store.id == cart.store_id,
                         Product.id == cart.product_id,
                         Product.product_availability == "available",
                         ~Product.is_deleted,
@@ -76,7 +76,7 @@ async def shopping(store_id, cart, db, payload):
         .options(selectinload(Cart.cartitems))
         .where(
             Cart.id == cart.cart_id,
-            Cart.store_id == store_id,
+            Cart.store_id == cart.store_id,
             Cart.user_id == user_id,
         )
     ).with_for_update()
@@ -108,6 +108,7 @@ async def shopping(store_id, cart, db, payload):
             difference = cart.quantity
             items = CartItem(
                 cart_id=cart.cart_id,
+                store_id=cart.store_id,
                 product_id=cart.product_id,
                 quantity=cart.quantity,
             )
@@ -150,7 +151,11 @@ async def retrieve_all(store_id, page, limit, db, payload):
         return StandardResponse(**cached_data)
     stmt = (
         select(Cart)
-        .options(selectinload(Cart.cartitems).selectinload(CartItem.product))
+        .options(
+            selectinload(Cart.cartitems)
+            .selectinload(CartItem.product)
+            .selectinload(Product.inventory)
+        )
         .where(Cart.user_id == user_id, Cart.store_id == store_id, ~Cart.check_out)
     )
     total = (
@@ -193,7 +198,11 @@ async def retrieve_cart(store_id, cart_id, page, limit, db, payload):
         return StandardResponse(**cached_data)
     stmt = (
         select(Cart)
-        .options(selectinload(Cart.cartitems).selectinload(CartItem.product))
+        .options(
+            selectinload(Cart.cartitems)
+            .selectinload(CartItem.product)
+            .selectinload(Product.inventory)
+        )
         .where(
             Cart.user_id == user_id,
             Cart.store_id == store_id,
