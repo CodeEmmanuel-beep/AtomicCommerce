@@ -118,7 +118,7 @@ class StoreAccountResponse(BaseModel):
         context = info.context
         if not context:
             raise ValueError("Validation context is missing. Cannot decrypt data.")
-        cipher = info.context.get("cipher")
+        cipher = context.get("cipher")
         if not cipher:
             raise ValueError("cipher key not found")
         sensitive_fields = [
@@ -213,11 +213,19 @@ class ProductObj(BaseModel):
     product_availability: str
 
 
+class InventoryObj(BaseModel):
+    stock_quantity: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProductRes(BaseModel):
     id: int
     product_name: str
     primary_image: str = Field(exclude=True)
     product_price: Decimal
+    product_availability: str
+    stock_quantity: InventoryObj
 
     @computed_field
     def full_url(self) -> str | None:
@@ -233,6 +241,7 @@ class ProductResponse(BaseModel):
     image: str | None = Field(exclude=True)
     product_price: Decimal
     product_availability: str
+    stock_quantity: InventoryObj
 
     @computed_field
     def primary_image_url(self) -> str | None:
@@ -312,11 +321,9 @@ class CategoryResponse(BaseModel):
 
 
 class CartItems(BaseModel):
+    store_id: int
     cart_id: int
     product_id: int
-    product_name: str = Field(default_factory=str)
-    image: str = Field(default_factory=str)
-    product_availability: str = Field(default_factory=str)
     quantity: int
 
 
