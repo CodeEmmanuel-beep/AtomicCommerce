@@ -8,7 +8,7 @@ from app.api.v1.models import (
 from app.database.async_config import AsyncSessionLocal
 from app.models_sql import Cart, Order, OrderItem, CartItem, Payment, Product, Inventory
 from datetime import datetime, timezone
-from fastapi import HTTPException, BackgroundTasks
+from fastapi import HTTPException
 from app.logs.logger import get_logger
 from sqlalchemy import select, func, update, and_
 from sqlalchemy.orm import selectinload
@@ -84,7 +84,7 @@ async def create_orders(store_id, db, payload):
 
 
 async def create_order_items(
-    store_id, cart_id, order_id, background_tasks: BackgroundTasks, db, payload
+    store_id, cart_id, order_id, background_tasks, db, payload
 ):
     user_id = payload.get("user_id")
     stmt = (
