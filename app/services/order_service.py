@@ -222,6 +222,60 @@ async def delivery_address(store_id, order_id, delivery_address, db, payload):
     return {"status": "success", "message": "delivery address added successfully"}
 
 
+async def choose_order_address(store_id, order_id, address_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.error("Unauthorized attempt to choose delivery address")
+        raise HTTPException(status_code=401, detail="not authorized")
+    stmt = (
+        select(Order)
+        .where(
+            Order.id == order_id, Order.store_id == store_id, Order.user_id == user_id
+        )
+        .with_for_update()
+    )
+    order = (await db.execute(stmt)).scalar_one_or_none()
+    if not order:
+        logger.error(
+            f"Order with order_id: {order_id} not found for choosing delivery address"
+        )
+        raise HTTPException(status_code=404, detail="no order created")
+    stmt = select(Address).where(
+        Address.id == address_id,
+        Address.orders.any(Order.user_id == user_id),
+        Address.orders.any(Order.store_id == store_id),
+    )
+    address = (await db.execute(stmt)).scalar_one_or_none()
+    if not address:
+        logger.error(
+            f"Address with address_id: {address_id} not found for user_id: {user_id}"
+        )
+        raise HTTPException(
+            status_code=404,
+            detail="address not found, please input your address to complete the order",
+        )
+    order.delivery_address = [
+        address.street,
+        address.city,
+        address.state,
+        address.country,
+    ]
+    order.delivery_address_id = address.id
+    try:
+        await db.commit()
+        await order_invalidation(user_id=user_id)
+    except IntegrityError:
+        await db.rollback()
+        logger.error("Database integrity error while choosing delivery address")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error while choosing delivery address")
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info(f"Delivery address chosen successfully for order_id: {order_id}")
+    return {"status": "success", "message": "delivery address chosen successfully"}
+
+
 async def view_orders(store_id, page, limit, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
