@@ -59,6 +59,7 @@ class User(Base):
     carts = relationship("Cart", back_populates="user")
     owners = relationship("Store", secondary=store_owners, back_populates="user_owners")
     staffs = relationship("Store", secondary=store_staffs, back_populates="user_staffs")
+    reacts = relationship("React", back_populates="user")
 
 
 class Messaging(Base):
@@ -177,6 +178,7 @@ class Reply(Base):
     review = relationship("Review", back_populates="replies")
     product = relationship("Product", back_populates="replies")
     store = relationship("Store", back_populates="replies")
+    reply = relationship("React", back_populates="reply")
 
 
 class Product(Base):
@@ -281,8 +283,6 @@ class Review(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "product_id", name="user_product_review"),
-    )
-    __table_args__ = (
         UniqueConstraint("user_id", "store_id", name="user_store_review"),
     )
     user = relationship("User", back_populates="reviews")
@@ -291,6 +291,48 @@ class Review(Base):
     replies = relationship(
         "Reply", back_populates="review", cascade="all, delete-orphan"
     )
+    reacts = relationship("React", back_populates="review")
+
+
+class ReactionType(str, Enum):
+    like = "like"
+    love = "love"
+    wow = "wow"
+    laugh = "laugh"
+    sad = "sad"
+    angry = "angry"
+
+
+class React(Base):
+    __tablename__ = "reacts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    type: Mapped[ReactionType] = mapped_column(SQLEnum(ReactionType), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    reply_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("replies.id", ondelete="CASCADE"),
+        index=True,
+    )
+    review_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("reviews.id", ondelete="CASCADE"),
+        index=True,
+    )
+    time_of_reaction: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "reply_id", name="unique_reply_react"),
+        UniqueConstraint("user_id", "review_id", name="unique_review_react"),
+        CheckConstraint(
+            "(reply_id IS NULL AND review_id IS NOT NULL) OR (reply_id IS NOT NULL AND review_id IS NULL)",
+            name="exactly_one_parent",
+        ),
+    )
+    reply = relationship("Reply", back_populates="react")
+    review = relationship("Review", back_populates="react")
+    user = relationship("User", back_populates="reacts")
 
 
 class Category(Base):
