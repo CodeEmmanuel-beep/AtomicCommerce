@@ -130,3 +130,17 @@ async def member_global_invalidation():
     value = await redis_client.incr("member_key")
     await redis_client.expire("member_key", 18000)
     return value
+
+
+async def order_address_invalidation(user_id):
+    cursor = 0
+    pattern = f"delivery_address:{user_id}:*"
+    delete = False
+    while True:
+        cursor, key = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
+        if key:
+            redis_client.delete(*key)
+            delete = True
+        if cursor == 0 or cursor == b"0":
+            break
+    return delete
