@@ -1,4 +1,4 @@
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     OrderResponse,
     PaginatedMetadata,
     PaginatedResponse,
@@ -7,7 +7,7 @@ from app.api.v1.models import (
     AddressResponse,
 )
 from app.database.async_config import AsyncSessionLocal
-from app.models_sql import (
+from app.models import (
     Cart,
     Order,
     OrderItem,
@@ -29,6 +29,7 @@ from app.utils.redis import (
     order_invalidation,
     cart_invalidation,
     cache_version,
+    order_address_invalidation,
 )
 import asyncio
 
@@ -175,7 +176,9 @@ async def create_order_items(
     return {"status": "success", "message": "order item successfully created"}
 
 
-async def delivery_address(store_id, order_id, delivery_address, db, payload):
+async def delivery_address(
+    store_id, order_id, delivery_address, background_task, db, payload
+):
     user_id = payload.get("user_id")
     if not user_id:
         logger.error("Unauthorized attempt to add delivery address")
@@ -210,7 +213,8 @@ async def delivery_address(store_id, order_id, delivery_address, db, payload):
         await db.flush()
         order.delivery_address_id = new_address.id
         await db.commit()
-        await order_invalidation(user_id=user_id)
+        background_task.add_task(order_invalidation, user_id)
+        background_task.add_task(order_address_invalidation, user_id)
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while adding delivery address")
@@ -239,7 +243,9 @@ async def view_delivery_address(store_id, page, limit, db, payload):
     stmt = (
         select(Address)
         .join(Order, Address.id == Order.delivery_address_id)
-        .where(Order.store_id == store_id, Order.user_id == user_id)
+        .where(
+            Order.store_id == store_id, Order.user_id == user_id, ~Address.is_deleted
+        )
         .offset(offset)
         .limit(limit)
     )
@@ -256,6 +262,7 @@ async def view_delivery_address(store_id, page, limit, db, payload):
             .where(
                 Order.store_id == store_id,
                 Order.user_id == user_id,
+                ~Address.is_deleted,
             )
         )
     ).scalar() or 0
@@ -284,6 +291,7 @@ async def choose_order_address(store_id, order_id, address_id, db, payload):
         raise HTTPException(status_code=404, detail="no order created")
     stmt = select(Address).where(
         Address.id == address_id,
+        ~Address.is_deleted,
         Address.orders.any(Order.store_id == store_id),
         Address.orders.any(Order.user_id == user_id),
     )
@@ -316,6 +324,52 @@ async def choose_order_address(store_id, order_id, address_id, db, payload):
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Delivery address chosen successfully for order_id: {order_id}")
     return {"status": "success", "message": "delivery address chosen successfully"}
+
+
+async def delete_delivery_address(store_id, address_id, background_task, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.error("Unauthorized attempt to delete delivery address")
+        raise HTTPException(status_code=401, detail="not authorized")
+    stmt = (
+        select(Address)
+        .options(selectinload(Address, Order.delivery_address_id == Address.id))
+        .where(
+            Address.id == address_id,
+            ~Address.is_deleted,
+            Address.orders.any(Order.store_id == store_id),
+            Address.orders.any(Order.user_id == user_id),
+        )
+    )
+    address = (await db.execute(stmt)).scalar_one_or_none()
+    if not address:
+        logger.error(
+            f"Address with address_id: {address_id} not found for user_id: {user_id}"
+        )
+        raise HTTPException(status_code=404, detail="address not found")
+    if address.orders.status not in ["cancelled", "delivered", "shipped"]:
+        logger.warning(
+            f"User_id: {user_id} attempted to delete delivery address for active order_id: {order_id}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete address for an active order. Please cancel the order first.",
+        )
+    address.is_deleted = True
+    try:
+        await db.commit()
+        background_task.add_task(order_invalidation, user_id)
+        background_task.add_task(order_address_invalidation, user_id)
+    except IntegrityError:
+        await db.rollback()
+        logger.error("Database integrity error while deleting delivery address")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error while deleting delivery address")
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info(f"Delivery address deleted successfully for order_id: {order_id}")
+    return {"status": "success", "message": "delivery address deleted successfully"}
 
 
 async def view_orders(store_id, page, limit, db, payload):
