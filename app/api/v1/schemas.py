@@ -156,6 +156,12 @@ class AddressDetails(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AddressResponse(AddressDetails):
+    id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class PaginatedResponse(BaseModel):
     page: int
     limit: int
