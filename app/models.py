@@ -172,6 +172,8 @@ class Reply(Base):
     product_id = Column(Integer, ForeignKey("products.id"), index=True)
     store_id = Column(Integer, ForeignKey("stores.id"), index=True)
     reply_text = Column(String)
+    product_reply_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
+    store_reply_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     time_of_post = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="replies")
@@ -276,6 +278,8 @@ class Review(Base):
     ratings = Column(Integer)
     product_reply_count: Mapped[int] = mapped_column(Integer, default=0)
     store_reply_count: Mapped[int] = mapped_column(Integer, default=0)
+    product_review_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
+    store_review_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     edited = Column(Boolean, default=False)
     date_of_review = Column(
         DateTime(timezone=True), server_default=func.now(), index=True

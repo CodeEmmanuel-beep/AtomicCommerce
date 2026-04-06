@@ -1,12 +1,12 @@
 from app.logs.logger import get_logger
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     ReplyResponse,
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
 )
 from fastapi import HTTPException, status, Response
-from app.models_sql import Review, Reply, User, Store
+from app.models import Review, Reply, User, Store
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
