@@ -15,6 +15,7 @@ from sqlalchemy import (
     LargeBinary,
     CheckConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped
 from sqlalchemy import func
@@ -132,7 +133,7 @@ class Store(Base):
 
 
 class Address(Base):
-    __tablename__ = "store_addresses"
+    __tablename__ = "addresses"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
     street: Mapped[str] = mapped_column(String, nullable=False)
@@ -142,6 +143,7 @@ class Address(Base):
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     store = relationship("Store", back_populates="addresses")
+    orders = relationship("Order", back_populates="address")
 
 
 class StoreAccount(Base):
@@ -344,19 +346,27 @@ class OrderStatus(str, Enum):
 
 class Order(Base):
     __tablename__ = "orders"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), index=True)
-    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
-    member = Column(
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    delivery_address_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("addresses.id", ondelete="SET NULL"), index=True
+    )
+    member: Mapped[int] = mapped_column(
         Integer, ForeignKey("memberships.id", ondelete="CASCADE"), index=True
     )
-    total_quantity = Column(Float, default=0)
-    order_delete = Column(Boolean, default=False)
-    status = Column(
+    total_quantity: Mapped[float] = mapped_column(Float, default=0)
+    delivery_address: Mapped[dict] = mapped_column(JSONB)
+    order_delete: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[OrderStatus] = mapped_column(
         SQLEnum(OrderStatus), default=OrderStatus.pending, nullable=False, index=True
     )
-    total_amount = Column(Numeric(precision=12, scale=2), default=0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    total_amount: Mapped[Decimal] = mapped_column(
+        Numeric(precision=12, scale=2), default=0
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
 
     payment = relationship("Payment", back_populates="order", uselist=False)
     user = relationship("User", back_populates="orders")
@@ -365,6 +375,7 @@ class Order(Base):
     )
     membership = relationship("Membership", back_populates="orders")
     store = relationship("Store", back_populates="order", uselist=False)
+    address = relationship("Address", back_populates="orders")
 
 
 class OrderItem(Base):

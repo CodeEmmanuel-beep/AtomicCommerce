@@ -6,7 +6,16 @@ from app.api.v1.models import (
     OrderItemRes,
 )
 from app.database.async_config import AsyncSessionLocal
-from app.models_sql import Cart, Order, OrderItem, CartItem, Payment, Product, Inventory
+from app.models_sql import (
+    Cart,
+    Order,
+    OrderItem,
+    CartItem,
+    Payment,
+    Product,
+    Inventory,
+    Address,
+)
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from app.logs.logger import get_logger
@@ -89,7 +98,9 @@ async def create_order_items(
     user_id = payload.get("user_id")
     stmt = (
         select(Order)
-        .where(Order.id == order_id, Order.store_id == store_id)
+        .where(
+            Order.id == order_id, Order.store_id == store_id, Order.user_id == user_id
+        )
         .with_for_update()
     )
     order = (await db.execute(stmt)).scalar_one_or_none()
@@ -161,6 +172,54 @@ async def create_order_items(
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Order items created successfully for order_id: {order_id}")
     return {"status": "success", "message": "order item successfully created"}
+
+
+async def delivery_address(store_id, order_id, delivery_address, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.error("Unauthorized attempt to add delivery address")
+        raise HTTPException(status_code=401, detail="not authorized")
+    stmt = (
+        select(Order)
+        .where(
+            Order.id == order_id, Order.store_id == store_id, Order.user_id == user_id
+        )
+        .with_for_update()
+    )
+    order = (await db.execute(stmt)).scalar_one_or_none()
+    if not order:
+        logger.error(
+            f"Order with order_id: {order_id} not found for adding delivery address"
+        )
+        raise HTTPException(status_code=404, detail="no order created")
+    new_address = Address(
+        street=delivery_address.street,
+        city=delivery_address.city,
+        state=delivery_address.state,
+        country=delivery_address.country,
+    )
+    order.delivery_address = [
+        delivery_address.street,
+        delivery_address.city,
+        delivery_address.state,
+        delivery_address.country,
+    ]
+    try:
+        db.add(new_address)
+        await db.flush()
+        order.delivery_address_id = new_address.id
+        await db.commit()
+        await order_invalidation(user_id=user_id)
+    except IntegrityError:
+        await db.rollback()
+        logger.error("Database integrity error while adding delivery address")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error while adding delivery address")
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info(f"Delivery address added successfully for order_id: {order_id}")
+    return {"status": "success", "message": "delivery address added successfully"}
 
 
 async def view_orders(store_id, page, limit, db, payload):
