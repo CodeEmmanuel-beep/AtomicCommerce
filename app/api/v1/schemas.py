@@ -162,6 +162,24 @@ class AddressResponse(AddressDetails):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ReactionType(str, Enum):
+    like = "like"
+    love = "love"
+    laugh = "laugh"
+    wow = "wow"
+    sad = "sad"
+    angry = "angry"
+
+
+class ReactionsSummary(BaseModel):
+    like: int = 0
+    love: int = 0
+    laugh: int = 0
+    wow: int = 0
+    sad: int = 0
+    angry: int = 0
+
+
 class PaginatedResponse(BaseModel):
     page: int
     limit: int
