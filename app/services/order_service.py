@@ -4,6 +4,7 @@ from app.api.v1.models import (
     PaginatedResponse,
     StandardResponse,
     OrderItemRes,
+    AddressResponse,
 )
 from app.database.async_config import AsyncSessionLocal
 from app.models_sql import (
@@ -222,19 +223,60 @@ async def delivery_address(store_id, order_id, delivery_address, db, payload):
     return {"status": "success", "message": "delivery address added successfully"}
 
 
+async def view_delivery_address(store_id, page, limit, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.error("Unauthorized attempt to view delivery address")
+        raise HTTPException(status_code=401, detail="not authorized")
+    offset = (page - 1) * limit
+    cache_key = f"delivery_address:{user_id}:{store_id}:{page}:{limit}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info(
+            f"Delivery address cache hit for user_id: {user_id}, store_id: {store_id}"
+        )
+        return StandardResponse(**cached_data)
+    stmt = (
+        select(Address)
+        .join(Order, Address.id == Order.delivery_address_id)
+        .where(Order.store_id == store_id, Order.user_id == user_id)
+        .offset(offset)
+        .limit(limit)
+    )
+    address = (await db.execute(stmt)).scalars().all()
+    if not address:
+        logger.info(f"no address stored for user_id: {user_id} in store_id: {store_id}")
+        return StandardResponse(
+            status="success", message="no address stored", data=None
+        )
+    total = (
+        await db.execute(
+            select(func.count(Address.id))
+            .join(Order, Address.id == Order.delivery_address_id)
+            .where(
+                Order.store_id == store_id,
+                Order.user_id == user_id,
+            )
+        )
+    ).scalar() or 0
+    data = PaginatedMetadata[AddressResponse](
+        items=[AddressResponse.model_validate(ad) for ad in address],
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+    )
+    full_response = StandardResponse(
+        status="success", message="delivery addresses", data=data
+    )
+    await cached(cache_key, full_response, ttl=18000)
+    logger.info(f"Delivery address retrieved successfully for store_id: {store_id}")
+    return full_response
+
+
 async def choose_order_address(store_id, order_id, address_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.error("Unauthorized attempt to choose delivery address")
         raise HTTPException(status_code=401, detail="not authorized")
-    stmt = (
-        select(Order)
-        .where(
-            Order.id == order_id, Order.store_id == store_id, Order.user_id == user_id
-        )
-        .with_for_update()
-    )
-    order = (await db.execute(stmt)).scalar_one_or_none()
+    order = await db.get(Order, order_id, with_for_update=True)
     if not order:
         logger.error(
             f"Order with order_id: {order_id} not found for choosing delivery address"
@@ -242,8 +284,8 @@ async def choose_order_address(store_id, order_id, address_id, db, payload):
         raise HTTPException(status_code=404, detail="no order created")
     stmt = select(Address).where(
         Address.id == address_id,
-        Address.orders.any(Order.user_id == user_id),
         Address.orders.any(Order.store_id == store_id),
+        Address.orders.any(Order.user_id == user_id),
     )
     address = (await db.execute(stmt)).scalar_one_or_none()
     if not address:
