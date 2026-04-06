@@ -45,6 +45,13 @@ async def react_type(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="must react on an existing reply",
             )
+    prefix = "product" if target.product else "store"
+    suffix = (
+        "review_reaction_count"
+        if isinstance(target, Review)
+        else "reply_reaction_count"
+    )
+    field_name = f"{prefix}_{suffix}"
     if review_id:
         stmt = select(React).where(
             React.user_id == user_id, React.review_id == review_id
@@ -56,7 +63,8 @@ async def react_type(
                 try:
                     await db.delete(existing)
                     await db.flush()
-                    target.reacts_count = max((target.reacts_count or 0) - 1, 0)
+                    value = getattr(target, field_name) or 0
+                    setattr(target, field_name, max(value - 1, 0))
                     db.add(target)
                     await db.commit()
                 except IntegrityError:
@@ -99,7 +107,8 @@ async def react_type(
                 try:
                     await db.delete(existing)
                     await db.flush()
-                    target.reacts_count = max((target.reacts_count or 0) - 1, 0)
+                    value = getattr(target, field_name) or 0
+                    setattr(target, field_name, max(value - 1, 0))
                     db.add(target)
                     await db.commit()
                 except IntegrityError:
@@ -142,7 +151,8 @@ async def react_type(
     )
     try:
         db.add(new_react)
-        target.reacts_count = (target.reacts_count or 0) + 1
+        value = getattr(target, field_name) or 0
+        setattr(target, field_name, value + 1)
         db.add(target)
         await db.commit()
         await db.refresh(new_react)
