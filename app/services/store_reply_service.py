@@ -77,8 +77,11 @@ async def view_replies(store_id, review_id, page, limit, db):
     stmt = (
         select(Reply)
         .join(Reply.user)
+        .join(Reply.store)
         .options(selectinload(Reply.user))
-        .where(Reply.store_id == store_id, Reply.review_id == review_id)
+        .where(
+            Reply.store_id == store_id, ~Store.is_deleted, Reply.review_id == review_id
+        )
         .order_by(
             or_(
                 User.role == "Owner", User.role == "Admin", User.role == "customer_care"
@@ -88,8 +91,12 @@ async def view_replies(store_id, review_id, page, limit, db):
     )
     total = (
         await db.execute(
-            select(func.count(Reply.id)).where(
-                Reply.store_id == store_id, Reply.review_id == review_id
+            select(func.count(Reply.id))
+            .join(Reply.store)
+            .where(
+                Reply.store_id == store_id,
+                ~Store.is_deleted,
+                Reply.review_id == review_id,
             )
         )
     ).scalar() or 0
