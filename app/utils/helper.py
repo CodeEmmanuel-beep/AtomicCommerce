@@ -16,7 +16,7 @@ from enum import Enum
 from app.utils.supabase_url import cleaned_up
 from app.database.config import settings
 from io import BytesIO
-from app.models import React
+from app.models import React, Reply
 from app.api.v1.schemas import ReactionsSummary
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,24 +24,22 @@ logger = get_logger("helper")
 
 
 async def react_summary(
-    db: AsyncSession,
-    r_id: list[int],
-    db_schema,
+    db: AsyncSession, r_id: list[int], db_schema, join_model, column_filter
 ) -> dict[int, ReactionsSummary]:
     if isinstance(r_id, int):
         r_id = [r_id]
     counts = (
         await db.execute(
             select(db_schema, React.type, func.count(React.id))
-            .where(React.r_id.in_(r_id))
-            .group_by(React.r_id, React.type)
-            .order_by(React.type)
+            .join(join_model, db_schema == join_model.id)
+            .where(db_schema.in_(r_id), column_filter)
+            .group_by(db_schema, React.type)
         )
     ).all()
     summary_map: dict[int, dict[str, int]] = {}
-    for reply_id_row, rtype, count in counts:
+    for r_id_row, rtype, count in counts:
         key = rtype.name if hasattr(rtype, "name") else rtype
-        summary_map.setdefault(reply_id_row, {})[key] = count
+        summary_map.setdefault(r_id_row, {})[key] = count
     result: dict[int, ReactionsSummary] = {}
     for rid in r_id:
         summary = summary_map.get(rid, {})

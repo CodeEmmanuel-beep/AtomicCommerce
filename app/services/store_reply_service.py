@@ -4,6 +4,7 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
+    ReactionsSummary,
 )
 from fastapi import HTTPException, status, Response
 from app.models import Review, Reply, User, Store
@@ -11,6 +12,7 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 import asyncio
+from app.utils.helper import react_summary
 from app.utils.redis import (
     store_reply_invalidation,
     store_review_invalidation,
@@ -98,8 +100,17 @@ async def view_replies(store_id, review_id, page, limit, db):
         return StandardResponse(
             status="success", message="no replies available", data=None
         )
+    reply_ids = [rep.id for rep in reply]
+    all__summaries = await react_summary(
+        db, reply_ids, Reply.reply_id, Reply, Reply.store_id == store_id
+    )
+    items = []
+    for rep in reply:
+        rep_response = ReplyResponse.model_validate(rep)
+        rep_response.reactions = all__summaries.get(rep.id, ReactionsSummary())
+        items.append(rep_response)
     data = PaginatedMetadata[ReplyResponse](
-        items=[ReplyResponse.model_validate(rep) for rep in reply],
+        items=items,
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = {"data": data}
