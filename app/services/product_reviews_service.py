@@ -1,15 +1,17 @@
 from app.logs.logger import get_logger
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     ProductReviewResponse,
     PaginatedMetadata,
     StandardResponse,
     PaginatedResponse,
+    ReactionsSummary,
 )
-from app.models_sql import Review, Product
+from app.models import Review, Product, React
 from fastapi import HTTPException, status, Response
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
+from app.utils.helper import react_summary
 from app.utils.redis import cache, cache_version, cached, product_review_invalidation
 
 logger = get_logger("product_reviews")
@@ -75,14 +77,16 @@ async def view_reviews(product_id, page, limit, db):
         return StandardResponse(**review_cache)
     stmt = (
         select(Review)
-        .join(Product)
+        .join(Review.product)
         .options(selectinload(Review.user))
         .where(Review.product_id == product_id, ~Product.is_deleted)
         .order_by(Review.date_of_review.desc())
     )
     total = (
         await db.execute(
-            select(func.count(Review.id)).where(Review.product_id == product_id)
+            select(func.count(Review.id))
+            .join(Review.product)
+            .where(Review.product_id == product_id, ~Product.is_deleted)
         )
     ).scalar() or 0
     review = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
@@ -92,8 +96,17 @@ async def view_reviews(product_id, page, limit, db):
             status="success", message="no reviews available", data=None
         )
     logger.info("total reviews for product %s, is: %s", product_id, total)
+    review_ids = [rev.id for rev in review]
+    all__summaries = await react_summary(
+        db, review_ids, React.review_id, Review, Review.product_id == product_id
+    )
+    items = []
+    for rev in review:
+        rev_response = ProductReviewResponse.model_validate(rev)
+        rev_response.reactions = all__summaries.get(rev.id, ReactionsSummary())
+        items.append(rev_response)
     data = PaginatedMetadata[ProductReviewResponse](
-        items=[ProductReviewResponse.model_validate(rev) for rev in review],
+        items=items,
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = StandardResponse(status="success", message="reviews", data=data)
