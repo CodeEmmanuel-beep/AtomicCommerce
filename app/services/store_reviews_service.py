@@ -6,7 +6,7 @@ from app.api.v1.schemas import (
     PaginatedResponse,
     ReactionsSummary,
 )
-from app.models import Review, Store, Reply
+from app.models import Review, Store, Reply, React
 from app.utils.helper import react_summary
 from fastapi import HTTPException, Response, status
 from sqlalchemy import select, func
@@ -101,7 +101,7 @@ async def view_reviews(store_id, page, limit, db):
         )
     review_ids = [rev.id for rev in review]
     all__summaries = await react_summary(
-        db, review_ids, Review.id, Review, Review.store_id == store_id
+        db, review_ids, React.review_id, Review, Review.store_id == store_id
     )
     items = []
     for rev in review:

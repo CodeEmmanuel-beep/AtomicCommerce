@@ -7,7 +7,7 @@ from app.api.v1.schemas import (
     ReactionsSummary,
 )
 from fastapi import HTTPException, status, Response
-from app.models import Review, Reply, User, Store
+from app.models import Review, Reply, User, Store, React
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
@@ -109,7 +109,7 @@ async def view_replies(store_id, review_id, page, limit, db):
         )
     reply_ids = [rep.id for rep in reply]
     all__summaries = await react_summary(
-        db, reply_ids, Reply.reply_id, Reply, Reply.store_id == store_id
+        db, reply_ids, React.reply_id, Reply, Reply.store_id == store_id
     )
     items = []
     for rep in reply:
