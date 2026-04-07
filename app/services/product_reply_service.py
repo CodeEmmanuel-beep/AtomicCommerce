@@ -1,12 +1,13 @@
 from app.logs.logger import get_logger
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     ReplyResponse,
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
+    ReactionsSummary,
 )
 from fastapi import HTTPException
-from app.models_sql import Review, Reply, User
+from app.models import Review, Reply, Product, React, User
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +17,7 @@ from app.utils.redis import (
     cache_version,
     cached,
 )
+from app.utils.helper import react_summary
 
 logger = get_logger("product_reply")
 
@@ -66,8 +68,13 @@ async def view_replies(product_id, review_id, page, limit, db):
     stmt = (
         select(Reply)
         .join(Reply.user)
+        .join(Reply.product)
         .options(selectinload(Reply.user))
-        .where(Reply.product_id == product_id, Reply.review_id == review_id)
+        .where(
+            Reply.product_id == product_id,
+            ~Product.is_deleted,
+            Reply.review_id == review_id,
+        )
         .order_by(
             or_(
                 User.role == "Admin", User.role == "Owner", User.role == "customer_care"
@@ -77,8 +84,12 @@ async def view_replies(product_id, review_id, page, limit, db):
     )
     total = (
         await db.execute(
-            select(func.count(Reply.id)).where(
-                Reply.product_id == product_id, Reply.review_id == review_id
+            select(func.count(Reply.id))
+            .join(Reply.product)
+            .where(
+                Reply.product_id == product_id,
+                ~Product.is_deleted,
+                Reply.review_id == review_id,
             )
         )
     ).scalar() or 0
@@ -89,8 +100,17 @@ async def view_replies(product_id, review_id, page, limit, db):
         return StandardResponse(
             status="success", message="no replies available", data=None
         )
+    reply_ids = [rep.id for rep in reply]
+    all__summaries = await react_summary(
+        db, reply_ids, React.reply_id, Reply, Reply.product_id == product_id
+    )
+    items = []
+    for rep in reply:
+        rep_response = ReplyResponse.model_validate(rep)
+        rep_response.reactions = all__summaries.get(rep.id, ReactionsSummary())
+        items.append(rep_response)
     data = PaginatedMetadata[ReplyResponse](
-        items=[ReplyResponse.model_validate(rep) for rep in reply],
+        items=items,
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = StandardResponse(status="success", message="replies", data=data)
