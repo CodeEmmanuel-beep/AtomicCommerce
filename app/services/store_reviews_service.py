@@ -1,11 +1,13 @@
 from app.logs.logger import get_logger
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     StoreReviewResponse,
     PaginatedMetadata,
     StandardResponse,
     PaginatedResponse,
+    ReactionsSummary,
 )
-from app.models_sql import Review, Store, Reply
+from app.models import Review, Store, Reply
+from app.utils.helper import react_summary
 from fastapi import HTTPException, Response, status
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -85,7 +87,9 @@ async def view_reviews(store_id, page, limit, db):
     )
     total = (
         await db.execute(
-            select(func.count(Review.id)).where(Review.store_id == store_id)
+            select(func.count(Review.id))
+            .join(Store, Store.id == Review.store_id)
+            .where(Review.store_id == store_id, ~Store.is_deleted)
         )
     ).scalar() or 0
     logger.info("total reviews for store %s, is: %s", store_id, total)
@@ -95,8 +99,17 @@ async def view_reviews(store_id, page, limit, db):
         return StandardResponse(
             status="success", message="no reviews available", data=None
         )
+    review_ids = [rev.id for rev in review]
+    all__summaries = await react_summary(
+        db, review_ids, Review.id, Review, Review.store_id == store_id
+    )
+    items = []
+    for rev in review:
+        rev_response = StoreReviewResponse.model_validate(rev)
+        rev_response.reactions = all__summaries.get(rev.id, ReactionsSummary())
+        items.append(rev_response)
     data = PaginatedMetadata[StoreReviewResponse](
-        items=[StoreReviewResponse.model_validate(rev) for rev in review],
+        items=items,
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = StandardResponse(status="success", message="reviews", data=data)
