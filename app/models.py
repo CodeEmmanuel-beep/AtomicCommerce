@@ -224,6 +224,13 @@ class Inventory(Base):
     store = relationship("Store", back_populates="inventories")
 
 
+class PaymentStatus(str, Enum):
+    PENDING = "pending"
+    SUCCESS = "success"
+    FAILED = "failed"
+    REFUNDED = "refunded"
+
+
 class Payment(Base):
     __tablename__ = "payments"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -231,13 +238,20 @@ class Payment(Base):
     order_id: Mapped[int] = mapped_column(Integer, ForeignKey("orders.id"), index=True)
     payment_method: Mapped[str] = mapped_column(String)
     amount_paid: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
-    payment_status: Mapped[str] = mapped_column(String, default="pending", index=True)
+    payment_status: Mapped[PaymentStatus] = mapped_column(
+        SQLEnum(PaymentStatus), default=PaymentStatus.PENDING, index=True
+    )
+    refference_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    transaction_id: Mapped[str] = mapped_column(String, index=True)
+    discount_amount: Mapped[Decimal] = mapped_column(
+        Numeric(precision=10, scale=2), default=0
+    )
     shipping_fee: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
     )
-    discount: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2), default=0)
-    tax: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2), default=0)
-    transaction_id: Mapped[str] = mapped_column(String, index=True)
+    tax_amount: Mapped[Decimal] = mapped_column(
+        Numeric(precision=10, scale=2), default=0
+    )
     payment_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
