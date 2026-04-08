@@ -202,6 +202,8 @@ class ReplyResponse(BaseModel):
     role: List[str] = Field(default_factory=list)
     edited: bool = Field(default=False)
     profile: ProfileResponse
+    reply_reaction_count: int
+    reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
     reply_text: str
     time_of_post: Optional[datetime]
 
@@ -310,6 +312,8 @@ class ProductReviewResponse(BaseModel):
     review_text: str
     ratings: int
     product_reply_count: int = Field(default=0)
+    review_reaction_count: int
+    reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
     date_of_review: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
@@ -322,6 +326,8 @@ class StoreReviewResponse(BaseModel):
     review_text: str
     ratings: int
     store_reply_count: int = Field(default=0)
+    review_reaction_count: int
+    reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
     reply: List[ReplyResponse] = Field(default_factory=list)
     date_of_review: Optional[datetime]
 
