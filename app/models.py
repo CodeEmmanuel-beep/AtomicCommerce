@@ -241,7 +241,7 @@ class Payment(Base):
     payment_status: Mapped[PaymentStatus] = mapped_column(
         SQLEnum(PaymentStatus), default=PaymentStatus.PENDING, index=True
     )
-    refference_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    reference_id: Mapped[str] = mapped_column(String, unique=True, index=True)
     transaction_id: Mapped[str] = mapped_column(String, index=True)
     discount_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
@@ -424,6 +424,16 @@ class Order(Base):
     total_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=12, scale=2), default=0
     )
+    tax_amount: Mapped[Decimal] = mapped_column(
+        Numeric(precision=12, scale=2), default=0
+    )
+    shipping_fee: Mapped[Decimal] = mapped_column(
+        Numeric(precision=12, scale=2), default=0
+    )
+    discount_amount: Mapped[Decimal] = mapped_column(
+        Numeric(precision=12, scale=2), default=0
+    )
+    reference_id: Mapped[str] = mapped_column(String, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
