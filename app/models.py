@@ -183,6 +183,13 @@ class Reply(Base):
     reply = relationship("React", back_populates="reply")
 
 
+class ProductSize(str, Enum):
+    small = "small"
+    medium = "medium"
+    large = "large"
+    extra_large = "extra large"
+
+
 class Product(Base):
     __tablename__ = "products"
     id = Column(Integer, primary_key=True, index=True)
@@ -191,6 +198,8 @@ class Product(Base):
     primary_image = Column(String, nullable=False)
     image = Column(String, nullable=True)
     product_price = Column(Numeric(precision=12, scale=2))
+    product_description = Column(String)
+    product_size = Column(SQLEnum(ProductSize), default=ProductSize.small, index=True)
     category_id = Column(Integer, ForeignKey("categories.id"), index=True)
     product_availability = Column(String, default="available")
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
