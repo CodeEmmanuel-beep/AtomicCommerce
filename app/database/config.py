@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     CIPHER_KEY: str
     DB_PASSWORD: str
     DATABASE_URL: str
+    STRIPE_WEBHOOK_SECRET: str
     SYNC_DATABASE_URL: str
     REDIS_URL: str
     SUPABASE_URL: str
