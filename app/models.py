@@ -18,9 +18,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped
-from sqlalchemy import func
+from sqlalchemy import func, text
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 
 store_staffs = Table(
@@ -289,6 +289,37 @@ class Membership(Base):
     carts = relationship(
         "Cart", back_populates="membership", cascade="all, delete-orphan"
     )
+    subscriptions = relationship("Subscription", back_populates="membership")
+
+
+class SubscriptionPlan(str, Enum):
+    Standard = "Standard"
+    Premium = "Premium"
+    Regular = "Regular"
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    membership_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("memberships.id"), index=True
+    )
+    plan_name: Mapped[SubscriptionPlan] = mapped_column(
+        SQLEnum(SubscriptionPlan),
+        default=SubscriptionPlan.Standard,
+        index=True,
+    )
+    price: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
+    expire_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now() + text("INTERVAL '30 days'"),
+        index=True,
+    )
+    time_of_subscription: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    membership = relationship("Membership", back_populates="subscriptions")
 
 
 class Review(Base):
