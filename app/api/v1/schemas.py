@@ -297,10 +297,22 @@ class PaymentResponse(BaseModel):
     amount_paid: float
     payment_status: str
     shipping_fee: float
-    discount: float
-    tax: float
+    discount_amount: float
+    tax_amount: float
+    reference_id: str
     transaction_id: str
     payment_date: Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubscriptionResponse(BaseModel):
+    id: int
+    membership_id: int
+    plan_name: str
+    price: Decimal
+    expire_at: datetime
+    time_of_subscription: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
