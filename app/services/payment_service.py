@@ -1,14 +1,58 @@
-from fastapi import HTTPException
+from fastapi import HTTPException, BackgroundTasks
 from app.logs.logger import get_logger
 import stripe
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from app.models import Subscription, Payment, Order, Membership
 from app.api.v1.schemas import PaymentResponse, SubscriptionResponse
 from app.database.config import settings
 from app.database.get import AsyncSessionLocal
+from datetime import datetime, timezone
 
 logger = get_logger("payment")
+
+
+async def membership_activation(membership_id, db):
+    stmt = await db.execute(
+        select(Subscription)
+        .join(Membership, Subscription.membership_id == membership_id)
+        .where(Membership.id == membership_id)
+    )
+    sub = stmt.scalar_one_or_none()
+    if not sub:
+        logger.error(
+            "membership_id: %s not linked to subscription table",
+            membership_id,
+        )
+        return
+    membership = await db.get(Membership, membership_id)
+    if not membership:
+        logger.error(
+            "membership record not found for membership_id: %s during background activation task",
+            membership_id,
+        )
+        return
+    if sub.expire_at < datetime.now(timezone.utc) and membership.is_active == True:
+        membership.is_active = False
+    if sub.expire_at > datetime.now(timezone.utc) and membership.is_active == False:
+        membership.is_active = True
+    else:
+        return
+    try:
+        await db.commit()
+        logger.info(
+            f"Membership status of member: {membership_id} updated successfully in background task."
+        )
+    except IntegrityError:
+        await db.rollback()
+        logger.error(
+            f"Database error occurred while updating membership_id: {membership_id} in background task"
+        )
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            f"Unexpected error occurred while updating membership_id: {membership_id} in background task"
+        )
 
 
 async def create_payment(
@@ -127,11 +171,11 @@ async def create_payment(
                     metadata={
                         "user_id": str(user_id),
                         "type": "membership",
-                        "tier": sub.plan_name,
+                        "membership_id": membership_id,
                     },
                     line_items=[
                         {
-                            "price": sub.price,
+                            "price": sub.plan_name.value,
                             "quantity": 1,
                         }
                     ],
@@ -177,7 +221,7 @@ async def create_payment(
             )
 
 
-async def stripe_webhook(request, db):
+async def stripe_webhook(request, background_task, db):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
     event = None
@@ -193,66 +237,67 @@ async def stripe_webhook(request, db):
         logger.info(
             f"Received webhook for membership subscription event: {event['type']} with metadata: {metadata}"
         )
+        membership_id = metadata.get("membership_id")
         if event["type"] == "checkout.session.completed":
             session = event["data"]["object"]
             stripe_session_id = session["id"]
-            actual_transaction_id = session["payment_intent"]
             stmt = await db.execute(
-                select(Membership)
-                .join(Membership.subscription)
-                .where(Subscription.reference_id == stripe_session_id)
+                select(Subscription).where(
+                    Subscription.reference_id == stripe_session_id
+                )
             )
-            member = stmt.scalar_one_or_none()
-            if not member:
+            sub = stmt.scalar_one_or_none()
+            if not sub:
                 logger.error(
-                    "membership table was not initialised for payment_ref: %s, transaction_id: %s",
+                    "subscription table was not initialised for payment_ref: %s",
                     stripe_session_id,
-                    actual_transaction_id,
                 )
                 return {
                     "status": "failed",
-                    "message": "membership record not found in database",
+                    "message": "subscription record not found in database",
                 }
-            member.subscription.transaction_id = actual_transaction_id
-            member.is_active = True
+            now = datetime.now(timezone.utc)
+            if sub.expire_at > now:
+                sub.expire_at = sub.expire_at + text("INTERVAL '30 days'")
+            background_task.add_task(membership_activation, membership_id)
             try:
                 await db.commit()
             except IntegrityError:
                 logger.error(
-                    "database error while saving membership subscription status and transaction id on webhook endpoint"
+                    "database error while saving subscription status and transaction id on webhook endpoint"
                 )
                 raise HTTPException(status_code=400, detail="database error")
             except Exception:
                 logger.exception(
-                    "error while saving membership subscription status and transaction id on webhook endpoint"
+                    "error while saving subscription status and transaction id on webhook endpoint"
                 )
                 raise HTTPException(status_code=500, detail="internal server error")
             logger.info(
-                f"Membership subscription {stripe_session_id} marked as completed and active."
+                f"Subscription {stripe_session_id} marked as completed and active."
             )
             return {
                 "status": "success",
-                "message": "membership subscription status updated",
+                "message": "subscription status updated",
             }
         elif event["type"] == "checkout.session.failed":
             session = event["data"]["object"]
             stripe_session_id = session["id"]
             stmt = await db.execute(
-                select(Membership)
-                .join(Membership.subscription)
-                .where(Subscription.reference_id == stripe_session_id)
+                select(Subscription).where(
+                    Subscription.reference_id == stripe_session_id
+                )
             )
-            member = stmt.scalar_one_or_none()
-            if not member:
+            sub = stmt.scalar_one_or_none()
+            if not sub:
                 logger.error(
-                    "membership table was not initialised for failed payment_ref: %s",
+                    "subscription table was not initialised for failed payment_ref: %s",
                     stripe_session_id,
                 )
                 return {
                     "status": "failed",
-                    "message": "membership record not found in database",
+                    "message": "subscription record not found in database",
                 }
-            member.is_active = False
+            background_task.add_task(membership_activation, membership_id)
             try:
                 await db.commit()
             except IntegrityError:
@@ -268,27 +313,27 @@ async def stripe_webhook(request, db):
             logger.info(f"Membership subscription marked as failed and inactive.")
             return {
                 "status": "failed",
-                "message": "membership subscription payment failed, membership deactivated",
+                "message": "subscription payment failed, membership deactivated",
             }
         elif event["type"] == "checkout.session.expired":
             session = event["data"]["object"]
             stripe_session_id = session["id"]
             stmt = await db.execute(
-                select(Membership)
-                .join(Membership.subscription)
-                .where(Subscription.reference_id == stripe_session_id)
+                select(Subscription).where(
+                    Subscription.reference_id == stripe_session_id
+                )
             )
-            member = stmt.scalar_one_or_none()
-            if not member:
+            sub = stmt.scalar_one_or_none()
+            if not sub:
                 logger.error(
-                    "membership table was not initialised for expired payment_ref: %s",
+                    "subscription table was not initialised for expired payment_ref: %s",
                     stripe_session_id,
                 )
                 return {
                     "status": "failed",
-                    "message": "membership record not found in database",
+                    "message": "subscription record not found in database",
                 }
-            member.is_active = False
+            background_task.add_task(membership_activation, membership_id)
             try:
                 await db.commit()
             except IntegrityError:
