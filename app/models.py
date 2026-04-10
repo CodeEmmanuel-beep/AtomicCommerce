@@ -20,7 +20,8 @@ from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped
 from sqlalchemy import func, text
 from decimal import Decimal
-from datetime import datetime, date, timedelta
+from datetime import datetime
+from app.database.config import settings
 
 
 store_staffs = Table(
@@ -293,9 +294,9 @@ class Membership(Base):
 
 
 class SubscriptionPlan(str, Enum):
-    Standard = "Standard"
-    Premium = "Premium"
-    Regular = "Regular"
+    Standard = settings.Standard
+    Premium = settings.Premium
+    Regular = settings.Regular
 
 
 class Subscription(Base):
