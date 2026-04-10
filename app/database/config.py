@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_KEY: str
     BUCKET: str
+    Standard: str
+    Premium: str
+    Regular: str
 
     model_config = {"env_file": ".env"}
 
