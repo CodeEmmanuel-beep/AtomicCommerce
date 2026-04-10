@@ -3,10 +3,8 @@ from app.logs.logger import get_logger
 import stripe
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from app.models import Membership, Payment, Order
-from app.api.v1.schemas import (
-    PaymentResponse,
-)
+from app.models import Subscription, Payment, Order, Membership
+from app.api.v1.schemas import PaymentResponse, SubscriptionResponse
 from app.database.config import settings
 from app.database.get import AsyncSessionLocal
 
@@ -14,36 +12,35 @@ logger = get_logger("payment")
 
 
 async def create_payment(
-    subscription_plan,
+    membership_id,
     order_id,
     currency,
-    db,
     payload,
 ):
     user_id = payload.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized access.")
     async with AsyncSessionLocal() as session:
-        if order_id and subscription_plan:
+        if order_id and membership_id:
             logger.warning(
-                f"user_id: {user_id} attempted to create payment with both order_id: {order_id} and subscription_plan: {subscription_plan}, which is not allowed"
+                f"user_id: {user_id} attempted to create payment with both order_id: {order_id} and membership_id: {membership_id}, which is not allowed"
             )
             raise HTTPException(
                 status_code=400,
-                detail="Cannot specify both order_id and subscription_plan. Please choose one.",
+                detail="Cannot specify both order_id and membership_id. Please choose one.",
             )
-        if order_id is None and subscription_plan is None:
+        if order_id is None and membership_id is None:
             logger.warning(
-                f"user_id: {user_id} attempted to create payment without specifying order_id or subscription_plan"
+                f"user_id: {user_id} attempted to create payment without specifying order_id or membership_id"
             )
             raise HTTPException(
                 status_code=400,
-                detail="Must specify either order_id or subscription_plan.",
+                detail="Must specify either order_id or membership_id.",
             )
         try:
             if order_id is not None:
                 order = (
-                    await db.execute(
+                    await session.execute(
                         select(Order).where(
                             Order.user_id == user_id,
                             Order.id == order_id,
@@ -105,22 +102,24 @@ async def create_payment(
                     "checkout_url": intent.url,
                     "data": PaymentResponse.model_validate(payment),
                 }
-            if subscription_plan is not None:
-                member = (
-                    await db.execute(
-                        select(Membership).where(
+            if membership_id is not None:
+                sub = (
+                    await session.execute(
+                        select(Subscription)
+                        .join(Membership, Subscription.membership_id == Membership.id)
+                        .where(
                             Membership.user_id == user_id,
-                            Membership.membership_type == subscription_plan,
+                            Membership.id == membership_id,
                         )
                     )
                 ).scalar_one_or_none()
-                if not member:
+                if not sub:
                     logger.warning(
-                        f"user_id: {user_id} attempted to create payment for subscription_plan: {subscription_plan} without a membership"
+                        f"user_id: {user_id} attempted to create payment for subscription_plan without a membership"
                     )
                     raise HTTPException(
                         status_code=404,
-                        detail="membership not found for the specified subscription plan.",
+                        detail="register as a member before subscribing to a plan.",
                     )
                 subscription = stripe.checkout.Session.create(
                     payment_method_types=["card"],
@@ -128,11 +127,11 @@ async def create_payment(
                     metadata={
                         "user_id": str(user_id),
                         "type": "membership",
-                        "tier": member.membership_type,
+                        "tier": sub.plan_name,
                     },
                     line_items=[
                         {
-                            "price": member.billing,
+                            "price": sub.price,
                             "quantity": 1,
                         }
                     ],
@@ -141,13 +140,17 @@ async def create_payment(
                     cancel_url="https://yourdomain.com/cancel",
                 )
                 logger.info(
-                    f"Membership payment created successfully for user_id: {user_id}, subscription_plan: {subscription_plan}"
+                    f"subscription payment created successfully for user_id: {user_id}, subscription_plan: {sub.plan_name}"
                 )
+                sub.reference_id = subscription.id
+                session.add(sub)
+                await session.commit()
+                await session.refresh(sub)
                 return {
                     "status": "success",
-                    "message": f"Subscription to {subscription_plan} plan activated. Please proceed to payment.",
+                    "message": "subscription payment initiated, complete payment to activate membership",
                     "checkout_url": subscription.url,
-                    "subscription_id": subscription.id,
+                    "data": SubscriptionResponse.model_validate(sub),
                 }
         except stripe.StripeError as e:
             logger.error(f"Stripe error occurred: {e.user_message}")
