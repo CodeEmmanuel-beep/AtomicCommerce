@@ -12,42 +12,42 @@ from datetime import datetime, timezone
 logger = get_logger("payment")
 
 
-async def membership_activation(membership_id, db):
-    stmt = await db.execute(
-        select(Membership, Subscription).where(Membership.id == membership_id)
-    )
-    result = stmt.first()
-    if not result:
-        logger.error(
-            "membership_id: %s not linked to subscription table",
-            membership_id,
-        )
-        return
-    member, subscription = result
-    now = datetime.now(timezone.utc)
-    up_to_date = subscription.expire_at > now
-    if member.is_active != up_to_date:
-        member.is_active = up_to_date
-    else:
-        logger.info(
-            f"Membership status for membership_id: {membership_id} is already up to date. No changes made."
-        )
-        return
-    try:
-        await db.commit()
-        logger.info(
-            f"Membership status of member: {membership_id} updated successfully in background task."
-        )
-    except IntegrityError:
-        await db.rollback()
-        logger.error(
-            f"Database error occurred while updating membership_id: {membership_id} in background task"
-        )
-    except Exception:
-        await db.rollback()
-        logger.exception(
-            f"Unexpected error occurred while updating membership_id: {membership_id} in background task"
-        )
+async def membership_activation(membership_id):
+    async with AsyncSessionLocal() as db:
+        try:
+            async with db.begin():
+                stmt = await db.execute(
+                    select(Membership, Subscription).where(
+                        Membership.id == membership_id
+                    )
+                )
+                result = stmt.first()
+                if not result:
+                    logger.error(
+                        "membership_id: %s not linked to subscription table",
+                        membership_id,
+                    )
+                    return
+                member, subscription = result
+                now = datetime.now(timezone.utc)
+                up_to_date = subscription.expire_at > now
+                if member.is_active == up_to_date:
+                    logger.info(
+                        f"Membership status for membership_id: {membership_id} is already up to date. No changes made."
+                    )
+                    return
+                member.is_active = up_to_date
+                logger.info(
+                    f"Membership status of member: {membership_id} updated successfully in background task."
+                )
+        except IntegrityError:
+            logger.error(
+                f"Database error occurred while updating membership_id: {membership_id} in background task"
+            )
+        except Exception:
+            logger.exception(
+                f"Unexpected error occurred while updating membership_id: {membership_id} in background task"
+            )
 
 
 async def create_payment(
