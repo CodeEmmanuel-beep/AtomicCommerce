@@ -1,4 +1,4 @@
-from fastapi import HTTPException
+from fastapi import HTTPException, Query
 from app.logs.logger import get_logger
 import stripe
 from sqlalchemy import select, text, func
@@ -7,7 +7,7 @@ from app.models import Subscription, Payment, Order, Membership
 from app.api.v1.schemas import PaymentResponse, SubscriptionResponse
 from app.database.config import settings
 from app.database.get import AsyncSessionLocal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logger = get_logger("payment")
 
@@ -55,6 +55,7 @@ async def create_payment(
     order_id,
     currency,
     payload,
+    one_time_subscription: str = Query("one_time", enum=["one_time", "subscription"]),
 ):
     user_id = payload.get("user_id")
     if not user_id:
@@ -165,79 +166,172 @@ async def create_payment(
                     status_code=500,
                     detail="An unexpected error occurred while processing payment.",
                 )
-    if membership_id is not None:
-        sub = (
-            await session.execute(
-                select(Subscription)
-                .join(Membership, Subscription.membership_id == Membership.id)
-                .where(
-                    Membership.user_id == user_id,
-                    Membership.id == membership_id,
+        if membership_id and one_time_subscription == "one_time":
+            sub = (
+                await session.execute(
+                    select(Subscription)
+                    .join(Membership, Subscription.membership_id == Membership.id)
+                    .where(
+                        Membership.user_id == user_id,
+                        Membership.id == membership_id,
+                    )
                 )
-            )
-        ).scalar_one_or_none()
-        if not sub:
-            logger.warning(
-                f"user_id: {user_id} attempted to create payment for subscription_plan without a membership"
-            )
-            raise HTTPException(
-                status_code=404,
-                detail="register as a member before subscribing to a plan.",
-            )
-    try:
-        subscription = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            client_reference_id=str(user_id),
-            metadata={
-                "user_id": str(user_id),
-                "type": "membership",
-                "membership_id": membership_id,
-            },
-            line_items=[
-                {
-                    "price": sub.plan_name.value,
-                    "quantity": 1,
+            ).scalar_one_or_none()
+            if not sub:
+                logger.warning(
+                    f"user_id: {user_id} attempted to create payment for subscription_plan without a membership"
+                )
+                raise HTTPException(
+                    status_code=404,
+                    detail="register as a member before subscribing to a plan.",
+                )
+            try:
+                subscription = stripe.checkout.Session.create(
+                    payment_method_types=["card"],
+                    client_reference_id=str(user_id),
+                    metadata={
+                        "user_id": str(user_id),
+                        "type": "membership",
+                        "payment_type": "one_time",
+                        "membership_id": str(membership_id),
+                    },
+                    line_items=[
+                        {
+                            "price_data": {
+                                "currency": currency,
+                                "product_data": {
+                                    "name": f"membership one time payment for {sub.plan_name} plan"
+                                },
+                                "unit_amount": int(sub.plan_price * 100),
+                            },
+                            "quantity": 1,
+                        }
+                    ],
+                    mode="payment",
+                    success_url="https://yourdomain.com/success?session_id={CHECKOUT_SESSION_ID}",
+                    cancel_url="https://yourdomain.com/cancel",
+                )
+                logger.info(
+                    f"subscription payment created successfully for user_id: {user_id}, subscription_plan: {sub.plan_name}"
+                )
+            except stripe.StripeError as e:
+                logger.error(f"Stripe error occurred: {e.user_message}")
+                raise HTTPException(
+                    status_code=400, detail=f"Stripe error: {e.user_message}"
+                )
+            try:
+                sub.reference_id = subscription.id
+                session.add(sub)
+                await session.commit()
+                await session.refresh(sub)
+                return {
+                    "status": "success",
+                    "message": "subscription payment initiated, complete payment to activate membership",
+                    "checkout_url": subscription.url,
+                    "data": SubscriptionResponse.model_validate(sub),
                 }
-            ],
-            mode="subscription",
-            success_url="https://yourdomain.com/success?session_id={CHECKOUT_SESSION_ID}",
-            cancel_url="https://yourdomain.com/cancel",
-        )
-        logger.info(
-            f"subscription payment created successfully for user_id: {user_id}, subscription_plan: {sub.plan_name}"
-        )
-    except stripe.StripeError as e:
-        logger.error(f"Stripe error occurred: {e.user_message}")
-        raise HTTPException(status_code=400, detail=f"Stripe error: {e.user_message}")
-    try:
-        sub.reference_id = subscription.id
-        session.add(sub)
-        await session.commit()
-        await session.refresh(sub)
-        return {
-            "status": "success",
-            "message": "subscription payment initiated, complete payment to activate membership",
-            "checkout_url": subscription.url,
-            "data": SubscriptionResponse.model_validate(sub),
-        }
-    except IntegrityError:
-        await session.rollback()
-        logger.error(
-            f"Database error occurred while creating payment for user_id: {user_id}"
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Database error occurred while processing payment.",
-        )
-    except Exception:
-        await session.rollback()
-        logger.exception(
-            f"Unexpected error occurred while creating payment for user_id: {user_id}"
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="An unexpected error occurred while processing payment.",
-        )
+            except IntegrityError:
+                await session.rollback()
+                logger.error(
+                    f"Database error occurred while creating payment for user_id: {user_id}"
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail="Database error occurred while processing payment.",
+                )
+            except Exception:
+                await session.rollback()
+                logger.exception(
+                    f"Unexpected error occurred while creating payment for user_id: {user_id}"
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail="An unexpected error occurred while processing payment.",
+                )
+        if membership_id and one_time_subscription == "subscription":
+            sub = (
+                await session.execute(
+                    select(Subscription)
+                    .join(Membership, Subscription.membership_id == Membership.id)
+                    .where(
+                        Membership.user_id == user_id,
+                        Membership.id == membership_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if not sub:
+                logger.warning(
+                    f"user_id: {user_id} attempted to create payment for subscription_plan without a membership"
+                )
+                raise HTTPException(
+                    status_code=404,
+                    detail="register as a member before subscribing to a plan.",
+                )
+            try:
+                subscription = stripe.checkout.Session.create(
+                    payment_method_types=["card"],
+                    client_reference_id=str(user_id),
+                    metadata={
+                        "user_id": str(user_id),
+                        "type": "membership",
+                        "payment_type": "subscription",
+                        "membership_id": str(membership_id),
+                    },
+                    subscription_data={
+                        "metadata": {
+                            "user_id": str(user_id),
+                            "type": "membership",
+                            "payment_type": "subscription",
+                            "membership_id": str(membership_id),
+                        },
+                    },
+                    line_items=[
+                        {
+                            "price": sub.price_id,
+                            "quantity": 1,
+                        }
+                    ],
+                    mode="subscription",
+                    success_url="https://yourdomain.com/success?session_id={CHECKOUT_SESSION_ID}",
+                    cancel_url="https://yourdomain.com/cancel",
+                )
+                logger.info(
+                    f"subscription payment created successfully for user_id: {user_id}, subscription_plan: {sub.plan_name}"
+                )
+            except stripe.StripeError as e:
+                logger.error(f"Stripe error occurred: {e.user_message}")
+                raise HTTPException(
+                    status_code=400, detail=f"Stripe error: {e.user_message}"
+                )
+            try:
+                sub.reference_id = subscription.id
+                session.add(sub)
+                await session.commit()
+                await session.refresh(sub)
+                return {
+                    "status": "success",
+                    "message": "subscription payment initiated, complete payment to activate membership",
+                    "checkout_url": subscription.url,
+                    "data": SubscriptionResponse.model_validate(sub),
+                }
+            except IntegrityError:
+                await session.rollback()
+                logger.error(
+                    f"Database error occurred while creating payment for user_id: {user_id}"
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail="Database error occurred while processing payment.",
+                )
+            except Exception:
+                await session.rollback()
+                logger.exception(
+                    f"Unexpected error occurred while creating payment for user_id: {user_id}"
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail="An unexpected error occurred while processing payment.",
+                )
 
 
 async def stripe_webhook(request, background_task, db):
@@ -257,15 +351,20 @@ async def stripe_webhook(request, background_task, db):
             f"Received webhook for membership subscription event: {event['type']} with metadata: {metadata}"
         )
         membership_id = metadata.get("membership_id")
-        if event["type"] == "checkout.session.completed":
-            session = event["data"]["object"]
-            stripe_session_id = session["id"]
-            stmt = await db.execute(
-                select(Subscription)
-                .where(Subscription.reference_id == stripe_session_id)
-                .with_for_update()
-            )
-            sub = stmt.scalar_one_or_none()
+        session = event["data"]["object"]
+        stripe_session_id = (
+            session["id"]
+            if "checkout.session" in event["type"]
+            else session["subscription"]
+        )
+        sub_id = session["subscription"] if "subscription" in session else None
+        stmt = await db.execute(
+            select(Subscription)
+            .where(Subscription.reference_id == stripe_session_id)
+            .with_for_update()
+        )
+        sub = stmt.scalar_one_or_none()
+        if event["type"] in ["checkout.session.completed", "invoice.paid"]:
             if not sub:
                 logger.error(
                     "subscription table was not initialised for payment_ref: %s",
@@ -276,11 +375,17 @@ async def stripe_webhook(request, background_task, db):
                     "message": "subscription record not found in database",
                 }
             now = datetime.now(timezone.utc)
+            if sub.last_event_id == event["id"]:
+                logger.info(f"Subscription {sub_id} already processed. Skipping.")
+                return {"status": "success", "message": "already processed"}
             sub.expire_at = func.greatest(sub.expire_at, now) + text(
                 "INTERVAL '30 days'"
             )
+            sub.reference_id = sub_id if sub_id else sub.reference_id
+            sub.last_event_id = event["id"]
             try:
                 await db.commit()
+                background_task.add_task(membership_activation, membership_id)
             except IntegrityError:
                 logger.error(
                     "database error while saving subscription status and transaction id on webhook endpoint"
@@ -294,20 +399,11 @@ async def stripe_webhook(request, background_task, db):
             logger.info(
                 f"Subscription {stripe_session_id} marked as completed and active."
             )
-            background_task.add_task(membership_activation, membership_id)
             return {
                 "status": "success",
                 "message": "subscription status updated",
             }
-        elif event["type"] == "checkout.session.failed":
-            session = event["data"]["object"]
-            stripe_session_id = session["id"]
-            stmt = await db.execute(
-                select(Subscription).where(
-                    Subscription.reference_id == stripe_session_id
-                )
-            )
-            sub = stmt.scalar_one_or_none()
+        elif event["type"] in ["checkout.session.failed", "invoice.payment_failed"]:
             if not sub:
                 logger.error(
                     "subscription table was not initialised for failed payment_ref: %s",
@@ -317,18 +413,6 @@ async def stripe_webhook(request, background_task, db):
                     "status": "failed",
                     "message": "subscription record not found in database",
                 }
-            try:
-                await db.commit()
-            except IntegrityError:
-                logger.error(
-                    "database error while saving failed membership subscription status on webhook endpoint"
-                )
-                raise HTTPException(status_code=400, detail="database error")
-            except Exception:
-                logger.exception(
-                    "error while saving failed membership subscription status on webhook endpoint"
-                )
-                raise HTTPException(status_code=500, detail="internal server error")
             logger.info("Membership subscription marked as failed and inactive.")
             background_task.add_task(membership_activation, membership_id)
             return {
@@ -336,14 +420,6 @@ async def stripe_webhook(request, background_task, db):
                 "message": "subscription payment failed, membership deactivated",
             }
         elif event["type"] == "checkout.session.expired":
-            session = event["data"]["object"]
-            stripe_session_id = session["id"]
-            stmt = await db.execute(
-                select(Subscription).where(
-                    Subscription.reference_id == stripe_session_id
-                )
-            )
-            sub = stmt.scalar_one_or_none()
             if not sub:
                 logger.error(
                     "subscription table was not initialised for expired payment_ref: %s",
@@ -353,19 +429,6 @@ async def stripe_webhook(request, background_task, db):
                     "status": "failed",
                     "message": "subscription record not found in database",
                 }
-            try:
-                await db.commit()
-            except IntegrityError:
-                logger.error(
-                    "database error while saving expired membership subscription status on webhook endpoint"
-                )
-                raise HTTPException(status_code=400, detail="database error")
-            except Exception:
-                logger.exception(
-                    "error while saving expired membership subscription status on webhook endpoint"
-                )
-                raise HTTPException(status_code=500, detail="internal server error")
-            logger.info("Membership subscription marked as expired and inactive.")
             background_task.add_task(membership_activation, membership_id)
             return {
                 "status": "failed",
@@ -375,14 +438,14 @@ async def stripe_webhook(request, background_task, db):
         logger.info(
             f"Received webhook for order payment event: {event['type']} with metadata: {metadata}"
         )
+        session = event["data"]["object"]
+        stripe_session_id = session["id"]
+        actual_transaction_id = session["payment_intent"]
+        stmt = await db.execute(
+            select(Payment).where(Payment.reference_id == stripe_session_id)
+        )
+        payment = stmt.scalar_one_or_none()
         if event["type"] == "checkout.session.completed":
-            session = event["data"]["object"]
-            stripe_session_id = session["id"]
-            actual_transaction_id = session["payment_intent"]
-            stmt = await db.execute(
-                select(Payment).where(Payment.reference_id == stripe_session_id)
-            )
-            payment = stmt.scalar_one_or_none()
             if not payment:
                 logger.error(
                     "payment table was not initialised for payment_ref: %s, transaction_id: %s",
@@ -413,12 +476,6 @@ async def stripe_webhook(request, background_task, db):
             logger.info(f"Payment {stripe_session_id} marked as completed.")
             return {"status": "success", "message": "payment status updated"}
         elif event["type"] == "checkout.session.expired":
-            session = event["data"]["object"]
-            stripe_session_id = session["id"]
-            stmt = await db.execute(
-                select(Payment).where(Payment.reference_id == stripe_session_id)
-            )
-            payment = stmt.scalar_one_or_none()
             if not payment:
                 logger.error(
                     "payment table was not initialised for expired payment_ref: %s",
