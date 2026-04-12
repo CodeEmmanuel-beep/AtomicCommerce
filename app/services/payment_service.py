@@ -1,15 +1,18 @@
 from fastapi import HTTPException, Query
 from app.logs.logger import get_logger
 import stripe
-from sqlalchemy import select, text, func
+from sqlalchemy import select, text, func, or_
 from sqlalchemy.exc import IntegrityError
-from app.models import Subscription, Payment, Order, Membership
+from app.models import Subscription, Payment, Order, Membership, PaymentStatus
 from app.api.v1.schemas import PaymentResponse, SubscriptionResponse
 from app.database.config import settings
 from app.database.get import AsyncSessionLocal
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+from app.database.config import settings
 
 logger = get_logger("payment")
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 async def membership_activation(membership_id):
@@ -334,7 +337,17 @@ async def create_payment(
                 )
 
 
-async def stripe_webhook(request, background_task, db):
+async def update_payment(sub_id, db):
+    sub = (
+        await db.execute(select(Subscription)).where(Subscription.id == sub_id)
+    ).scalar_one_or_none()
+    portal_session = stripe.billing_portal.Session.create(
+        customer=sub.customer_id, return_url="https://example.com/account"
+    )
+    return {"bill_update_linK": portal_session.url}
+
+
+async def stripe_webhook(request, background_task):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
     event = None
@@ -345,107 +358,163 @@ async def stripe_webhook(request, background_task, db):
     except Exception:
         logger.exception("error verifying signature")
         raise HTTPException(status_code=400, detail="invalid signature")
-    metadata = event["data"]["object"].get("metadata", {})
-    if metadata.get("type") == "membership":
-        logger.info(
-            f"Received webhook for membership subscription event: {event['type']} with metadata: {metadata}"
-        )
-        membership_id = metadata.get("membership_id")
+    async with AsyncSessionLocal() as db:
         session = event["data"]["object"]
         stripe_session_id = (
-            session["id"]
+            session.get("id")
             if "checkout.session" in event["type"]
-            else session["subscription"]
+            else session.get("subscription")
         )
-        sub_id = session["subscription"] if "subscription" in session else None
-        stmt = await db.execute(
-            select(Subscription)
-            .where(Subscription.reference_id == stripe_session_id)
-            .with_for_update()
-        )
-        sub = stmt.scalar_one_or_none()
-        if event["type"] in ["checkout.session.completed", "invoice.paid"]:
-            if not sub:
-                logger.error(
-                    "subscription table was not initialised for payment_ref: %s",
-                    stripe_session_id,
-                )
-                return {
-                    "status": "failed",
-                    "message": "subscription record not found in database",
-                }
-            now = datetime.now(timezone.utc)
-            if sub.last_event_id == event["id"]:
-                logger.info(f"Subscription {sub_id} already processed. Skipping.")
-                return {"status": "success", "message": "already processed"}
-            sub.expire_at = func.greatest(sub.expire_at, now) + text(
-                "INTERVAL '30 days'"
-            )
-            sub.reference_id = sub_id if sub_id else sub.reference_id
-            sub.last_event_id = event["id"]
-            try:
-                await db.commit()
-                background_task.add_task(membership_activation, membership_id)
-            except IntegrityError:
-                logger.error(
-                    "database error while saving subscription status and transaction id on webhook endpoint"
-                )
-                raise HTTPException(status_code=400, detail="database error")
-            except Exception:
-                logger.exception(
-                    "error while saving subscription status and transaction id on webhook endpoint"
-                )
-                raise HTTPException(status_code=500, detail="internal server error")
+        metadata = session.get("metadata", {})
+        sub_details = session.get("subscription_details", {})
+        subscription_metadata = sub_details.get("metadata", {})
+        if "membership" in [metadata.get("type"), subscription_metadata.get("type")]:
             logger.info(
-                f"Subscription {stripe_session_id} marked as completed and active."
+                f"Received webhook for membership subscription event: {event['type']} with metadata: {metadata}"
             )
-            return {
-                "status": "success",
-                "message": "subscription status updated",
-            }
-        elif event["type"] in ["checkout.session.failed", "invoice.payment_failed"]:
+            membership_id = metadata.get("membership_id")
+            sub_id = session["subscription"] if "subscription" in session else None
+            stmt = await db.execute(
+                select(Subscription)
+                .where(
+                    or_(
+                        Subscription.reference_id == stripe_session_id,
+                        Subscription.reference_id == sub_id,
+                    )
+                )
+                .with_for_update()
+            )
+            sub = stmt.scalar_one_or_none()
             if not sub:
                 logger.error(
-                    "subscription table was not initialised for failed payment_ref: %s",
+                    "subscription table was not initialised for payment_ref: %s, subscription_id: %s",
                     stripe_session_id,
+                    sub_id,
                 )
                 return {
                     "status": "failed",
                     "message": "subscription record not found in database",
                 }
-            logger.info("Membership subscription marked as failed and inactive.")
-            background_task.add_task(membership_activation, membership_id)
-            return {
-                "status": "failed",
-                "message": "subscription payment failed, membership deactivated",
-            }
-        elif event["type"] == "checkout.session.expired":
-            if not sub:
-                logger.error(
-                    "subscription table was not initialised for expired payment_ref: %s",
-                    stripe_session_id,
+            if sub.last_event_id == event["id"]:
+                logger.info(
+                    f"Subscription {membership_id} already processed. Skipping."
                 )
+                return {"status": "success", "message": "already processed"}
+            sub.last_event_id = event["id"]
+            sub.customer_id = session["customer"]
+            if event["type"] in ["checkout.session.completed", "invoice.paid"]:
+                now = datetime.now(timezone.utc)
+                sub.expire_at = func.greatest(sub.expire_at, now) + text(
+                    "INTERVAL '30 days'"
+                )
+                sub.reference_id = sub_id if sub_id else sub.reference_id
+                sub.status = "active"
+                try:
+                    await db.commit()
+                except IntegrityError:
+                    await db.rollback()
+                    logger.error(
+                        "database error while saving subscription status and transaction id on webhook endpoint"
+                    )
+                    raise HTTPException(status_code=400, detail="database error")
+                except Exception:
+                    await db.rollback()
+                    logger.exception(
+                        "error while saving subscription status and transaction id on webhook endpoint"
+                    )
+                    raise HTTPException(status_code=500, detail="internal server error")
+                logger.info(
+                    f"Subscription {stripe_session_id} marked as completed and active."
+                )
+                background_task.add_task(membership_activation, membership_id)
+                return {
+                    "status": "success",
+                    "message": "subscription status updated",
+                }
+            elif event["type"] == "customer.subscription.updated":
+                sub.expire_at = datetime.fromtimestamp(
+                    session["current_period_end"], tz=timezone.utc
+                )
+                sub.status = session["status"]
+                try:
+                    await db.commit()
+                except IntegrityError:
+                    await db.rollback()
+                    logger.error(
+                        "database error updating subscription %s", sub.reference_id
+                    )
+                    raise HTTPException(status_code=400, detail="database error")
+                except Exception:
+                    await db.rollback()
+                    logger.exception("error updating subscription %s", sub.reference_id)
+                    raise HTTPException(status_code=500, detail="internal server error")
+                background_task.add_task(membership_activation, membership_id)
+                return {"status": "success", "message": "subscription updated"}
+            elif event["type"] in ["checkout.session.failed", "invoice.payment_failed"]:
+                sub.status = "past_due"
+                background_task.add_task(membership_activation, membership_id)
+                try:
+                    await db.commit()
+                except IntegrityError:
+                    await db.rollback()
+                    logger.error(
+                        "database error while saving failed subscription status on webhook endpoint"
+                    )
+                    raise HTTPException(status_code=400, detail="database error")
+                except Exception:
+                    await db.rollback()
+                    logger.exception(
+                        "error while saving failed subscription status on webhook endpoint"
+                    )
+                    raise HTTPException(status_code=500, detail="internal server error")
+                logger.info("Membership subscription marked as failed and inactive.")
                 return {
                     "status": "failed",
-                    "message": "subscription record not found in database",
+                    "message": "subscription payment failed, membership deactivated",
                 }
-            background_task.add_task(membership_activation, membership_id)
-            return {
-                "status": "failed",
-                "message": "membership subscription payment expired, membership deactivated",
-            }
-    if metadata.get("type") == "order_payment":
-        logger.info(
-            f"Received webhook for order payment event: {event['type']} with metadata: {metadata}"
-        )
-        session = event["data"]["object"]
-        stripe_session_id = session["id"]
-        actual_transaction_id = session["payment_intent"]
-        stmt = await db.execute(
-            select(Payment).where(Payment.reference_id == stripe_session_id)
-        )
-        payment = stmt.scalar_one_or_none()
-        if event["type"] == "checkout.session.completed":
+            elif event["type"] == "customer.subscription.deleted":
+                sub.status = "canceled"
+                background_task.add_task(membership_activation, sub.membership_id)
+                try:
+                    await db.commit()
+                except IntegrityError:
+                    await db.rollback()
+                    logger.exception(
+                        "database error deleting subscription %s", sub.reference_id
+                    )
+                    raise HTTPException(status_code=400, detail="database error")
+                except Exception:
+                    await db.rollback()
+                    logger.exception("error deleting subscription %s", sub.reference_id)
+                    raise HTTPException(status_code=500, detail="internal server error")
+                return {"status": "success", "message": "subscription canceled"}
+            elif event["type"] == "checkout.session.expired":
+                background_task.add_task(membership_activation, membership_id)
+                try:
+                    await db.commit()
+                except IntegrityError:
+                    await db.rollback()
+                    logger.error(
+                        "database error updating subscription %s", sub.reference_id
+                    )
+                    raise HTTPException(status_code=400, detail="database error")
+                except Exception:
+                    await db.rollback()
+                    logger.exception("error updating subscription %s", sub.reference_id)
+                    raise HTTPException(status_code=500, detail="internal server error")
+                return {
+                    "status": "failed",
+                    "message": "membership subscription payment expired, membership deactivated",
+                }
+        if metadata.get("type") == "order_payment":
+            logger.info(
+                f"Received webhook for order payment event: {event['type']} with metadata: {metadata}"
+            )
+            actual_transaction_id = session["payment_intent"]
+            stmt = await db.execute(
+                select(Payment).where(Payment.reference_id == stripe_session_id)
+            )
+            payment = stmt.scalar_one_or_none()
             if not payment:
                 logger.error(
                     "payment table was not initialised for payment_ref: %s, transaction_id: %s",
@@ -456,53 +525,54 @@ async def stripe_webhook(request, background_task, db):
                     "status": "failed",
                     "message": "payment record not found in database",
                 }
-            if payment.payment_status == "success":
-                return {"status": "success", "message": "Already processed"}
-            payment.transaction_id = actual_transaction_id
-            payment.payment_status = "success"
-            payment.order.status = "processing"
-            try:
-                await db.commit()
-            except IntegrityError:
-                logger.error(
-                    "database error while saving payment status and transaction id on webhook endpoint"
-                )
-                raise HTTPException(status_code=400, detail="database error")
-            except Exception:
-                logger.exception(
-                    "error while saving payment status and transaction id on webhook endpoint"
-                )
-                raise HTTPException(status_code=500, detail="internal server error")
-            logger.info(f"Payment {stripe_session_id} marked as completed.")
-            return {"status": "success", "message": "payment status updated"}
-        elif event["type"] == "checkout.session.expired":
-            if not payment:
-                logger.error(
-                    "payment table was not initialised for expired payment_ref: %s",
-                    stripe_session_id,
-                )
+            if payment.last_event_id == event["id"]:
+                logger.info(f"Payment {stripe_session_id} already processed. Skipping.")
+                return {"status": "success", "message": "already processed"}
+            payment.last_event_id = event["id"]
+            if event["type"] == "checkout.session.completed":
+                payment.transaction_id = actual_transaction_id
+                payment.payment_status = PaymentStatus.SUCCESS
+                payment.order.status = "processing"
+                try:
+                    await db.commit()
+                except IntegrityError:
+                    await db.rollback()
+                    logger.error(
+                        "database error while saving payment status and transaction id on webhook endpoint"
+                    )
+                    raise HTTPException(status_code=400, detail="database error")
+                except Exception:
+                    await db.rollback()
+                    logger.exception(
+                        "error while saving payment status and transaction id on webhook endpoint"
+                    )
+                    raise HTTPException(status_code=500, detail="internal server error")
+                logger.info(f"Payment {stripe_session_id} marked as completed.")
+                return {"status": "success", "message": "payment status updated"}
+            elif event["type"] == "checkout.session.expired":
+                payment.payment_status = PaymentStatus.FAILED
+                payment.order.status = "pending"
+                try:
+                    await db.commit()
+                except IntegrityError:
+                    await db.rollback()
+                    logger.error(
+                        "database error while saving expired payment status on webhook endpoint"
+                    )
+                    raise HTTPException(status_code=400, detail="database error")
+                except Exception:
+                    await db.rollback()
+                    logger.exception(
+                        "error while saving expired payment status on webhook endpoint"
+                    )
+                    raise HTTPException(status_code=500, detail="internal server error")
+                logger.info("Payment marked as expired and failed.")
                 return {
                     "status": "failed",
-                    "message": "payment record not found in database",
+                    "message": "payment expired, order status reverted to pending",
                 }
-            if payment.payment_status == "failed":
-                return {"status": "success", "message": "Already processed"}
-            payment.payment_status = "failed"
-            payment.order.status = "pending"
-            try:
-                await db.commit()
-            except IntegrityError:
-                logger.error(
-                    "database error while saving expired payment status on webhook endpoint"
-                )
-                raise HTTPException(status_code=400, detail="database error")
-            except Exception:
-                logger.exception(
-                    "error while saving expired payment status on webhook endpoint"
-                )
-                raise HTTPException(status_code=500, detail="internal server error")
-            logger.info("Payment marked as expired and failed.")
-            return {
-                "status": "failed",
-                "message": "payment expired, order status reverted to pending",
-            }
+        if metadata.get("type") not in ["membership", "order_payment"]:
+            logger.warning(
+                f"Received unhandled event type: {event['type']} with metadata: {metadata}"
+            )
+            return {"status": "ignored", "message": "event type not tracked"}
