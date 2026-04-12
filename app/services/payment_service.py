@@ -3,12 +3,18 @@ from app.logs.logger import get_logger
 import stripe
 from sqlalchemy import select, text, func, or_
 from sqlalchemy.exc import IntegrityError
-from app.models import Subscription, Payment, Order, Membership, PaymentStatus
+from app.models import (
+    Subscription,
+    Payment,
+    Order,
+    Membership,
+    PaymentStatus,
+    OrderStatus,
+)
 from app.api.v1.schemas import PaymentResponse, SubscriptionResponse
 from app.database.config import settings
 from app.database.get import AsyncSessionLocal
 from datetime import datetime, timezone
-from app.database.config import settings
 
 logger = get_logger("payment")
 
@@ -290,7 +296,7 @@ async def create_payment(
                     },
                     line_items=[
                         {
-                            "price": sub.price_id,
+                            "price": sub.plan_name.value,
                             "quantity": 1,
                         }
                     ],
@@ -474,7 +480,7 @@ async def stripe_webhook(request, background_task):
                 }
             elif event["type"] == "customer.subscription.deleted":
                 sub.status = "canceled"
-                background_task.add_task(membership_activation, sub.membership_id)
+                background_task.add_task(membership_activation, membership_id)
                 try:
                     await db.commit()
                 except IntegrityError:
@@ -532,7 +538,7 @@ async def stripe_webhook(request, background_task):
             if event["type"] == "checkout.session.completed":
                 payment.transaction_id = actual_transaction_id
                 payment.payment_status = PaymentStatus.SUCCESS
-                payment.order.status = "processing"
+                payment.order.status = OrderStatus.processing
                 try:
                     await db.commit()
                 except IntegrityError:
@@ -551,7 +557,7 @@ async def stripe_webhook(request, background_task):
                 return {"status": "success", "message": "payment status updated"}
             elif event["type"] == "checkout.session.expired":
                 payment.payment_status = PaymentStatus.FAILED
-                payment.order.status = "pending"
+                payment.order.status = OrderStatus.pending
                 try:
                     await db.commit()
                 except IntegrityError:
