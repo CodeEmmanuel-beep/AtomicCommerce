@@ -265,6 +265,7 @@ class Payment(Base):
     payment_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    last_event_id: Mapped[str] = mapped_column(String, index=True)
 
     user = relationship("User", back_populates="payments")
     order = relationship("Order", back_populates="payment", uselist=False)
@@ -310,12 +311,12 @@ class Subscription(Base):
         default=SubscriptionPlan.Standard,
         index=True,
     )
-    price: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
-    expire_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now() + text("INTERVAL '30 days'"),
-        index=True,
-    )
+    plan_price: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
+    status: Mapped[str] = mapped_column(String, index=True)
+    customer_id: Mapped[str] = mapped_column(String)
+    reference_id: Mapped[str] = mapped_column(String, index=True)
+    last_event_id: Mapped[str] = mapped_column(String, index=True)
+    expire_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     time_of_subscription: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
