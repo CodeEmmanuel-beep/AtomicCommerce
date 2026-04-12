@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     Standard: str
     Premium: str
     Regular: str
+    STRIPE_SECRET_KEY: str
 
     model_config = {"env_file": ".env"}
 
