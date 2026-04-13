@@ -1,8 +1,8 @@
 from app.logs.logger import get_logger
-from fastapi import HTTPException
-from app.models_sql import Membership, User
+from fastapi import HTTPException, Query
+from app.models import Membership, User, Subscription
 from sqlalchemy.exc import IntegrityError
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     MembershipResponse,
     MembershipRes,
     PaginatedMetadata,
@@ -19,11 +19,18 @@ from app.utils.redis import (
     member_global_invalidation,
 )
 import asyncio
+from app.database.config import settings
 
 logger = get_logger("membership")
 
 
-async def make_member(membership_type, db, payload):
+async def make_member(
+    db,
+    payload,
+    membership_type: str = Query("Standard", enum=["Regular", "Premium", "Standard"]),
+    activate: str = Query("yes", enum=["no", "yes"]),
+    activation_type: str = Query("one_time", enum=["subscription", "one_time"]),
+):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized user tried to access make_member endpoint")
@@ -31,7 +38,9 @@ async def make_member(membership_type, db, payload):
             status_code=401, detail="you need to register to apply for membership"
         )
     existing = (
-        await db.execute(select(Membership).where(Membership.user_id == user_id))
+        await db.execute(
+            select(Membership).where(Membership.user_id == user_id).with_for_update()
+        )
     ).scalar_one_or_none()
     if existing:
         if existing.is_deleted:
@@ -45,8 +54,26 @@ async def make_member(membership_type, db, payload):
         user_id=user_id,
         membership_type=membership_type,
     )
+    db.add(member)
+    if activate == "yes":
+        await db.flush()
+        sub_table = Subscription(membership_id=member.id, plan_name=membership_type)
+        if activation_type == "one_time":
+            price_map = {
+                "Standard": settings.standard_price,
+                "Regular": settings.regular_price,
+                "Premium": settings.premium_price,
+            }
+            sub_table.plan_price = price_map[membership_type]
+        if activation_type == "subscription":
+            price_map = {
+                "Standard": settings.Standard,
+                "Regular": settings.Regular,
+                "Premium": settings.Premium,
+            }
+            sub_table.price_id = price_map[membership_type]
+        db.add(sub_table)
     try:
-        db.add(member)
         await db.commit()
     except IntegrityError:
         await db.rollback()

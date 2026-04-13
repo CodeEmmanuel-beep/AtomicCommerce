@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from decimal import Decimal
 
 
 class Settings(BaseSettings):
@@ -19,6 +20,9 @@ class Settings(BaseSettings):
     Standard: str
     Premium: str
     Regular: str
+    Standard_price: Decimal
+    Regular_price: Decimal
+    Premium_price: Decimal
     STRIPE_SECRET_KEY: str
 
     model_config = {"env_file": ".env"}
