@@ -1,6 +1,6 @@
 from app.logs.logger import get_logger
-from fastapi import HTTPException, Query
-from app.models import Membership, User, Subscription
+from fastapi import HTTPException
+from app.models import Membership, Store, User, Subscription, store_owners, store_staffs
 from sqlalchemy.exc import IntegrityError
 from app.api.v1.schemas import (
     MembershipResponse,
@@ -9,7 +9,7 @@ from app.api.v1.schemas import (
     PaginatedResponse,
     StandardResponse,
 )
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from app.utils.redis import (
     cache,
@@ -25,11 +25,7 @@ logger = get_logger("membership")
 
 
 async def make_member(
-    db,
-    payload,
-    membership_type: str = Query("Standard", enum=["Regular", "Premium", "Standard"]),
-    activate: str = Query("yes", enum=["no", "yes"]),
-    activation_type: str = Query("one_time", enum=["subscription", "one_time"]),
+    store_id, membership_type, activate, activation_type, db, payload
 ):
     user_id = payload.get("user_id")
     if not user_id:
@@ -39,7 +35,9 @@ async def make_member(
         )
     existing = (
         await db.execute(
-            select(Membership).where(Membership.user_id == user_id).with_for_update()
+            select(Membership)
+            .where(Membership.user_id == user_id, Membership.store_id == store_id)
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if existing:
@@ -47,9 +45,9 @@ async def make_member(
             logger.warning(f"Deleted user {user_id} tried to re-register.")
             raise HTTPException(
                 status_code=403,
-                detail="This ID has a deleted membership. Contact support to reactivate.",
+                detail="this ID has a deleted membership. Contact support to reactivate.",
             )
-        raise HTTPException(status_code=400, detail="Already an active member.")
+        raise HTTPException(status_code=400, detail="already a member of this store.")
     member = Membership(
         user_id=user_id,
         membership_type=membership_type,
@@ -93,18 +91,16 @@ async def make_member(
     return {"message": "membership created"}
 
 
-async def update(
-    db,
-    payload,
-    membership_type: str = Query("Standard", enum=["Regular", "Premium", "Standard"]),
-    activate: str = Query("yes", enum=["no", "yes"]),
-    activation_type: str = Query("one_time", enum=["subscription", "one_time"]),
-):
+async def update(store_id, membership_type, activate, activation_type, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized user tried to assess make_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = select(Membership).where(Membership.user_id == user_id).with_for_update()
+    stmt = (
+        select(Membership)
+        .where(Membership.user_id == user_id, Membership.store_id == store_id)
+        .with_for_update()
+    )
     change = (await db.execute(stmt)).scalar_one_or_none()
     if not change:
         logger.warning(
@@ -165,12 +161,12 @@ async def update(
     return {"message": "membership type updated"}
 
 
-async def view_member(db, payload):
+async def view_membership(store_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt to access view_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    cache_key = f"membership:{user_id}"
+    cache_key = f"membership:{store_id}:{user_id}"
     cached_member = await cache(cache_key)
     if cached_member:
         logger.info("cached hit at view_member endpoint user %s", user_id)
@@ -180,6 +176,7 @@ async def view_member(db, payload):
         .options(selectinload(Membership.user))
         .where(
             Membership.user_id == user_id,
+            Membership.store_id == store_id,
             ~Membership.is_deleted,
             ~Membership.is_pause,
         )
@@ -187,10 +184,11 @@ async def view_member(db, payload):
     member = (await db.execute(stmt)).scalar_one_or_none()
     if not member:
         logger.warning(
-            "unauthorized attempt at view_member endpoint, user %s , is not a member",
+            "unauthorized attempt at view_member endpoint, user %s , is not a member of store: %s",
             user_id,
+            store_id,
         )
-        raise HTTPException(status_code=404, detail="not a member")
+        raise HTTPException(status_code=404, detail="not a member of this store")
     member_data = MembershipResponse.model_validate(member)
     full_response = StandardResponse(
         status="success", message="membership information", data=member_data
@@ -200,7 +198,44 @@ async def view_member(db, payload):
     return full_response
 
 
-async def view_active_members(page, limit, db, payload):
+async def view_memberships(db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt to access view_member endpoint")
+        raise HTTPException(status_code=401, detail="not a registered user")
+    cache_key = f"membership_list:{user_id}"
+    cached_member = await cache(cache_key)
+    if cached_member:
+        logger.info("cached hit at view_member endpoint user %s", user_id)
+        return StandardResponse(**cached_member)
+    stmt = (
+        select(Membership)
+        .options(selectinload(Membership.stores))
+        .where(
+            Membership.user_id == user_id,
+            ~Membership.is_deleted,
+            ~Membership.is_pause,
+        )
+    )
+    members = (await db.execute(stmt)).scalars().all()
+    if not members:
+        logger.warning(
+            "unauthorized attempt at view_member endpoint, user %s , is not a member of any store",
+            user_id,
+        )
+        raise HTTPException(status_code=404, detail="not a member of any store")
+    store_map = {mem.stores.slug: mem.stores.store_name for mem in members}
+    full_response = StandardResponse(
+        status="success",
+        message="stores where you are have a membership card",
+        data=store_map,
+    )
+    await cached(cache_key, full_response, ttl=1800)
+    logger.info("Cached %s memberships for user %s", len(members), user_id)
+    return full_response
+
+
+async def view_active_members(store_id, page, limit, db, payload):
     user_id = payload.get("user_id")
     username = payload.get("sub")
     if not user_id:
@@ -211,15 +246,24 @@ async def view_active_members(page, limit, db, payload):
         raise HTTPException(
             status_code=400, detail="page number and limit must be greater than 0"
         )
-    stmt = select(User).where(User.id == user_id)
-    admin = (await db.execute(stmt)).scalar_one_or_none()
-    if not admin or admin.role not in ["Admin", "Owner"]:
+    stmt = (
+        select(Store)
+        .where(Store.id == store_id)
+        .where(
+            or_(
+                Store.user_owners.any(User.id == user_id),
+                Store.user_staffs.any(User.id == user_id),
+            )
+        )
+    )
+    result = (await db.execute(stmt)).scalar_one_or_none()
+    if not result:
         logger.warning(
             f"user: '{user_id}' tried accessing view_active_members endpoint without authorization"
         )
         raise HTTPException(status_code=403, detail="restricted access")
     version = await cache_version("member_key")
-    cache_key = f"membership:v{version}:active:{page}:{limit}"
+    cache_key = f"membership:v{version}:active:{store_id}:{page}:{limit}"
     cached_member = await cache(cache_key)
     if cached_member:
         logger.info("cached hit at view_active_members endpoint user %s", user_id)
