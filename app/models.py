@@ -18,10 +18,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped
-from sqlalchemy import func, text
+from sqlalchemy import func
 from decimal import Decimal
 from datetime import datetime
-from app.database.config import settings
 
 
 store_staffs = Table(
@@ -311,15 +310,17 @@ class Subscription(Base):
         default=SubscriptionPlan.Standard,
         index=True,
     )
-    price_id: Mapped[str] = mapped_column(String)
-    plan_price: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
+    price_id: Mapped[str] = mapped_column(String, nullable=True)
+    plan_price: Mapped[Decimal] = mapped_column(
+        Numeric(precision=10, scale=2), nullable=True
+    )
     status: Mapped[str] = mapped_column(String, index=True)
     customer_id: Mapped[str] = mapped_column(String)
     reference_id: Mapped[str] = mapped_column(String, index=True)
     last_event_id: Mapped[str] = mapped_column(String, index=True)
     expire_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     time_of_subscription: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     membership = relationship("Membership", back_populates="subscriptions")
