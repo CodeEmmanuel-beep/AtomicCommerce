@@ -295,9 +295,9 @@ class Membership(Base):
 
 
 class SubscriptionPlan(str, Enum):
-    Standard = settings.Standard
-    Premium = settings.Premium
-    Regular = settings.Regular
+    Standard = "Standard"
+    Premium = "Premium"
+    Regular = "Regular"
 
 
 class Subscription(Base):
@@ -311,6 +311,7 @@ class Subscription(Base):
         default=SubscriptionPlan.Standard,
         index=True,
     )
+    price_id: Mapped[str] = mapped_column(String)
     plan_price: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     status: Mapped[str] = mapped_column(String, index=True)
     customer_id: Mapped[str] = mapped_column(String)
