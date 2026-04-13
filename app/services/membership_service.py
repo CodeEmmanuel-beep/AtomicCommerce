@@ -60,11 +60,12 @@ async def make_member(
         sub_table = Subscription(membership_id=member.id, plan_name=membership_type)
         if activation_type == "one_time":
             price_map = {
-                "Standard": settings.standard_price,
-                "Regular": settings.regular_price,
-                "Premium": settings.premium_price,
+                "Standard": settings.Standard_Price,
+                "Regular": settings.Regular_Price,
+                "Premium": settings.Premium_Price,
             }
             sub_table.plan_price = price_map[membership_type]
+            sub_table.price_id = None
         if activation_type == "subscription":
             price_map = {
                 "Standard": settings.Standard,
@@ -72,6 +73,7 @@ async def make_member(
                 "Premium": settings.Premium,
             }
             sub_table.price_id = price_map[membership_type]
+            sub_table.plan_price = None
         db.add(sub_table)
     try:
         await db.commit()
@@ -91,22 +93,59 @@ async def make_member(
     return {"message": "membership created"}
 
 
-async def update(membership_type, db, payload):
+async def update(
+    db,
+    payload,
+    membership_type: str = Query("Standard", enum=["Regular", "Premium", "Standard"]),
+    activate: str = Query("yes", enum=["no", "yes"]),
+    activation_type: str = Query("one_time", enum=["subscription", "one_time"]),
+):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized user tried to assess make_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = select(Membership).where(Membership.user_id == user_id)
+    stmt = select(Membership).where(Membership.user_id == user_id).with_for_update()
     change = (await db.execute(stmt)).scalar_one_or_none()
     if not change:
         logger.warning(
             f"user: {user_id} tried updating their membership without being a member"
         )
         raise HTTPException(status_code=404, detail="not a member")
+    sub = (
+        await db.execute(
+            select(Subscription)
+            .where(Subscription.membership_id == change.id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if sub:
+        logger.info("existing subscription found for user: %s", user_id)
+        return {
+            "status": "success",
+            "message": "existing subscription found. Use the 'Update Plan' portal to manage it.",
+        }
     change.membership_type = membership_type
+    if activate == "yes":
+        sub_table = Subscription(membership_id=change.id, plan_name=membership_type)
+        if activation_type == "one_time":
+            price_map = {
+                "Standard": settings.Standard_Price,
+                "Regular": settings.Regular_Price,
+                "Premium": settings.Premium_Price,
+            }
+            sub_table.plan_price = price_map[membership_type]
+            sub_table.price_id = None
+        if activation_type == "subscription":
+            price_map = {
+                "Standard": settings.Standard,
+                "Regular": settings.Regular,
+                "Premium": settings.Premium,
+            }
+            sub_table.price_id = price_map[membership_type]
+            sub_table.plan_price = None
+        db.add(sub_table)
     try:
         await db.commit()
-        await db.refresh(change)
         await member_invalidation(user_id)
     except IntegrityError:
         await db.rollback()
