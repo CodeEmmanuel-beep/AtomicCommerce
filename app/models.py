@@ -15,6 +15,7 @@ from sqlalchemy import (
     LargeBinary,
     CheckConstraint,
 )
+from typing import Optional
 from sqlalchemy.dialects.postgresql import JSONB
 from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped
@@ -131,6 +132,7 @@ class Store(Base):
     products = relationship("Product", back_populates="store")
     inventories = relationship("Inventory", back_populates="store")
     carts = relationship("Cart", back_populates="store")
+    membership = relationship("Membership", back_populates="store")
 
 
 class Address(Base):
@@ -273,7 +275,8 @@ class Payment(Base):
 class Membership(Base):
     __tablename__ = "memberships"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
     membership_type = Column(String, index=True)
     is_active = Column(Boolean, default=False, index=True)
     is_deleted = Column(Boolean, default=False, index=True)
@@ -283,10 +286,12 @@ class Membership(Base):
     reactivation_date = Column(Date)
     start_date = Column(Date, server_default=func.now())
 
-    user = relationship("User", back_populates="membership")
-    orders = relationship(
-        "Order", back_populates="membership", cascade="all, delete-orphan"
+    __table_args__ = (
+        UniqueConstraint("user_id", "store_id", name="user_store_membership"),
     )
+    user = relationship("User", back_populates="membership")
+    orders = relationship("Order", back_populates="membership")
+    store = relationship("Store", back_populates="membership")
     carts = relationship(
         "Cart", back_populates="membership", cascade="all, delete-orphan"
     )
@@ -310,8 +315,8 @@ class Subscription(Base):
         default=SubscriptionPlan.Standard,
         index=True,
     )
-    price_id: Mapped[str] = mapped_column(String, nullable=True)
-    plan_price: Mapped[Decimal] = mapped_column(
+    price_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    plan_price: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(precision=10, scale=2), nullable=True
     )
     status: Mapped[str] = mapped_column(String, index=True)
@@ -456,8 +461,8 @@ class Order(Base):
     delivery_address_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("addresses.id", ondelete="SET NULL"), index=True
     )
-    member: Mapped[int] = mapped_column(
-        Integer, ForeignKey("memberships.id", ondelete="CASCADE"), index=True
+    member_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("memberships.id"), index=True
     )
     total_quantity: Mapped[float] = mapped_column(Float, default=0)
     delivery_address: Mapped[dict] = mapped_column(JSONB)
