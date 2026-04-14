@@ -1,22 +1,23 @@
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, or_, exists, and_
 from app.utils.redis import cache, cache_version, cached
 from app.api.v1.schemas import (
     StandardResponse,
     PaginatedMetadata,
     StoreResponse,
     PaginatedResponse,
+    MembershipRes,
 )
 from fastapi import HTTPException
 import uuid
 from werkzeug.utils import secure_filename
 from sqlalchemy.orm import selectinload
 from app.logs.logger import get_logger
-from app.models import Store, Category
+from app.models import Store, Category, Membership, User, store_owners, store_staffs
 from enum import Enum
 from app.utils.supabase_url import cleaned_up
 from app.database.config import settings
 from io import BytesIO
-from app.models import React, Reply
+from app.models import React
 from app.api.v1.schemas import ReactionsSummary
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -183,3 +184,84 @@ async def file_generator(file, user_id):
                 status_code=400, detail="image should not be morethan 5mb"
             )
         yield chunk
+
+
+async def view_selected_members(
+    store_id, filter_1, filter_2, context, page, limit, db, payload
+):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt to access view_active_members endpoint")
+        raise HTTPException(status_code=401, detail="not a registered user")
+    offset = (page - 1) * limit
+    if page < 1 or limit < 1:
+        raise HTTPException(
+            status_code=400, detail="page number and limit must be greater than 0"
+        )
+    store_cte = (
+        select(Store)
+        .where(Store.id == store_id)
+        .where(
+            or_(
+                and_(
+                    exists().where(
+                        store_owners.c.users_id == user_id,
+                        store_owners.c.stores_id == store_id,
+                    )
+                ),
+                and_(
+                    exists().where(
+                        store_staffs.c.users_id == user_id,
+                        store_staffs.c.stores_id == store_id,
+                    )
+                ),
+            )
+        )
+    ).cte("portal_access")
+    membership_stmt = (
+        (
+            select(Membership)
+            .join(store_cte, Membership.store_id == store_cte.c.id)
+            .where(filter_1, filter_2)
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    version = await cache_version("member_key")
+    cache_key = f"membership:v{version}:{context}:{store_id}:{page}:{limit}"
+    cached_member = await cache(cache_key)
+    if cached_member:
+        logger.info("cached hit at view_active_members endpoint user %s", user_id)
+        return StandardResponse(**cached_member)
+    total = (
+        await db.execute(
+            select(func.count(Membership.id)).where(
+                filter_1,
+                filter_2,
+                Membership.store_id == store_id,
+            )
+        )
+    ).scalar() or 0
+    logger.info(f"total number of {context} members: %s", total)
+    if total == 0:
+        logger.info(f"{context} members search returned an empty list")
+        return StandardResponse(
+            status="success", message=f"no {context} member found", data=None
+        )
+    logger.info(f"total number of {context} members %s", total)
+    result = (await db.execute(membership_stmt)).scalars().all()
+    if not result:
+        logger.warning(
+            f"user: '{user_id}' tried accessing view_active_members endpoint without authorization"
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    data = PaginatedMetadata[MembershipRes](
+        items=[MembershipRes.model_validate(mem) for mem in result],
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+    )
+    response = StandardResponse(
+        status="success", message="membership information", data=data
+    )
+    await cached(cache_key, response, ttl=3600)
+    logger.info("{context} members data cached successfully for admin: %s", user_id)
+    return response
