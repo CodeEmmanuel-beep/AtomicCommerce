@@ -1,22 +1,16 @@
 from app.logs.logger import get_logger
 from fastapi import HTTPException
-from app.models import Membership, Store, User, Subscription
+from app.models import Membership, Store, store_owners, store_staffs, Subscription
 from sqlalchemy.exc import IntegrityError
-from app.api.v1.schemas import (
-    MembershipResponse,
-    MembershipRes,
-    PaginatedMetadata,
-    PaginatedResponse,
-    StandardResponse,
-)
+from app.api.v1.schemas import MembershipResponse, StandardResponse
+
 from app.utils.helper import view_selected_members
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, exists, and_
 from sqlalchemy.orm import selectinload
 from app.utils.redis import (
     cache,
     cached,
     member_invalidation,
-    cache_version,
     member_global_invalidation,
 )
 import asyncio
@@ -89,6 +83,7 @@ async def make_member(
     logger.info(
         f"member crerated with user_id: '{user_id}' and membership_type: '{membership_type}'"
     )
+    await member_global_invalidation()
     return {"message": "membership created"}
 
 
@@ -159,6 +154,7 @@ async def update(store_id, membership_type, activate, activation_type, db, paylo
     logger.info(
         f"user: {user_id} successfully updated their membership_type to '{membership_type}'"
     )
+    await member_global_invalidation()
     return {"message": "membership type updated"}
 
 
@@ -291,13 +287,13 @@ async def view_deleted_members(store_id, page, limit, db, payload):
 async def pause_membership(db, payload):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("unauthorized attempt to access view_deleted_members endpoint")
+        logger.warning("unauthorized attempt at pause membership endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
     stmt = select(Membership).where(Membership.user_id == user_id)
     pause = (await db.execute(stmt)).scalar_one_or_none()
     if not pause:
         logger.warning(
-            f"user: {user_id}, tried tried accessing pause_membership endpoint before registering as a member"
+            f"user: {user_id}, tried accessing pause_membership endpoint before registering as a member"
         )
         raise HTTPException(status_code=409, detail="invalid request")
     today = func.now()
@@ -320,23 +316,24 @@ async def pause_membership(db, payload):
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"user: {user_id} paused their membership")
+    await member_global_invalidation()
     return {"message": "membership paused"}
 
 
 async def reactivate_membership(db, payload):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("unauthorized attempt to access view_deleted_members endpoint")
+        logger.warning("unauthorized attempt to access reactivate membership endpoint")
         raise HTTPException(status_code=401, detail="not authorized")
     stmt = select(Membership).where(Membership.user_id == user_id)
     activate = (await db.execute(stmt)).scalar_one_or_none()
     if not activate:
         logger.warning(
-            f"user: {user_id}, tried tried accessing reactivate_membership endpoint before registering as a member"
+            f"user: {user_id}, tried accessing reactivate_membership endpoint before registering as a member"
         )
         raise HTTPException(status_code=404, detail="not a member")
     today = func.now()
-    if activate.is_pause:
+    if not activate.is_pause:
         return {"message": "membership is not paused"}
     activate.is_pause = False
     activate.reactivation_date = today
@@ -360,28 +357,43 @@ async def reactivate_membership(db, payload):
     return {"message": "member reactivated"}
 
 
-async def restore_membership(membership_id, db, payload):
+async def restore_membership(store_id, membership_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("unauthorized attempt to access view_deleted_members endpoint")
+        logger.warning("unauthorized attempt to access restore_membership endpoint")
         raise HTTPException(status_code=401, detail="not authorized")
-    stmt = select(User).where(User.id == user_id)
-    admin = (await db.execute(stmt)).scalar_one_or_none()
-    if not admin or admin.role not in ["Admin", "Owner"]:
-        raise HTTPException(status_code=403, detail="restricted access")
-    stmt = select(Membership).where(Membership.id == membership_id)
-    restore = (await db.execute(stmt)).scalar_one_or_none()
+    store_cte = (
+        select(Store)
+        .where(Store.id == store_id)
+        .where(
+            or_(
+                exists().where(
+                    store_owners.c.users_id == user_id,
+                    store_owners.c.stores_id == store_id,
+                ),
+                exists().where(
+                    store_staffs.c.users_id == user_id,
+                    store_staffs.c.stores_id == store_id,
+                ),
+            )
+        )
+    ).cte("portal_access")
+    membership_stmt = (
+        select(Membership)
+        .join(store_cte, Membership.store_id == store_cte.c.id)
+        .where(Membership.id == membership_id)
+    )
+    restore = (await db.execute(membership_stmt)).scalar_one_or_none()
     if not restore:
         logger.warning(
-            f"admin with user_id: {user_id}, inputed an invalid membership_id"
+            f"user: {user_id},entered invalid credentials at the restore_membership endpoint"
         )
-        raise HTTPException(status_code=404, detail="not a member")
-    if ~restore.is_deleted:
+        raise HTTPException(status_code=404, detail="no member to restore")
+    if not restore.is_deleted:
         return {"message": "membership is not deleted"}
     restore.is_deleted = False
     try:
         await db.commit()
-        await member_global_invalidation()
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -396,22 +408,43 @@ async def restore_membership(membership_id, db, payload):
             membership_id,
         )
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info("admin restored membership for membership_id: %s", membership_id)
+    logger.info("membership restored for membership_id: %s", membership_id)
+    await member_global_invalidation()
     return {"message": "membership restored"}
 
 
-async def delete_member(db, payload):
+async def delete_member(store_id, membership_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt to access delete_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = select(Membership).where(
-        Membership.user_id == user_id,
+    store_cte = (
+        select(Store)
+        .join(Membership, Store.id == Membership.store_id)
+        .where(Store.id == store_id)
+        .where(
+            or_(
+                exists().where(Membership.user_id == user_id),
+                exists().where(
+                    store_owners.c.users_id == user_id,
+                    store_owners.c.stores_id == store_id,
+                ),
+                exists().where(
+                    store_staffs.c.users_id == user_id,
+                    store_staffs.c.stores_id == store_id,
+                ),
+            )
+        )
+    ).cte("portal_access")
+    membership_stmt = (
+        select(Membership)
+        .join(store_cte, Membership.store_id == store_cte.c.id)
+        .where(Membership.id == membership_id)
     )
-    member = (await db.execute(stmt)).scalar_one_or_none()
+    member = (await db.execute(membership_stmt)).scalar_one_or_none()
     if not member:
         logger.warning(
-            f"user: {user_id}, tried tried accessing delete_membership endpoint before registering as a member"
+            f"user: {user_id}, entered invalid credentials at delete_member endpoint"
         )
         raise HTTPException(status_code=404, detail="not a member")
     if member.is_deleted:
@@ -437,4 +470,5 @@ async def delete_member(db, payload):
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"user: {user_id} deleted their membership")
+    await member_global_invalidation()
     return {"message": "membership deleted"}
