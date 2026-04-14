@@ -1,6 +1,6 @@
 from app.logs.logger import get_logger
 from fastapi import HTTPException
-from app.models import Membership, Store, User, Subscription, store_owners, store_staffs
+from app.models import Membership, Store, User, Subscription
 from sqlalchemy.exc import IntegrityError
 from app.api.v1.schemas import (
     MembershipResponse,
@@ -9,6 +9,7 @@ from app.api.v1.schemas import (
     PaginatedResponse,
     StandardResponse,
 )
+from app.utils.helper import view_selected_members
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from app.utils.redis import (
@@ -236,217 +237,55 @@ async def view_memberships(db, payload):
 
 
 async def view_active_members(store_id, page, limit, db, payload):
-    user_id = payload.get("user_id")
-    username = payload.get("sub")
-    if not user_id:
-        logger.warning("unauthorized attempt to access view_active_members endpoint")
-        raise HTTPException(status_code=401, detail="not a registered user")
-    offset = (page - 1) * limit
-    if page < 1 or limit < 1:
-        raise HTTPException(
-            status_code=400, detail="page number and limit must be greater than 0"
-        )
-    stmt = (
-        select(Store)
-        .where(Store.id == store_id)
-        .where(
-            or_(
-                Store.user_owners.any(User.id == user_id),
-                Store.user_staffs.any(User.id == user_id),
-            )
-        )
+    return await view_selected_members(
+        store_id,
+        Membership.is_active,
+        ~Membership.is_deleted,
+        "active",
+        page,
+        limit,
+        db,
+        payload,
     )
-    result = (await db.execute(stmt)).scalar_one_or_none()
-    if not result:
-        logger.warning(
-            f"user: '{user_id}' tried accessing view_active_members endpoint without authorization"
-        )
-        raise HTTPException(status_code=403, detail="restricted access")
-    version = await cache_version("member_key")
-    cache_key = f"membership:v{version}:active:{store_id}:{page}:{limit}"
-    cached_member = await cache(cache_key)
-    if cached_member:
-        logger.info("cached hit at view_active_members endpoint user %s", user_id)
-        return StandardResponse(**cached_member)
-    stmt = (
-        select(Membership)
-        .options(
-            selectinload(Membership.user),
-        )
-        .where(Membership.is_active, ~Membership.is_deleted)
-    )
-    total = (
-        await db.execute(
-            select(func.count())
-            .select_from(Membership)
-            .where(Membership.is_active, ~Membership.is_deleted)
-        )
-    ).scalar() or 0
-    members = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
-    if not members:
-        logger.info("active members search returned an empty list")
-        return StandardResponse(
-            status="success", message="no active member found", data=None
-        )
-    logger.info("total number of active members %s", total)
-    data = PaginatedMetadata[MembershipRes](
-        items=[MembershipRes.model_validate(mem) for mem in members],
-        pagination=PaginatedResponse(page=page, limit=limit, total=total),
-    )
-    response = StandardResponse(
-        status="success", message="membership information", data=data
-    )
-    await cached(cache_key, response, ttl=3600)
-    logger.info("active members data cached successfully admin: %s", username)
-    return response
 
 
-async def view_inactive_members(page, limit, db, payload):
-    user_id = payload.get("user_id")
-    username = payload.get("sub")
-    if not user_id:
-        logger.warning("unauthorized attempt to access view_inactive_members endpoint")
-        raise HTTPException(status_code=401, detail="not a registered user")
-    offset = (page - 1) * limit
-    stmt = select(User).where(User.id == user_id)
-    admin = (await db.execute(stmt)).scalar_one_or_none()
-    if not admin or admin.role not in ["Admin", "Owner"]:
-        raise HTTPException(status_code=403, detail="restricted access")
-    version = await cache_version("member_key")
-    cache_key = f"membership:v{version}:inactive:{page}:{limit}"
-    cached_member = await cache(cache_key)
-    if cached_member:
-        logger.info("cached hit at view_inactive_members endpoint user %s", user_id)
-        return StandardResponse(**cached_member)
-    stmt = (
-        select(Membership)
-        .options(
-            selectinload(Membership.user),
-        )
-        .where(~Membership.is_active, ~Membership.is_deleted)
+async def view_inactive_members(store_id, page, limit, db, payload):
+    return await view_selected_members(
+        store_id,
+        ~Membership.is_active,
+        ~Membership.is_deleted,
+        "inactive",
+        page,
+        limit,
+        db,
+        payload,
     )
-    total = (
-        await db.execute(
-            select(func.count())
-            .select_from(Membership)
-            .where(~Membership.is_active, ~Membership.is_deleted)
-        )
-    ).scalar() or 0
-    members = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
-    if not members:
-        logger.info("inactive members search returned an empty list")
-        return StandardResponse(
-            status="success", message="no inactive member found", data=None
-        )
-    logger.info("total number of inactive members %s", total)
-    data = PaginatedMetadata[MembershipRes](
-        items=[MembershipRes.model_validate(mem) for mem in members],
-        pagination=PaginatedResponse(page=page, limit=limit, total=total),
-    )
-    response = StandardResponse(
-        status="success", message="membership information", data=data
-    )
-    await cached(cache_key, response, ttl=3600)
-    logger.info("inactuve members data cached successfully admin: %s", username)
-    return response
 
 
-async def view_paused_members(page, limit, db, payload):
-    user_id = payload.get("user_id")
-    username = payload.get("sub")
-    if not user_id:
-        logger.warning("unauthorized attempt to access view_paused_members endpoint")
-        raise HTTPException(status_code=401, detail="not a registered user")
-    offset = (page - 1) * limit
-    stmt = select(User).where(User.id == user_id)
-    admin = (await db.execute(stmt)).scalar_one_or_none()
-    if not admin or admin.role not in ["Admin", "Owner"]:
-        raise HTTPException(status_code=403, detail="restricted access")
-    version = await cache_version("member_key")
-    cache_key = f"membership:v{version}:paused:{page}:{limit}"
-    cached_member = await cache(cache_key)
-    if cached_member:
-        logger.info("cached hit at view_paused_members endpoint user %s", user_id)
-        return StandardResponse(**cached_member)
-    stmt = (
-        select(Membership)
-        .options(
-            selectinload(Membership.user),
-        )
-        .where(Membership.is_pause, ~Membership.is_deleted)
+async def view_paused_members(store_id, page, limit, db, payload):
+    return await view_selected_members(
+        store_id,
+        Membership.is_pause,
+        ~Membership.is_deleted,
+        "paused",
+        page,
+        limit,
+        db,
+        payload,
     )
-    total = (
-        await db.execute(
-            select(func.count())
-            .select_from(Membership)
-            .where(Membership.is_pause, ~Membership.is_deleted)
-        )
-    ).scalar() or 0
-    members = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
-    if not members:
-        logger.info("paused members search returned an empty list")
-        return StandardResponse(
-            status="success", message="no paused member found", data=None
-        )
-    logger.info("total number of paused members %s", total)
-    data = PaginatedMetadata[MembershipRes](
-        items=[MembershipRes.model_validate(mem) for mem in members],
-        pagination=PaginatedResponse(page=page, limit=limit, total=total),
-    )
-    response = StandardResponse(
-        status="success", message="membership information", data=data
-    )
-    await cached(cache_key, response, ttl=3600)
-    logger.info("paused members data cached successfully admin: %s", username)
-    return response
 
 
-async def view_deleted_members(page, limit, db, payload):
-    user_id = payload.get("user_id")
-    username = payload.get("sub")
-    if not user_id:
-        logger.warning("unauthorized attempt to access view_deleted_members endpoint")
-        raise HTTPException(status_code=401, detail="not a registered user")
-    offset = (page - 1) * limit
-    stmt = select(User).where(User.id == user_id)
-    admin = (await db.execute(stmt)).scalar_one_or_none()
-    if not admin or admin.role not in ["Admin", "Owner"]:
-        raise HTTPException(status_code=403, detail="restricted access")
-    version = await cache_version("member_key")
-    cache_key = f"membership:v{version}:deleted:{page}:{limit}"
-    cached_member = await cache(cache_key)
-    if cached_member:
-        logger.info("cached hit at view_deleted_members endpoint user %s", user_id)
-        return StandardResponse(**cached_member)
-    stmt = (
-        select(Membership)
-        .options(
-            selectinload(Membership.user),
-        )
-        .where(Membership.is_deleted)
+async def view_deleted_members(store_id, page, limit, db, payload):
+    return await view_selected_members(
+        store_id,
+        ~Membership.is_active,
+        Membership.is_deleted,
+        "deleted",
+        page,
+        limit,
+        db,
+        payload,
     )
-    total = (
-        await db.execute(
-            select(func.count()).select_from(Membership).where(Membership.is_deleted)
-        )
-    ).scalar() or 0
-    members = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
-    if not members:
-        logger.info("deleted members search returned an empty list")
-        return StandardResponse(
-            status="success", message="no deleted member found", data=None
-        )
-    logger.info("total number of deleted members %s", total)
-    data = PaginatedMetadata[MembershipRes](
-        items=[MembershipRes.model_validate(mem) for mem in members],
-        pagination=PaginatedResponse(page=page, limit=limit, total=total),
-    )
-    response = StandardResponse(
-        status="success", message="membership information", data=data
-    )
-    await cached(cache_key, response, ttl=3600)
-    logger.info("deleted members data cached successfully admin: %s", username)
-    return response
 
 
 async def pause_membership(db, payload):
