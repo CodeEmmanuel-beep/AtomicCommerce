@@ -15,6 +15,7 @@ from app.models import (
     Product,
     Inventory,
     Store,
+    OrderStatus,
 )
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException
@@ -162,6 +163,7 @@ async def create_order_items(
         background_tasks.add_task(
             product_availability, [item.product_id for item in new_orders]
         )
+        order.created_at = func.now()
         await db.commit()
         await asyncio.gather(order_invalidation(user_id), cart_invalidation(user_id))
     except IntegrityError:
@@ -283,7 +285,7 @@ async def view_order(store_id, order_id, page, limit, db, payload):
     return StandardResponse(status="success", message="order_flow", data=response)
 
 
-async def check_out(store_id, order_id, db, payload):
+async def check_out(store_id, order_id, background_task, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at checkout endpoint")
@@ -311,9 +313,12 @@ async def check_out(store_id, order_id, db, payload):
         logger.warning(
             f"user: {user_id}, tried checking out an order created 5 hours prior"
         )
-        raise HTTPException(
-            status_code=409, detail="recreate a new order, can be from the same cart"
-        )
+        order_check_out.status = OrderStatus.cancelled
+        await db.commit()
+        return {
+            "status": "time_elapse",
+            "message": "recreate a new order, can be from the same cart",
+        }
     order_check_out.discount_amount = 0.00
     base_amount = order_check_out.total_amount
     has_premium = (
@@ -352,6 +357,44 @@ async def check_out(store_id, order_id, db, payload):
     }
 
 
+async def proceed_to_payment_portal(store_id, order_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning(
+            "user: %s, attempted to access non-existent order_id=%s", user_id, order_id
+        )
+        raise HTTPException(status_code=401, detail="unauthorized access")
+    checkout = (
+        await db.execute(
+            select(Order).where(
+                Order.user_id == user_id,
+                Order.checkout,
+                Order.id == order_id,
+                Order.store_id == store_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not checkout:
+        logger.warning("user: %s, entered invalid credentials", user_id)
+        raise HTTPException(
+            status_code=404,
+            detail="order not found, if you think this is a mistake try again shortly",
+        )
+    if checkout.created_at < datetime.now(timezone.utc) - timedelta(hours=5):
+        checkout.status = OrderStatus.cancelled
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            logger.error("Database integrity error while  updating checked out order")
+        except Exception:
+            await db.rollback()
+            logger.exception("error while updating checked out order")
+        raise HTTPException(
+            status_code=409, detail="Order session expired. Please re-initiate order"
+        )
+
+
 async def cancel_order(
     store_id,
     order_id,
@@ -381,7 +424,7 @@ async def cancel_order(
         raise HTTPException(status_code=404, detail="order item not found")
     payment_status = result.payment.status if result.payment else "pending"
     if payment_status == "pending":
-        result.status = "Cancelled"
+        result.status = OrderStatus.cancelled
         logger.info(f"Order with order_id: {order_id} cancelled successfully")
     else:
         logger.error(
