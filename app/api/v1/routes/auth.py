@@ -1,4 +1,4 @@
-from app.api.v1.models import LoginResponse
+from app.api.v1.schemas import LoginResponse
 from app.auth.verify_jwt import verify_token
 from fastapi import (
     APIRouter,
@@ -13,6 +13,7 @@ from fastapi import (
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.get import get_db
 from app.services import auth_service
+from app.utils.supabase_url import _supabase
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -28,6 +29,7 @@ async def registration(
     confirm_password: str = Form(...),
     profile_picture: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
+    get_supabase=Depends(_supabase),
 ):
     return await auth_service.reg(
         name=name,
@@ -39,6 +41,7 @@ async def registration(
         confirm_password=confirm_password,
         profile_picture=profile_picture,
         db=db,
+        get_supabase=get_supabase,
     )
 
 
