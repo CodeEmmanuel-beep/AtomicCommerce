@@ -116,6 +116,12 @@ class Store(Base):
         Integer, ForeignKey("categories.id"), index=True
     )
     store_email: Mapped[str] = mapped_column(String, nullable=True)
+    shipping_fee: Mapped[Decimal] = mapped_column(
+        Numeric(precision=10, scale=2), default=0
+    )
+    tax_amount: Mapped[Decimal] = mapped_column(
+        Numeric(precision=10, scale=2), default=0
+    )
     store_contact: Mapped[str] = mapped_column(String, nullable=True)
     approved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
@@ -484,7 +490,7 @@ class Order(Base):
     )
     reference_id: Mapped[str] = mapped_column(String, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
+        DateTime(timezone=True), index=True
     )
 
     payment = relationship("Payment", back_populates="order", uselist=False)
