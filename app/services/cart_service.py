@@ -54,6 +54,7 @@ async def shopping(cart, db, payload):
         )
     ).scalar_one_or_none()
     if not inventory:
+        logger.warning("product: %s, have no inventory", cart.product_id)
         raise HTTPException(404, "inventory not found")
     available = (
         await db.execute(
