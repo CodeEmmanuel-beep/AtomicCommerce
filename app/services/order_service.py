@@ -37,15 +37,11 @@ logger = get_logger("order")
 
 
 async def product_availability(product_ids: list[int]):
-    if isinstance(product_ids, int):
-        product_ids = [product_ids]
     async with AsyncSessionLocal() as conn:
         try:
             async with conn.begin():
-                out_of_stock_ids = (
-                    select(Inventory.product_id)
-                    .where(Inventory.stock_quantity == 0)
-                    .scalar_subquery()
+                out_of_stock_ids = select(Inventory.product_id).where(
+                    Inventory.stock_quantity == 0
                 )
                 await conn.execute(
                     update(Product)
@@ -110,13 +106,18 @@ async def create_order_items(
         raise HTTPException(status_code=404, detail="no order created")
     stmt = (
         select(Cart)
-        .options(selectinload(Cart.cartitems).selectinload(CartItem.product))
+        .options(
+            selectinload(Cart.cartitems)
+            .selectinload(CartItem.product)
+            .selectinload(Product.inventory)
+        )
         .where(
             Cart.id == cart_id,
             ~Cart.check_out,
             Cart.user_id == user_id,
             Cart.store_id == store_id,
         )
+        .with_for_update()
     )
     result = await db.execute(stmt)
     carts = result.scalar_one_or_none()
@@ -128,7 +129,9 @@ async def create_order_items(
     items = [
         i
         for i in carts.cartitems
-        if i.product.is_deleted or i.product.product_availability != "available"
+        if i.product.is_deleted
+        or i.product.product_availability != "available"
+        or i.quantity > i.product.inventory.stock_quantity
     ]
     if items:
         return {
@@ -137,7 +140,6 @@ async def create_order_items(
     new_orders = [
         OrderItem(
             order_id=order_id,
-            product_id=cartitem.product_id,
             quantity=cartitem.quantity,
             price=cartitem.product.product_price * cartitem.quantity,
         )
@@ -160,16 +162,33 @@ async def create_order_items(
         )
         if update_result.rowcount == 0:
             raise HTTPException(status_code=409, detail="cart already checked out")
+        subq = (
+            select(CartItem.product_id, CartItem.quantity)
+            .where(CartItem.cart_id == cart_id)
+            .group_by(CartItem.product_id)
+            .subquery()
+        )
+        await db.execute(
+            update(Inventory)
+            .where(Inventory.product_id == subq.c.product_id)
+            .values(
+                stock_quantity=func.greatest(
+                    Inventory.stock_quantity - subq.c.quantity, 0
+                )
+            )
+        )
         background_tasks.add_task(
-            product_availability, [item.product_id for item in new_orders]
+            product_availability, [item.product_id for item in carts.cartitems]
         )
         order.created_at = func.now()
         await db.commit()
         await asyncio.gather(order_invalidation(user_id), cart_invalidation(user_id))
     except IntegrityError:
+        await db.rollback()
         logger.error("Database integrity error while creating order items")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
+        await db.rollback()
         logger.exception("error while creating order items")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Order items created successfully for order_id: {order_id}")
@@ -285,7 +304,7 @@ async def view_order(store_id, order_id, page, limit, db, payload):
     return StandardResponse(status="success", message="order_flow", data=response)
 
 
-async def check_out(store_id, order_id, background_task, db, payload):
+async def check_out(store_id, order_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at checkout endpoint")
@@ -293,6 +312,7 @@ async def check_out(store_id, order_id, background_task, db, payload):
     row = (
         await db.execute(
             select(Order, Store)
+            .join(Store, Order.store_id == Store.id)
             .options(selectinload(Order.membership))
             .where(
                 Order.user_id == user_id,
@@ -332,7 +352,7 @@ async def check_out(store_id, order_id, background_task, db, payload):
             base_amount * discount_map[order_check_out.membership.membership_type]
         )
     order_check_out.shipping_fee = 0.00 if has_premium else store.shipping_fee
-    order_check_out.tax_amount = store.tax_amount
+    order_check_out.tax_amount = (base_amount * store.tax_amount) / 100
     order_check_out.total_amount = (
         base_amount + order_check_out.shipping_fee + order_check_out.tax_amount
     ) - order_check_out.discount_amount
@@ -351,8 +371,8 @@ async def check_out(store_id, order_id, background_task, db, payload):
     return {
         "status": "success",
         "message": "order checked out proceed to make payment",
-        "order quantity": order_check_out.total_quantity,
-        "order price": order_check_out.total_amount,
+        "order_quantity": order_check_out.total_quantity,
+        "order_price": order_check_out.total_amount,
         "additional_information": "you have 5 hours to complete the payment for the order, after that your order will be automatically cancelled",
     }
 
