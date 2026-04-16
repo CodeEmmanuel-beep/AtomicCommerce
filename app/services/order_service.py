@@ -106,6 +106,9 @@ async def create_order_items(
         raise HTTPException(status_code=404, detail="no order created")
     stmt = (
         select(Cart)
+        .join(CartItem, Cart.id == CartItem.cart_id)
+        .join(Product, CartItem.product_id == Product.id)
+        .join(Inventory, Product.id == Inventory.product_id)
         .options(
             selectinload(Cart.cartitems)
             .selectinload(CartItem.product)
