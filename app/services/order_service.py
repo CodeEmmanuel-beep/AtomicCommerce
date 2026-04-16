@@ -210,7 +210,11 @@ async def create_order_items(
         logger.exception("error while creating order items")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Order items created successfully for order_id: {order_id}")
-    return {"status": "success", "message": "order item successfully created"}
+    return {
+        "status": "success",
+        "message": "order item successfully created",
+        "additional_message": "you have 5 hours to check out the order",
+    }
 
 
 async def view_orders(store_id, page, limit, db, payload):
@@ -345,13 +349,31 @@ async def check_out(store_id, order_id, db, payload):
         logger.warning(
             f"user: {user_id}, tried checking out an order they did not create"
         )
-        raise HTTPException(status_code=404, detail="no orders")
+        raise HTTPException(status_code=404, detail="no pending orders")
     order_check_out, store = row
     if order_check_out.created_at < datetime.now(timezone.utc) - timedelta(hours=5):
         logger.warning(
             f"user: {user_id}, tried checking out an order created 5 hours prior"
         )
         order_check_out.status = OrderStatus.cancelled
+        subq = (
+            select(CartItem.product_id, func.sum(CartItem.quantity).label("quantity"))
+            .join(OrderItem, CartItem.id == OrderItem.cartitem_id)
+            .where(OrderItem.order_id == order_check_out.id)
+            .group_by(CartItem.product_id)
+        ).subquery()
+        (
+            await db.execute(
+                select(Inventory)
+                .where(Inventory.product_id.in_(select(subq.c.product_id)))
+                .with_for_update()
+            )
+        ).all()
+        await db.execute(
+            update(Inventory)
+            .where(Inventory.product_id.in_(select(subq.c.product_id)))
+            .values(stock_quantity=Inventory.stock_quantity + subq.c.quantity)
+        )
         await db.commit()
         return {
             "status": "time_elapse",
@@ -375,6 +397,8 @@ async def check_out(store_id, order_id, db, payload):
         base_amount + order_check_out.shipping_fee + order_check_out.tax_amount
     ) - order_check_out.discount_amount
     try:
+        order_check_out.check_out = True
+        order_check_out.check_out_time = func.now()
         await db.commit()
         await db.refresh(order_check_out)
     except IntegrityError:
@@ -404,12 +428,14 @@ async def proceed_to_payment_portal(store_id, order_id, db, payload):
         raise HTTPException(status_code=401, detail="unauthorized access")
     checkout = (
         await db.execute(
-            select(Order).where(
+            select(Order)
+            .where(
                 Order.user_id == user_id,
                 Order.checkout,
                 Order.id == order_id,
                 Order.store_id == store_id,
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if not checkout:
@@ -418,8 +444,26 @@ async def proceed_to_payment_portal(store_id, order_id, db, payload):
             status_code=404,
             detail="order not found, if you think this is a mistake try again shortly",
         )
-    if checkout.created_at < datetime.now(timezone.utc) - timedelta(hours=5):
+    if checkout.check_out_time < datetime.now(timezone.utc) - timedelta(hours=5):
         checkout.status = OrderStatus.cancelled
+        subq = (
+            select(CartItem.product_id, func.sum(CartItem.quantity).label("quantity"))
+            .join(OrderItem, CartItem.id == OrderItem.cartitem_id)
+            .where(OrderItem.order_id == checkout.id)
+            .group_by(CartItem.product_id)
+        ).subquery()
+        (
+            await db.execute(
+                select(Inventory)
+                .where(Inventory.product_id.in_(select(subq.c.product_id)))
+                .with_for_update()
+            )
+        ).all()
+        await db.execute(
+            update(Inventory)
+            .where(Inventory.product_id.in_(select(subq.c.product_id)))
+            .values(stock_quantity=Inventory.stock_quantity + subq.c.quantity)
+        )
         try:
             await db.commit()
         except IntegrityError:
