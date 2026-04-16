@@ -106,9 +106,6 @@ async def create_order_items(
         raise HTTPException(status_code=404, detail="no order created")
     stmt = (
         select(Cart)
-        .join(CartItem, Cart.id == CartItem.cart_id)
-        .join(Product, CartItem.product_id == Product.id)
-        .join(Inventory, Product.id == Inventory.product_id)
         .options(
             selectinload(Cart.cartitems)
             .selectinload(CartItem.product)
@@ -129,12 +126,29 @@ async def create_order_items(
         raise HTTPException(status_code=404, detail="no cart found")
     if not carts.cartitems:
         raise HTTPException(status_code=404, detail="no cart items found")
+    product_ids = [items.product_id for items in carts.cartitems]
+    inventory = (
+        await db.execute(
+            select(Inventory)
+            .where(Inventory.product_id.in_(product_ids))
+            .with_for_update()
+        )
+    ).all()
+    cart_product_ids = {i.product_id for i in carts.cartitems}
+    inventory_product_ids = {inv.product_id for inv in inventory}
+
+    if cart_product_ids != inventory_product_ids:
+        logger.warning(
+            "inventory mismatch at create_order_items endpoint",
+        )
+        raise HTTPException(404, "inventory mismatch")
+    inventory_map = {inv.product_id: inv for inv in inventory}
     items = [
         i
         for i in carts.cartitems
         if i.product.is_deleted
         or i.product.product_availability != "available"
-        or i.quantity > i.product.inventory.stock_quantity
+        or i.quantity > inventory_map[i.product_id].stock_quantity
     ]
     if items:
         return {
@@ -166,14 +180,15 @@ async def create_order_items(
         if update_result.rowcount == 0:
             raise HTTPException(status_code=409, detail="cart already checked out")
         subq = (
-            select(CartItem.product_id, CartItem.quantity)
+            select(CartItem.product_id, func.sum(CartItem.quantity))
+            .label("quantity")
             .where(CartItem.cart_id == cart_id)
             .group_by(CartItem.product_id)
             .subquery()
         )
         await db.execute(
             update(Inventory)
-            .where(Inventory.product_id == subq.c.product_id)
+            .where(Inventory.product_id.in_(select(subq.c.product_id)))
             .values(
                 stock_quantity=func.greatest(
                     Inventory.stock_quantity - subq.c.quantity, 0
