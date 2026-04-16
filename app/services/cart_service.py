@@ -1,11 +1,11 @@
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     CartResponse,
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
     CartItemReponse,
 )
-from app.models_sql import Cart, CartItem, Product, Inventory, Store
+from app.models import Cart, CartItem, Product, Inventory, Store
 from fastapi import HTTPException
 from app.logs.logger import get_logger
 from sqlalchemy import select, func, delete, exists, and_
@@ -46,6 +46,15 @@ async def create_cart(
 
 async def shopping(cart, db, payload):
     user_id = payload.get("user_id")
+    inventory = (
+        await db.execute(
+            select(Inventory)
+            .where(Inventory.product_id == cart.product_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if not inventory:
+        raise HTTPException(404, "inventory not found")
     available = (
         await db.execute(
             select(
@@ -89,8 +98,6 @@ async def shopping(cart, db, payload):
             status_code=400,
             detail="pick a cart, if you already have a cart, verify the product availability before proceeding",
         )
-    if len(carts.cartitems) > 30:
-        raise HTTPException(status_code=403, detail="cart full")
     cartitem = next(
         (item for item in carts.cartitems if item.product_id == cart.product_id), None
     )
@@ -98,7 +105,8 @@ async def shopping(cart, db, payload):
         raise HTTPException(
             status_code=400, detail="quantity must be an integer higher than zero"
         )
-
+    if not cartitem and len(carts.cartitems) > 30:
+        raise HTTPException(status_code=403, detail="cart full")
     try:
         difference = 0
         if cartitem:
