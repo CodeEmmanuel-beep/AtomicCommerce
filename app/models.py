@@ -476,6 +476,7 @@ class Order(Base):
     status: Mapped[OrderStatus] = mapped_column(
         SQLEnum(OrderStatus), default=OrderStatus.pending, nullable=False, index=True
     )
+    check_out: Mapped[bool] = mapped_column(Boolean, default=False)
     total_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=12, scale=2), default=0
     )
@@ -489,9 +490,10 @@ class Order(Base):
         Numeric(precision=12, scale=2), default=0
     )
     reference_id: Mapped[str] = mapped_column(String, unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(
+    check_out_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), index=True
     )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     payment = relationship("Payment", back_populates="order", uselist=False)
     user = relationship("User", back_populates="orders")
@@ -507,7 +509,7 @@ class OrderItem(Base):
     __tablename__ = "orderitems"
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), index=True)
-    cart_items = Column(
+    cartitem_id = Column(
         Integer, ForeignKey("cartitems.id", ondelete="CASCADE"), index=True
     )
     quantity = Column(Float, default=1)
