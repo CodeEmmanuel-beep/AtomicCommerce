@@ -329,6 +329,7 @@ class Subscription(Base):
     customer_id: Mapped[str] = mapped_column(String)
     reference_id: Mapped[str] = mapped_column(String, index=True)
     last_event_id: Mapped[str] = mapped_column(String, index=True)
+    last_event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     expire_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     time_of_subscription: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
