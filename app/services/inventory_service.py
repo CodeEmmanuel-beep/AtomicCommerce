@@ -1,4 +1,4 @@
-from app.models_sql import Inventory, Store, Product, User
+from app.models import Inventory, Store, Product, User
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from app.logs.logger import get_logger

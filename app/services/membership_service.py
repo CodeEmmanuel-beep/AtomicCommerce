@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.v1.schemas import MembershipResponse, StandardResponse
 
 from app.utils.helper import view_selected_members
-from sqlalchemy import select, func, or_, exists, and_
+from sqlalchemy import select, func, or_, exists
 from sqlalchemy.orm import selectinload
 from app.utils.redis import (
     cache,

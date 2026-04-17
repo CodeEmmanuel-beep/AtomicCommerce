@@ -1,4 +1,4 @@
-from app.models_sql import Payment, Order, Review, Store, User
+from app.models import Payment, Order, Review, Store, User
 from app.utils.redis import cache, cached
 from sqlalchemy import cast, Float, Date, select, func
 from fastapi import HTTPException

@@ -14,7 +14,7 @@ from app.models import (
 from app.api.v1.schemas import PaymentResponse, SubscriptionResponse
 from app.database.config import settings
 from app.database.get import AsyncSessionLocal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logger = get_logger("payment")
 
@@ -93,6 +93,8 @@ async def create_payment(
                         Order.user_id == user_id,
                         Order.id == order_id,
                         Order.status == "pending",
+                        Order.created_at
+                        < datetime.now(timezone.utc) - timedelta(hours=5),
                     )
                 )
             ).scalar_one_or_none()
@@ -211,7 +213,9 @@ async def create_payment(
                                 "product_data": {
                                     "name": f"membership one time payment for {sub.plan_name} plan"
                                 },
-                                "unit_amount": int(sub.plan_price * 100),
+                                "unit_amount": (
+                                    int(sub.plan_price * 100) if sub.plan_price else 0
+                                ),
                             },
                             "quantity": 1,
                         }
@@ -296,7 +300,7 @@ async def create_payment(
                     },
                     line_items=[
                         {
-                            "price": sub.plan_name.value,
+                            "price": sub.price_id if sub.price_id else "",
                             "quantity": 1,
                         }
                     ],

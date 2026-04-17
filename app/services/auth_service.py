@@ -9,7 +9,7 @@ from app.auth.verify_jwt import decode_token
 from fastapi import HTTPException
 from werkzeug.utils import secure_filename
 from sqlalchemy import select
-from app.models_sql import User
+from app.models import User
 from email_validator import validate_email, EmailNotValidError
 import uuid
 from app.logs.logger import get_logger

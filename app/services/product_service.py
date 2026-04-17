@@ -2,14 +2,14 @@ from fastapi import HTTPException
 import uuid
 from werkzeug.utils import secure_filename
 from app.logs.logger import get_logger
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     PaginatedMetadata,
     ProductResponse,
     StandardResponse,
     PaginatedResponse,
 )
 from app.database.config import settings
-from app.models_sql import Product, Store, Category, User, Inventory
+from app.models import Product, Store, Category, User, Inventory
 from sqlalchemy import select, func, text, update, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError

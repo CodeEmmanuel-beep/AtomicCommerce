@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from app.models_sql import (
+from app.models import (
     Store,
     Category,
     User,
@@ -10,7 +10,7 @@ from app.models_sql import (
     Product,
     Inventory,
 )
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     StoreAccountResponse,
     PaginatedMetadata,
     PaginatedResponse,
