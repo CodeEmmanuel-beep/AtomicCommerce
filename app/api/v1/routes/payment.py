@@ -33,3 +33,22 @@ async def update_plan(
     return await payment_service.update_payment(
         sub_id=subscription_id, db=db, payload=payload
     )
+
+
+@router.get("/payment_list/{store_id}")
+async def get_payment_list(
+    store_id: int,
+    payment_status: str = Query("approved", enum=["failed", "pending", "refunds"]),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, le=100),
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await payment_service.get_payment(
+        store_id=store_id,
+        payment_status=payment_status,
+        page=page,
+        limit=limit,
+        db=db,
+        payload=payload,
+    )
