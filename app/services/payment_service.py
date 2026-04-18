@@ -1,7 +1,7 @@
 from fastapi import HTTPException, Query
 from app.logs.logger import get_logger
 import stripe
-from sqlalchemy import select, text, func, or_, update, case, literal
+from sqlalchemy import select, text, func, or_, update, case, literal, exists
 from sqlalchemy.exc import IntegrityError
 from app.models import (
     Subscription,
@@ -10,11 +10,22 @@ from app.models import (
     Membership,
     PaymentStatus,
     OrderStatus,
+    Store,
+    store_owners,
+    store_staffs,
 )
-from app.api.v1.schemas import PaymentResponse, SubscriptionResponse
+from app.api.v1.schemas import (
+    PaymentResponse,
+    SubscriptionResponse,
+    PaginatedMetadata,
+    StandardResponse,
+    PaginatedResponse,
+)
 from app.database.config import settings
 from app.database.get import AsyncSessionLocal
 from datetime import datetime, timezone, timedelta
+from app.utils.redis import cache, cached
+from sqlalchemy.orm import selectinload
 
 logger = get_logger("payment")
 
@@ -64,7 +75,7 @@ async def create_payment(
     order_id,
     currency,
     payload,
-    one_time_subscription: str = Query("one_time", enum=["one_time", "subscription"]),
+    one_time_subscription,
 ):
     user_id = payload.get("user_id")
     if not user_id:
@@ -538,3 +549,94 @@ async def stripe_webhook(request, background_task):
             "status": "success",
             "message": "webhook payment processed",
         }
+
+
+async def get_payment(store_id, payment_status, page, limit, db, payload):
+    user_id = payload.get("user_id")
+    role = payload.get("role")
+    allowed_roles = ["Admin", "Owner"]
+    if not user_id:
+        logger.warning("unauthourized attempt at get_payment endpoint")
+        raise HTTPException(status_code=401, detail="unauthourized attempt")
+    cache_key = f"payment_list:{store_id}:{payment_status}:{page}:{limit}"
+    payment_cache = await cache(cache_key)
+    if payment_cache:
+        logger.info(
+            f"cache hit at get_payment_endpoint for payment_status: {payment_status}, page:{page}"
+        )
+        return StandardResponse(**payment_cache)
+    if page <= 0 or limit <= 0:
+        raise HTTPException(
+            status_code=400, detail="page and limit should be atleast 1"
+        )
+    check = (
+        await db.execute(
+            select(
+                or_(
+                    exists().where(
+                        store_owners.c.users_id == user_id,
+                        store_owners.c.stores_id == store_id,
+                    ),
+                    exists().where(
+                        store_staffs.c.users_id == user_id,
+                        store_staffs.c.stores_id == store_id,
+                    ),
+                )
+            )
+        )
+    ).scalar()
+    if not check and role not in allowed_roles:
+        logger.warning(
+            "user: %s, tried accessing get_payment endpoint without appropriate credentials",
+            user_id,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    offset = (page - 1) * limit
+    payment_list_stmt = (
+        select(Payment)
+        .join(Order, Payment.order_id == Order.id)
+        .options(selectinload(Payment.order).selectinload(Order.store))
+        .where(Order.store_id == store_id)
+    )
+    status_map = {
+        "approved": PaymentStatus.SUCCESS,
+        "pending": PaymentStatus.PENDING,
+        "refunds": PaymentStatus.REFUNDED,
+        "failed": PaymentStatus.FAILED,
+    }
+    status_value = status_map.get(payment_status, None)
+    if not status_value:
+        logger.warning("possible api abuse at get_payment endpoin")
+        return {
+            "status": "error",
+            "message": "carefully re-evaluate your input and try again",
+        }
+    payment_list = payment_list_stmt.where(
+        Payment.payment_status == status_value
+    ).order_by(Payment.payment_date.desc())
+    result = (
+        (await db.execute(payment_list.offset(offset).limit(limit))).scalars().all()
+    )
+    if not result:
+        logger.info(f"store: {store_id}, has no {payment_status} payments")
+        return {
+            "status": "success",
+            "message": f"this store has no {payment_status} payments",
+        }
+    total = (
+        await db.execute(
+            select(func.count(Payment.id))
+            .join(Order)
+            .where(Order.store_id == store_id, Payment.payment_status == status_value)
+        )
+    ).scalar() or 0
+    logger.info("total '%s', payments is: %s", payment_status, total)
+    data = PaginatedMetadata[PaymentResponse](
+        items=[PaymentResponse.model_validate(res) for res in result],
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+    )
+    full_response = StandardResponse(
+        status="success", message=f"{payment_status} payments", data=data
+    )
+    await cached(cache_key, full_response, ttl=360)
+    return full_response
