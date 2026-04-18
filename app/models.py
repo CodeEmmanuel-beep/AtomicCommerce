@@ -61,6 +61,7 @@ class User(Base):
     owners = relationship("Store", secondary=store_owners, back_populates="user_owners")
     staffs = relationship("Store", secondary=store_staffs, back_populates="user_staffs")
     reacts = relationship("React", back_populates="user")
+    refunds = relationship("Refund", back_populates="user")
 
 
 class Messaging(Base):
@@ -276,6 +277,37 @@ class Payment(Base):
 
     user = relationship("User", back_populates="payments")
     order = relationship("Order", back_populates="payment", uselist=False)
+    refunds = relationship("Refund", back_populates="payment")
+
+
+class RefundStatus(str, Enum):
+    PARTIAL = "partial"
+    FULL = "full"
+
+
+class Refund(Base):
+    __tablename__ = "refunds"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    payment_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("payments.id"), index=True
+    )
+    order_id: Mapped[int] = mapped_column(Integer, ForeignKey("orders.id"), index=True)
+    refund_status: Mapped[RefundStatus] = mapped_column(
+        SQLEnum(RefundStatus), default=RefundStatus.PARTIAL, index=True
+    )
+    refund_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    amount_refunded: Mapped[Decimal] = mapped_column(
+        Numeric(precision=10, scale=2), default=0
+    )
+    refund_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_event_id: Mapped[str] = mapped_column(String, index=True)
+
+    user = relationship("User", back_populates="refunds")
+    order = relationship("Order", back_populates="refunds")
+    payment = relationship("Payment", back_populates="refunds")
 
 
 class Membership(Base):
@@ -497,6 +529,7 @@ class Order(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     payment = relationship("Payment", back_populates="order", uselist=False)
+    refunds = relationship("Refund", back_populates="order")
     user = relationship("User", back_populates="orders")
     orderitems = relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan"
