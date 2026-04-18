@@ -280,11 +280,6 @@ class Payment(Base):
     refunds = relationship("Refund", back_populates="payment")
 
 
-class RefundStatus(str, Enum):
-    PARTIAL = "partial"
-    FULL = "full"
-
-
 class Refund(Base):
     __tablename__ = "refunds"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -293,9 +288,6 @@ class Refund(Base):
         Integer, ForeignKey("payments.id"), index=True
     )
     order_id: Mapped[int] = mapped_column(Integer, ForeignKey("orders.id"), index=True)
-    refund_status: Mapped[RefundStatus] = mapped_column(
-        SQLEnum(RefundStatus), default=RefundStatus.PARTIAL, index=True
-    )
     refund_id: Mapped[str] = mapped_column(String, unique=True, index=True)
     amount_refunded: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
