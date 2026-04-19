@@ -40,6 +40,9 @@ async def update_plan(
 async def get_payment_list(
     store_id: int,
     payment_status: str = Query("approved", enum=["failed", "pending", "refunds"]),
+    time_frame: str = Query(
+        "1 week", enum=["1 month", "3 months", "6 months", "1 year", "1 week"]
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
     db: AsyncSession = Depends(get_db),
@@ -48,6 +51,7 @@ async def get_payment_list(
     return await payment_service.get_payment(
         store_id=store_id,
         payment_status=payment_status,
+        time_frame=time_frame,
         page=page,
         limit=limit,
         db=db,
