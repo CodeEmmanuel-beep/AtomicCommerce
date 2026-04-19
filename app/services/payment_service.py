@@ -1,4 +1,4 @@
-from fastapi import HTTPException, Query
+from fastapi import HTTPException
 from app.logs.logger import get_logger
 import stripe
 from sqlalchemy import select, text, func, or_, update, case, literal, exists
@@ -10,9 +10,9 @@ from app.models import (
     Membership,
     PaymentStatus,
     OrderStatus,
-    Store,
     store_owners,
     store_staffs,
+    Refund,
 )
 from app.api.v1.schemas import (
     PaymentResponse,
@@ -364,7 +364,7 @@ async def update_payment(sub_id, db, payload):
         logger.warning("unauthourized attempt at update_payment endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
     sub = (
-        await db.execute(select(Subscription)).where(Subscription.id == sub_id)
+        await db.execute(select(Subscription).where(Subscription.id == sub_id))
     ).scalar_one_or_none()
     if not sub:
         logger.warning(
@@ -376,6 +376,56 @@ async def update_payment(sub_id, db, payload):
         customer=sub.customer_id, return_url="https://example.com/account"
     )
     return {"bill_update_linK": portal_session.url}
+
+
+async def charge_refund(payment_id, amount, reason, db, payload):
+    user_id = payload.get("user_id")
+    role = payload.get("role")
+    allowed_roles = ["Admin", "Owner"]
+    if not user_id or role not in allowed_roles:
+        logger.error("possible security and financial breach at charge_refund endpoint")
+        return {"message": "Luke 13:3"}
+    stmt = select(Payment).where(Payment.id == payment_id)
+    result = await db.execute(stmt)
+    payment = result.scalar_one_or_none()
+    if not payment:
+        logger.warning("payment: %s, queried but not found", payment_id)
+        raise HTTPException(status_code=404, detail="Payment record not found")
+    if amount > payment.amount_paid:
+        logger.warning("user: %s, tried overrefunding", user_id)
+        raise HTTPException(
+            status_code=400, detail="Refund amount exceeds the original payment"
+        )
+    try:
+        refund = stripe.Refund.create(
+            payment_intent=payment.transaction_id,
+            amount=amount * 100,
+            metadata={
+                "type": "order_refund",
+                "reason": reason,
+                "order_id": payment.order_id,
+            },
+        )
+    except stripe.StripeError as e:
+        logger.error(f"stripe refund failed: {str(e)}")
+        raise HTTPException(status_code=400, detail="payment processor declined refund")
+    try:
+        refund_log = Refund(
+            user_id=payment.user_id,
+            payment_id=payment.id,
+            order_id=payment.order_id,
+            refund_id=refund.id,
+            refund_amount=amount,
+        )
+        db.add(refund_log)
+        await db.commit()
+    except IntegrityError:
+        logger.error("database error at charge_refund endpoint")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        logger.exception("internal server error at charge_refund endpoint")
+        raise HTTPException(status_code=500, detail="internal server error")
+    return {"status": "success", "message": "refund logged", "refund_id": refund.id}
 
 
 async def stripe_webhook(request, background_task):
@@ -514,17 +564,41 @@ async def stripe_webhook(request, background_task):
                 )
                 .returning(Payment.order_id)
             )
-            if not idemp.scalar():
+            rows = idemp.fetchall()
+            if not rows:
                 logger.info(f"Payment {stripe_session_id} already processed. Skipping.")
                 return {"status": "success", "message": "already processed"}
-            order_ids = [row[0] for row in idemp.fetchall()]
+            order_ids = [row[0] for row in rows]
             await db.execute(
                 update(Order)
                 .where(Order.id.in_(order_ids))
                 .values(status=order_status_case)
                 .returning(Order.id)
             )
-        if metadata.get("type") not in ["membership", "order_payment"]:
+        if metadata.get("type") == "order_refund":
+            if event["type"] == "charge.refunded":
+                idempo = await db.execute(
+                    update(Refund)
+                    .where(
+                        Refund.refund_id == stripe_session_id,
+                        Refund.last_event_id != event["id"],
+                    )
+                    .values(last_event_id=event["id"])
+                    .returning(Refund.payment_id)
+                )
+                refunded = idempo.scalar_one_or_none()
+                if not refunded:
+                    logger.info(
+                        f"Payment {stripe_session_id} already processed. Skipping."
+                    )
+                    return {"status": "success", "message": "already processed"}
+                payment_id = int(refunded)
+                await db.execute(
+                    update(Payment)
+                    .where(Payment.id == payment_id)
+                    .values(payment_status=PaymentStatus.REFUNDED)
+                )
+        if metadata.get("type") not in ["membership", "order_payment", "order_refund"]:
             logger.warning(
                 f"Received unhandled event type: {event['type']} with metadata: {metadata}"
             )
@@ -544,7 +618,8 @@ async def stripe_webhook(request, background_task):
             )
             raise HTTPException(status_code=500, detail="internal server error")
         logger.info("Payment marked as expired and failed.")
-        background_task.add_task(membership_activation, membership_id)
+        if membership_id:
+            background_task.add_task(membership_activation, membership_id)
         return {
             "status": "success",
             "message": "webhook payment processed",
