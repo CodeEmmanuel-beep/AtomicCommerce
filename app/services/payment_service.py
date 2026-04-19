@@ -13,6 +13,7 @@ from app.models import (
     store_owners,
     store_staffs,
     Refund,
+    Store,
 )
 from app.api.v1.schemas import (
     PaymentResponse,
@@ -21,6 +22,7 @@ from app.api.v1.schemas import (
     StandardResponse,
     PaginatedResponse,
 )
+from dateutil.relativedelta import relativedelta
 from app.database.config import settings
 from app.database.get import AsyncSessionLocal
 from datetime import datetime, timezone, timedelta
@@ -626,14 +628,14 @@ async def stripe_webhook(request, background_task):
         }
 
 
-async def get_payment(store_id, payment_status, page, limit, db, payload):
+async def get_payment(store_id, payment_status, time_frame, page, limit, db, payload):
     user_id = payload.get("user_id")
     role = payload.get("role")
     allowed_roles = ["Admin", "Owner"]
     if not user_id:
         logger.warning("unauthourized attempt at get_payment endpoint")
         raise HTTPException(status_code=401, detail="unauthourized attempt")
-    cache_key = f"payment_list:{store_id}:{payment_status}:{page}:{limit}"
+    cache_key = f"payment_list:{store_id}:{payment_status}:{time_frame}:{page}:{limit}"
     payment_cache = await cache(cache_key)
     if payment_cache:
         logger.info(
@@ -666,6 +668,16 @@ async def get_payment(store_id, payment_status, page, limit, db, payload):
             user_id,
         )
         raise HTTPException(status_code=403, detail="restricted access")
+    store = (
+        await db.execute(select(Store).where(Store.id == store_id))
+    ).scalar_one_or_none()
+    if not store:
+        logger.warning(
+            "user: %s, search for payment history for a store that does not exist store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=404, detail="store not found")
     offset = (page - 1) * limit
     payment_list_stmt = (
         select(Payment)
@@ -673,6 +685,25 @@ async def get_payment(store_id, payment_status, page, limit, db, payload):
         .options(selectinload(Payment.order).selectinload(Order.store))
         .where(Order.store_id == store_id)
     )
+    now = datetime.now(timezone.utc)
+    time_map = {
+        "1 year": now - relativedelta(years=1),
+        "6 months": now - relativedelta(months=6),
+        "3 months": now - relativedelta(months=3),
+        "1 month": now - relativedelta(months=1),
+        "1 week": now - relativedelta(days=7),
+    }
+    time_period = time_map.get(time_frame)
+    if not time_period:
+        return {
+            "status": "error",
+            "message": "invalid time frame selected",
+        }
+    if store.founded > time_period:
+        return {
+            "status": "error",
+            "message": f"store's existence is below {time_frame}",
+        }
     status_map = {
         "approved": PaymentStatus.SUCCESS,
         "pending": PaymentStatus.PENDING,
@@ -681,13 +712,12 @@ async def get_payment(store_id, payment_status, page, limit, db, payload):
     }
     status_value = status_map.get(payment_status, None)
     if not status_value:
-        logger.warning("possible api abuse at get_payment endpoin")
         return {
             "status": "error",
-            "message": "carefully re-evaluate your input and try again",
+            "message": "invalid payment status selected",
         }
     payment_list = payment_list_stmt.where(
-        Payment.payment_status == status_value
+        Payment.payment_status == status_value, Payment.payment_date >= time_period
     ).order_by(Payment.payment_date.desc())
     result = (
         (await db.execute(payment_list.offset(offset).limit(limit))).scalars().all()
@@ -702,7 +732,11 @@ async def get_payment(store_id, payment_status, page, limit, db, payload):
         await db.execute(
             select(func.count(Payment.id))
             .join(Order)
-            .where(Order.store_id == store_id, Payment.payment_status == status_value)
+            .where(
+                Order.store_id == store_id,
+                Payment.payment_status == status_value,
+                Payment.payment_date >= time_period,
+            )
         )
     ).scalar() or 0
     logger.info("total '%s', payments is: %s", payment_status, total)
