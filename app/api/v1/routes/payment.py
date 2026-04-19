@@ -3,6 +3,7 @@ from app.services import payment_service
 from app.auth.verify_jwt import verify_token
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.get import get_db
+from decimal import Decimal
 
 router = APIRouter(prefix="/payment", tags=["Payment"])
 
@@ -51,4 +52,17 @@ async def get_payment_list(
         limit=limit,
         db=db,
         payload=payload,
+    )
+
+
+@router.post("/refund_client")
+async def log_refund(
+    payment_id: int,
+    amount: Decimal,
+    reason: str,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await payment_service.charge_refund(
+        payment_id=payment_id, amount=amount, reason=reason, db=db, payload=payload
     )
