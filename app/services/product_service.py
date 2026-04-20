@@ -127,9 +127,10 @@ async def create(
         product_name=prod.product_name,
         primary_image=filename,
         image=orjson.dumps(images).decode("utf-8"),
+        product_type=prod.product_type,
+        product_size=prod.product_size,
         product_price=prod.product_price,
         category_id=category.id,
-        product_availability=prod.product_availability,
     )
     try:
         db.add(new_product)
@@ -273,7 +274,14 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
                 raise e
             logger.exception("error updating product images")
             raise HTTPException(status_code=500, detail="error saving product image")
-    update_fields = ["product_name", "product_price", "product_availability"]
+    update_fields = [
+        "product_name",
+        "product_price",
+        "product_availability",
+        "product_size",
+        "product_type",
+        "description",
+    ]
     for field in update_fields:
         val = getattr(prod, field, None)
         if val is not None:
