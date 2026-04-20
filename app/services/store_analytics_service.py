@@ -8,9 +8,10 @@ from app.models import (
     Product,
     CartItem,
     OrderItem,
+    Inventory,
 )
 from app.utils.redis import cache, cached
-from sqlalchemy import cast, Float, Date, select, func, desc, asc, Integer
+from sqlalchemy import cast, Float, Date, select, func, desc, asc, Integer, Operators
 from fastapi import HTTPException
 from app.logs.logger import get_logger
 from datetime import date, datetime, timezone
@@ -362,7 +363,11 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     product_sales = func.sum(OrderItem.quantity).label("total_quantity")
     products = (
         await db.execute(
-            select(Product.product_name, cast(func.coalesce(product_sales, 0), Integer))
+            select(
+                Product.product_name,
+                Product.product_size,
+                cast(func.coalesce(product_sales, 0), Integer),
+            )
             .join(Store, Product.store_id == Store.id)
             .join(CartItem, Product.id == CartItem.product_id)
             .join(OrderItem, OrderItem.cartitem_id == CartItem.id)
@@ -373,7 +378,10 @@ async def products_stats(slug, ranking, time_frame, db, payload):
                 Order.created_at >= time_period,
                 Store.slug == slug,
             )
-            .group_by(Product.product_name)
+            .group_by(
+                Product.product_name,
+                Product.product_size,
+            )
             .order_by(order_count(product_sales))
             .limit(5)
         )
@@ -381,22 +389,26 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     avg_ratings = func.avg(Review.ratings).label("average_ratings")
     product_ratings = (
         await db.execute(
-            select(Product.product_name, cast(func.coalesce(avg_ratings, 0), Float))
+            select(
+                Product.product_name,
+                Product.product_size,
+                cast(func.coalesce(avg_ratings, 0), Float),
+            )
             .join(Review, Product.id == Review.product_id)
             .join(Store, Product.store_id == Store.id)
             .where(
                 Review.date_of_review >= time_period,
                 Store.slug == slug,
             )
-            .group_by(Product.product_name)
+            .group_by(Product.product_name, Product.product_size)
             .order_by(order_count(avg_ratings))
         ).limit(5)
     ).all()
-    if not products:
+    if not products and not product_ratings:
         logger.warning("user: %s product stats returned null", user_id)
         return {
             "status": "success",
-            "message": f"you have sold no products within {time_frame}",
+            "message": f"no available product statistics within {time_frame}",
         }
     message = (
         "most sold products and most rated products in descending order"
@@ -407,10 +419,85 @@ async def products_stats(slug, ranking, time_frame, db, payload):
         "status": "success",
         "message": message,
         "product_sales": [
-            {"name": name, "quantity": int(qty)} for name, qty in products
+            {"product_name": name, "product_size": size, "quantity": int(qty)}
+            for name, size, qty in products
         ],
         "product_ratings": [
-            {"name": name, "ratings": float(rts)} for name, rts in product_ratings
+            {"name": name, "product_size": size, "ratings": float(rts)}
+            for name, size, rts in product_ratings
+        ],
+    }
+    await cached(cache_key, data, ttl=600)
+    return data
+
+
+async def inventory_stats(slug, stock_range, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at the inventory_statistics endpoint")
+        raise HTTPException(status_code=401, detail="unauthorized access")
+    cache_key = f"inventory_statistics:{slug}:{stock_range}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info(
+            "cache hit at the inventory_statistics endpoint for store: %s", slug
+        )
+        return cached_data
+    target_store = (
+        await db.execute(
+            select(Store).where(
+                Store.slug == slug,
+                Store.user_owners.any(User.id == user_id),
+                Store.approved,
+            )
+        )
+    ).scalar_one_or_none()
+    if not target_store:
+        logger.warning(
+            "user %s attempted to access inventory_statistics endpoint for store %s without permission or store not found",
+            user_id,
+            slug,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    s_range = {
+        "out_of_stock": 0,
+        "five_below": 5,
+        "ten_below": 10,
+        "twenty_below": 20,
+        "thirty_below": 30,
+        "fifty_below": 50,
+        "above_fifty": 50,
+    }
+    ranges = s_range.get(stock_range)
+    if not ranges:
+        return {
+            "status": "error",
+            "message": "invalid stock range selected",
+        }
+    equator = ">" if stock_range == "above_fifty" else "<="
+    inventories = (
+        await db.execute(
+            select(Product.product_name, Product.product_size, Inventory.stock_quantity)
+            .join(Inventory, Product.id == Inventory.product_id)
+            .where(
+                Product.store_id == target_store.id,
+                Inventory.stock_quantity.op(equator)(ranges),
+            )
+            .order_by(Inventory.stock_quantity.desc())
+        )
+    ).all()
+    if not inventories:
+        logger.warning("user: %s inventory stats returned null", user_id)
+        return {
+            "status": "success",
+            "message": f"No products found within the {stock_range} range.",
+        }
+    data = {
+        "status": "success",
+        "data_type": "inventory levels",
+        "inventory": [
+            {"product_name": name, "Product_size": size, "stock_quantity": qty}
+            for name, size, qty in inventories
         ],
     }
     await cached(cache_key, data, ttl=600)
