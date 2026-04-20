@@ -1,12 +1,52 @@
-from app.models import Payment, Order, Review, Store, User
+from app.models import (
+    Payment,
+    Order,
+    Review,
+    Store,
+    User,
+    PaymentStatus,
+    Product,
+    CartItem,
+    OrderItem,
+)
 from app.utils.redis import cache, cached
-from sqlalchemy import cast, Float, Date, select, func
+from sqlalchemy import cast, Float, Date, select, func, desc, asc, Integer
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from datetime import date
+from datetime import date, datetime, timezone
 from dateutil.relativedelta import relativedelta
 
 logger = get_logger("store_analytics")
+
+
+async def view_performanc_helper(slug, context, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning(f"unauthorized attempt at the {context} endpoint")
+        raise HTTPException(status_code=401, detail="unauthorized access")
+    cache_key = f"{context}:{slug}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info(f"cache hit at the {context} endpoint for store: %s", slug)
+        return cached_data
+    target_store = (
+        await db.execute(
+            select(Store).where(
+                Store.slug == slug,
+                Store.user_owners.any(User.id == user_id),
+                Store.approved,
+            )
+        )
+    ).scalar_one_or_none()
+    if not target_store:
+        logger.warning(
+            "user %s attempted to access %s for store %s without permission or store not found",
+            user_id,
+            context,
+            slug,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    return user_id, cache_key, target_store
 
 
 async def view_store_data(slug, db):
@@ -84,30 +124,11 @@ async def view_store_details(slug, db):
     return data
 
 
-async def view_overall_performance(slug, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt at the view overall performance endpoint")
-        raise HTTPException(status_code=401, detail="unauthorized access")
-    cache_key = f"overall_performance:{slug}"
-    cached_data = await cache(cache_key)
-    if cached_data:
-        logger.info(
-            "cache hit at the view overall performance endpoint for store: %s", slug
-        )
-        return cached_data
-    target_store = (
-        await db.execute(
-            select(Store).where(
-                Store.slug == slug,
-                Store.user_owners.any(User.id == user_id),
-                Store.approved,
-            )
-        )
-    ).scalar_one_or_none()
-    if not target_store:
-        logger.warning("user: %s, tried experienced permission err: %s", user_id, slug)
-        raise HTTPException(status_code=403, detail="restricted access")
+async def view_overall_performance(slug, view_overall_performance, db, payload):
+    result = await view_performanc_helper(slug, view_overall_performance, db, payload)
+    if isinstance(result, dict):
+        return result
+    user_id, cache_key, target_store = result
     today = date.today()
     if today < target_store.founded + relativedelta(months=1):
         return {
@@ -118,7 +139,7 @@ async def view_overall_performance(slug, db, payload):
             select(func.sum(Payment.amount_paid))
             .join(Order, Order.id == Payment.order_id)
             .where(
-                Order.store_id == target_store.id, Payment.payment_status == "approved"
+                Order.store_id == target_store.id, Payment.payment_status == "success"
             )
         ).scalar()
         or 0
@@ -129,17 +150,23 @@ async def view_overall_performance(slug, db, payload):
             func.sum(Payment.amount_paid).label("daily_sale"),
         )
         .join(Order, Payment.order_id == Order.id)
-        .where(Order.store_id == target_store.id, Payment.payment_status == "approved")
+        .where(
+            Order.store_id == target_store.id,
+            Payment.payment_status == PaymentStatus.SUCCESS,
+        )
         .group_by(cast(Payment.payment_date, Date))
         .cte("daily_turnover")
     )
-    avg_daily = select(func.avg(daily_sales.c.daily_sale))
+    avg_daily = select(func.avg(cast(daily_sales.c.daily_sale, Float)))
     average_sales = (await db.execute(avg_daily)).scalar() or 0
     average_sales_per_day = round(float(average_sales or 0), 2)
     extreme_sale_row = (
         select(Payment.payment_date, Payment.amount_paid)
         .join(Order, Order.id == Payment.order_id)
-        .where(Order.store_id == target_store.id, Payment.payment_status == "approved")
+        .where(
+            Order.store_id == target_store.id,
+            Payment.payment_status == PaymentStatus.SUCCESS,
+        )
     )
     lowest_sale_row = (
         await db.execute(extreme_sale_row.order_by(Payment.amount_paid.asc()).limit(1))
@@ -175,29 +202,10 @@ async def view_overall_performance(slug, db, payload):
 
 
 async def view_current_performance(slug, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt at the view current performance endpoint")
-        raise HTTPException(status_code=401, detail="unauthorized access")
-    cache_key = f"current_performance:{slug}"
-    cached_data = await cache(cache_key)
-    if cached_data:
-        logger.info(
-            "cache hit at the view current performance endpoint for store: %s", slug
-        )
-        return cached_data
-    target_store = (
-        await db.execute(
-            select(Store).where(
-                Store.slug == slug,
-                Store.user_owners.any(User.id == user_id),
-                Store.approved,
-            )
-        )
-    ).scalar_one_or_none()
-    if not target_store:
-        logger.warning("user: %s, tried experienced permission err: %s", user_id, slug)
-        raise HTTPException(status_code=403, detail="restricted access")
+    result = await view_performanc_helper(slug, view_overall_performance, db, payload)
+    if isinstance(result, dict):
+        return result
+    user_id, cache_key, target_store = result
     today = date.today()
     gross_sales_this_month = (
         await db.execute(
@@ -205,7 +213,7 @@ async def view_current_performance(slug, db, payload):
             .join(Order, Payment.order_id == Order.id)
             .where(
                 Order.store_id == target_store.id,
-                Payment.payment_status == "approved",
+                Payment.payment_status == PaymentStatus.SUCCESS,
                 Payment.payment_date >= today.replace(day=1),
             )
         ).scalar()
@@ -216,7 +224,7 @@ async def view_current_performance(slug, db, payload):
         .join(Order, Order.id == Payment.order_id)
         .where(
             Order.store_id == target_store.id,
-            Payment.payment_status == "approved",
+            Payment.payment_status == PaymentStatus.SUCCESS,
             Payment.payment_date >= today.replace(day=1),
         )
     )
@@ -228,7 +236,7 @@ async def view_current_performance(slug, db, payload):
         .join(Order, Payment.order_id == Order.id)
         .where(
             Order.store_id == target_store.id,
-            Payment.payment_status == "approved",
+            Payment.payment_status == PaymentStatus.SUCCESS,
             Payment.payment_date >= today.replace(day=1),
         )
         .group_by(cast(Payment.payment_date, Date))
@@ -297,4 +305,113 @@ async def view_current_performance(slug, db, payload):
     logger.info(
         "data returned at view current performance endpoint for store: %s", slug
     )
+    return data
+
+
+async def products_stats(slug, ranking, time_frame, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at the product_statistics endpoint")
+        raise HTTPException(status_code=401, detail="unauthorized access")
+    cache_key = f"product_statistics:{slug}:{ranking}:{time_frame}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info("cache hit at the product_statistics endpoint for store: %s", slug)
+        return cached_data
+    target_store = (
+        await db.execute(
+            select(Store).where(
+                Store.slug == slug,
+                Store.user_owners.any(User.id == user_id),
+                Store.approved,
+            )
+        )
+    ).scalar_one_or_none()
+    if not target_store:
+        logger.warning(
+            "user %s attempted to access product_statistics endpoint for store %s without permission or store not found",
+            user_id,
+            slug,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    now = datetime.now(timezone.utc)
+    time_map = {
+        "1 year": now - relativedelta(years=1),
+        "6 months": now - relativedelta(months=6),
+        "3 months": now - relativedelta(months=3),
+        "1 month": now - relativedelta(months=1),
+        "1 week": now - relativedelta(days=7),
+    }
+    time_period = time_map.get(time_frame)
+    if not time_period:
+        return {
+            "status": "error",
+            "message": "invalid time frame selected",
+        }
+    if target_store.founded > time_period:
+        return {
+            "status": "error",
+            "message": f"store's existence is below {time_frame}",
+        }
+    if ranking not in ["top_product", "least_product"]:
+        return {
+            "status": "error",
+            "message": "this endpoint is only ranked by 'top_product' or 'least_product'",
+        }
+    order_count = desc if ranking == "top_product" else asc
+    product_sales = func.sum(OrderItem.quantity).label("total_quantity")
+    products = (
+        await db.execute(
+            select(Product.product_name, cast(func.coalesce(product_sales, 0), Integer))
+            .join(Store, Product.store_id == Store.id)
+            .join(CartItem, Product.id == CartItem.product_id)
+            .join(OrderItem, OrderItem.cartitem_id == CartItem.id)
+            .join(Order, OrderItem.order_id == Order.id)
+            .join(Payment, Order.id == Payment.order_id)
+            .where(
+                Payment.payment_status == PaymentStatus.SUCCESS,
+                Order.created_at >= time_period,
+                Store.slug == slug,
+            )
+            .group_by(Product.product_name)
+            .order_by(order_count(product_sales))
+            .limit(5)
+        )
+    ).all()
+    avg_ratings = func.avg(Review.ratings).label("average_ratings")
+    product_ratings = (
+        await db.execute(
+            select(Product.product_name, cast(func.coalesce(avg_ratings, 0), Float))
+            .join(Review, Product.id == Review.product_id)
+            .join(Store, Product.store_id == Store.id)
+            .where(
+                Review.date_of_review >= time_period,
+                Store.slug == slug,
+            )
+            .group_by(Product.product_name)
+            .order_by(order_count(avg_ratings))
+        ).limit(5)
+    ).all()
+    if not products:
+        logger.warning("user: %s product stats returned null", user_id)
+        return {
+            "status": "success",
+            "message": f"you have sold no products within {time_frame}",
+        }
+    message = (
+        "most sold products and most rated products in descending order"
+        if ranking == "top_product"
+        else "least sold products and least rated products in ascending order"
+    )
+    data = {
+        "status": "success",
+        "message": message,
+        "product_sales": [
+            {"name": name, "quantity": int(qty)} for name, qty in products
+        ],
+        "product_ratings": [
+            {"name": name, "ratings": float(rts)} for name, rts in product_ratings
+        ],
+    }
+    await cached(cache_key, data, ttl=600)
     return data
