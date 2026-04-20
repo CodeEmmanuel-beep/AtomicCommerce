@@ -207,7 +207,8 @@ class Product(Base):
     primary_image = Column(String, nullable=False)
     image = Column(String, nullable=True)
     product_price = Column(Numeric(precision=12, scale=2))
-    product_description = Column(String)
+    product_type: Mapped[str] = mapped_column(String)
+    description = Column(String)
     product_size = Column(SQLEnum(ProductSize), default=ProductSize.small, index=True)
     category_id = Column(Integer, ForeignKey("categories.id"), index=True)
     product_availability = Column(String, default="available")
@@ -289,7 +290,7 @@ class Refund(Base):
     )
     order_id: Mapped[int] = mapped_column(Integer, ForeignKey("orders.id"), index=True)
     refund_id: Mapped[str] = mapped_column(String, unique=True, index=True)
-    amount_refunded: Mapped[Decimal] = mapped_column(
+    refund_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
     )
     refund_date: Mapped[datetime] = mapped_column(
