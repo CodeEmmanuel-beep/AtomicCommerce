@@ -230,11 +230,21 @@ class Chat(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProductSize(str, Enum):
+    small = "small"
+    medium = "medium"
+    large = "large"
+    extra_large = "extra large"
+
+
 class ProductObj(BaseModel):
     product_id: int
     store_id: int
     category_name: str
     product_name: str
+    product_type: str
+    description: str
+    product_size: ProductSize
     product_price: float
     product_availability: str
 
@@ -265,7 +275,10 @@ class ProductResponse(BaseModel):
     product_name: str
     primary_image: str = Field(exclude=True)
     image: str | None = Field(exclude=True)
+    product_type: str
     product_price: Decimal
+    product_size: str
+    description: str
     product_availability: str
     stock_quantity: InventoryObj
 
@@ -414,11 +427,9 @@ class MemRes(BaseModel):
 class OrderResponse(BaseModel, Generic[T]):
     profile: ProfileResponse
     membership_type: List[MemRes] = Field(default_factory=list)
-    items: List[OrderItemRes] = Field(default_factory=list)
     total_quantity: float
     total_amount: float
     status: str = Field(default="pending")
-    receipt: List[PaymentResponse] = Field(default_factory=list)
     created_at: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
