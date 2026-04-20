@@ -125,8 +125,8 @@ async def view_store_details(slug, db):
     return data
 
 
-async def view_overall_performance(slug, view_overall_performance, db, payload):
-    result = await view_performanc_helper(slug, view_overall_performance, db, payload)
+async def view_overall_performance(slug, db, payload):
+    result = await view_performanc_helper(slug, "view_overall_performance", db, payload)
     if isinstance(result, dict):
         return result
     user_id, cache_key, target_store = result
@@ -203,7 +203,9 @@ async def view_overall_performance(slug, view_overall_performance, db, payload):
 
 
 async def view_current_performance(slug, db, payload):
-    result = await view_performanc_helper(slug, view_overall_performance, db, payload)
+    result = await view_performanc_helper(
+        slug, "view_ccurrent_performance", db, payload
+    )
     if isinstance(result, dict):
         return result
     user_id, cache_key, target_store = result
