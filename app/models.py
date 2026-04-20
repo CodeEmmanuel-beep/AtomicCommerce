@@ -14,6 +14,7 @@ from sqlalchemy import (
     Enum as SQLEnum,
     LargeBinary,
     CheckConstraint,
+    Text,
 )
 from typing import Optional
 from sqlalchemy.dialects.postgresql import JSONB
@@ -62,6 +63,12 @@ class User(Base):
     staffs = relationship("Store", secondary=store_staffs, back_populates="user_staffs")
     reacts = relationship("React", back_populates="user")
     refunds = relationship("Refund", back_populates="user")
+    created_tickets = relationship(
+        "Ticket", foreign_keys="[Ticket.user_id]", back_populates="creator"
+    )
+    assigned_tickets = relationship(
+        "Ticket", foreign_keys="[Ticket.assigned_to]", back_populates="agent"
+    )
 
 
 class Messaging(Base):
@@ -79,6 +86,43 @@ class Messaging(Base):
     time_of_chat = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="messages")
+
+
+class TicketStatus(str, Enum):
+    open = "open"
+    in_progress = "in_progress"
+    closed = "closed"
+
+
+class Ticket(Base):
+    __tablename__ = "tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=False
+    )
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[TicketStatus] = mapped_column(
+        SQLEnum(TicketStatus), default=TicketStatus.open.value, index=True
+    )
+    assigned_to: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True, index=True
+    )
+    updated_at = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    creator = relationship(
+        "User", foreign_keys=[user_id], back_populates="created_tickets"
+    )
+
+    agent = relationship(
+        "User", foreign_keys=[assigned_to], back_populates="assigned_tickets"
+    )
 
 
 class BusinessType(str, Enum):
@@ -258,7 +302,7 @@ class Payment(Base):
     payment_method: Mapped[str] = mapped_column(String)
     amount_paid: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     payment_status: Mapped[PaymentStatus] = mapped_column(
-        SQLEnum(PaymentStatus), default=PaymentStatus.PENDING, index=True
+        SQLEnum(PaymentStatus), default=PaymentStatus.PENDING.value, index=True
     )
     reference_id: Mapped[str] = mapped_column(String, unique=True, index=True)
     transaction_id: Mapped[str] = mapped_column(String, index=True)
@@ -500,7 +544,10 @@ class Order(Base):
     delivery_address: Mapped[dict] = mapped_column(JSONB)
     order_delete: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[OrderStatus] = mapped_column(
-        SQLEnum(OrderStatus), default=OrderStatus.pending, nullable=False, index=True
+        SQLEnum(OrderStatus),
+        default=OrderStatus.pending.value,
+        nullable=False,
+        index=True,
     )
     check_out: Mapped[bool] = mapped_column(Boolean, default=False)
     total_amount: Mapped[Decimal] = mapped_column(
