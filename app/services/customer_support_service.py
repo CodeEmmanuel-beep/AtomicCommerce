@@ -9,8 +9,7 @@ from datetime import timezone, datetime
 from app.logs.logger import get_logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, or_, func, and_, update
-import os, shutil, uuid
-from werkzeug.utils import secure_filename
+from app.utils.redis import cache, cached
 from app.utils.helper import upload_photo_helper
 from app.utils.supabase_url import cleaned_up
 
@@ -20,8 +19,8 @@ logger = get_logger("chat_support")
 async def text_support(message, pics, subject, db, payload, get_supabase):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt st the text_support endpoint")
-        raise HTTPException(status_code=403, detail="not a valid user")
+        logger.warning("Unauthorized attempt st the text_support endpoint")
+        raise HTTPException(status_code=401, detail="not a valid user")
     allowed_roles = ["Owner", "customer_care"]
     try:
         stmt = (
@@ -35,7 +34,7 @@ async def text_support(message, pics, subject, db, payload, get_supabase):
             )
             .where(
                 User.role.in_(allowed_roles),
-                User.is_active == True,
+                User.is_active,
             )
             .group_by(User.id)
             .order_by(func.count(Ticket.id).asc())
@@ -45,7 +44,7 @@ async def text_support(message, pics, subject, db, payload, get_supabase):
         logger.exception("database error while fetching customer support")
         raise HTTPException(status_code=400, detail="databaase error")
     if not receive:
-        logger.info(f"Message send failed: support support not found.")
+        logger.info("Message send failed: support support not found.")
         raise HTTPException(status_code=404, detail="no active support found")
     filename = None
     if pics is not None:
@@ -97,14 +96,14 @@ async def text_support(message, pics, subject, db, payload, get_supabase):
         logger.exception("error at text_support endpoint")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Message successfully sent from '{user_id}' to customer.")
-    return {"success": f"message successfully sent to customer support"}
+    return {"success": "message successfully sent to customer support"}
 
 
 async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt at text_customer endpoint")
-        raise HTTPException(status_code=403, detail="not a valid user")
+        logger.warning("Unauthorized attempt at text_customer endpoint")
+        raise HTTPException(status_code=401, detail="not a valid user")
     filename = None
     if pics:
         filename = await upload_photo_helper(pics, db, payload, get_supabase)
@@ -181,69 +180,116 @@ async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
     return {"success": "message sent successfully"}
 
 
-async def customer_view(
+async def customer_support_view(
+    ticket_id,
+    view,
     page,
     limit,
     db,
     payload,
 ):
     user_id = payload.get("user_id")
-    username = payload.get("sub")
-    if not username:
-        logger.warning(f"Unauthorized access attempt by user: {username}")
-        raise HTTPException(status_code=403, detail="not a valid user")
+    if not user_id:
+        logger.warning("Unauthorized attempt at the customer_view_message endpoint")
+        raise HTTPException(status_code=401, detail="not a valid user")
+    if page < 1 or limit < 1:
+        raise HTTPException(
+            status_code=400, detail="page number and limit must be greater than 0"
+        )
     offset = (page - 1) * limit
+    cache_key = f"mailbox:{user_id}:{ticket_id}:{view}:{page}:{limit}"
+    message_cache = await cache(cache_key)
+    if message_cache:
+        logger.info(
+            f"cache hit for ticket_id: {ticket_id}, page: {page} at customer_support_view endpoint"
+        )
+        return StandardResponse(**message_cache)
     conversation_key = func.concat(
-        func.least(Messaging.customer, Messaging.customer_support),
+        func.least(Messaging.customer_id, Messaging.support_id),
         ":",
-        func.greatest(Messaging.customer_support, Messaging.customer),
+        func.greatest(Messaging.support_id, Messaging.customer_id),
+    )
+    filters = (
+        Messaging.customer_id == user_id
+        if view == "customer_view"
+        else Messaging.support_id == user_id
+    )
+    base_filter = or_(
+        and_(
+            Messaging.ticket_id == ticket_id,
+            Messaging.user_id == user_id,
+            ~Messaging.sender_deleted,
+        ),
+        and_(
+            Messaging.ticket_id == ticket_id,
+            filters,
+            ~Messaging.receiver_deleted,
+        ),
     )
     stmt = (
         select(Messaging, conversation_key.label("conversation_id"))
-        .where(
-            or_(
-                and_(
-                    Messaging.user_id == user_id,
-                    Messaging.sender_deleted == False,
-                ),
-                and_(
-                    Messaging.customer_id == user_id,
-                    Messaging.receiver_deleted == False,
-                ),
-            )
-        )
+        .where(base_filter)
         .order_by(Messaging.time_of_chat.desc())
     )
     total = (
-        await db.execute(select(func.count()).select_from(stmt.subquery()))
+        await db.execute(select(func.count(Messaging.id)).where(base_filter))
     ).scalar() or 0
-    logger.info(
-        f"Total messages found between '{username}' and customer support: {total}"
-    )
-    view = (await db.execute(stmt.offset(offset).limit(limit))).all()
-    for msg, _ in view:
-        if msg.receiver == username:
-            msg.seen = True
-    await db.commit()
-    support_id = [msg.id for msg in view]
-    support = (
-        (await db.execute(select(User).where(User.id.in_(support_id)))).scalars().all()
-    )
-    support_map = {s.id: s for s in support}
+    logger.info(f"Total messages found with customer support: {total}")
+    view_result = (await db.execute(stmt.offset(offset).limit(limit))).all()
+    if not view_result:
+        logger.info(
+            "user: %s, search for customer support messages returned null", user_id
+        )
+        return {"status": "success", "message": "no messages"}
+    if view == "customer_view":
+        msg_ids_to_mark = [
+            m.id
+            for m, _ in view_result
+            if m.customer_id == user_id and m.user_id != user_id and not m.delivered
+        ]
+        support_id = next((m.support_id for m, _ in view_result if m.support_id), None)
+        if support_id is None:
+            raise HTTPException(status_code=409, detail="can not access support")
+        support_obj = await db.get(User, support_id)
+    elif view == "support_view":
+        msg_ids_to_mark = [
+            m.id
+            for m, _ in view_result
+            if m.support_id == user_id and m.user_id != user_id and not m.delivered
+        ]
+        customer_id = next(
+            (m.customer_id for m, _ in view_result if m.customer_id), None
+        )
+        if customer_id is None:
+            raise HTTPException(status_code=409, detail="can not access support")
+        customer_obj = await db.get(User, customer_id)
+    if msg_ids_to_mark:
+        await db.execute(
+            update(Messaging)
+            .where(Messaging.id.in_(msg_ids_to_mark), ~Messaging.delivered)
+            .values(delivered=True, seen=True)
+        )
+        await db.commit()
     conversations = {}
-    for msg, conv_id in view:
+    for msg, conv_id in view_result:
         chat_data = Chat.model_validate(msg)
-        customer_support = support_map.get(msg.user_id)
-        chat_data.customer_support = customer_support.name
+        if view == "customer_view":
+            chat_data.customer_support = support_obj.name
+        elif view == "support_view":
+            chat_data.customer = customer_obj.name
         conversations.setdefault(conv_id, []).append(chat_data)
     data = {
         "conversations": conversations,
         "pagination": PaginatedResponse(page=page, limit=limit, total=total),
     }
     logger.info(
-        f"Fetched messages between '{username}' and customer support (page={page})."
+        f"Fetched messages between '{user_id}' and customer support (page={page})."
     )
-    return StandardResponse(status="success", message="your messages", data=data)
+    full_response = StandardResponse(
+        status="success", message="your messages", data=data
+    )
+    await cached(cache_key, full_response, ttl=30)
+    return full_response
 
 
 async def support_view(
