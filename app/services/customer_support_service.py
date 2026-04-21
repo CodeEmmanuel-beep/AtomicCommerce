@@ -1,9 +1,9 @@
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     Chat,
     StandardResponse,
     PaginatedResponse,
 )
-from app.models_sql import Messaging, User
+from app.models import Messaging, User, Ticket, TicketStatus
 from fastapi import HTTPException
 from datetime import timezone, datetime
 from app.logs.logger import get_logger
@@ -11,153 +11,174 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, or_, func, and_, update
 import os, shutil, uuid
 from werkzeug.utils import secure_filename
+from app.utils.helper import upload_photo_helper
+from app.utils.supabase_url import cleaned_up
 
 logger = get_logger("chat_support")
 
 
-async def text_support(
-    message,
-    pics,
-    db,
-    payload,
-):
+async def text_support(message, pics, subject, db, payload, get_supabase):
     user_id = payload.get("user_id")
-    username = payload.get("sub")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt by user: {username}")
+        logger.warning(f"Unauthorized access attempt st the text_support endpoint")
         raise HTTPException(status_code=403, detail="not a valid user")
+    allowed_roles = ["Owner", "customer_care"]
     try:
-        stmt = select(User).where(User.role == "c_c", User.is_active == True)
-        receive = (await db.execute(stmt)).scalars().all()
-    except Exception as e:
-        logger.error(f"Database error while fetching customer support: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        stmt = (
+            select(User)
+            .outerjoin(
+                Ticket,
+                and_(
+                    User.id == Ticket.assigned_to,
+                    Ticket.status.in_([TicketStatus.open, TicketStatus.in_progress]),
+                ),
+            )
+            .where(
+                User.role.in_(allowed_roles),
+                User.is_active == True,
+            )
+            .group_by(User.id)
+            .order_by(func.count(Ticket.id).asc())
+        )
+        receive = (await db.execute(stmt)).scalars().first()
+    except Exception:
+        logger.exception("database error while fetching customer support")
+        raise HTTPException(status_code=400, detail="databaase error")
     if not receive:
         logger.info(f"Message send failed: support support not found.")
         raise HTTPException(status_code=404, detail="no active support found")
-    name = (
-        await db.execute(select(User).where(User.id == user_id))
-    ).scalar_one_or_none()
-    file_path = None
-    file_url = None
+    filename = None
     if pics is not None:
-        try:
-            filename = f"{uuid.uuid4()}_{secure_filename(pics.filename)}"
-            file_path = os.path.join("images", filename)
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(pics.file, buffer)
-            file_url = f"/images/{filename}"
-            pics = file_url
-        except Exception as e:
-            logger.exception("Image upload failed")
-            raise HTTPException(status_code=500, detail="error uploading file")
+        filename = await upload_photo_helper(pics, db, payload, get_supabase)
     else:
         pics = None
     if not message and not pics:
-        logger.info(f"Message send failed: empty message from user '{username}'.")
+        logger.info(f"Message send failed: empty message from user '{user_id}'.")
         raise HTTPException(status_code=400, detail="can not send empty messages")
-    logger.info(f"User '{username}' is sending a message to 'customer support'.")
-    support = receive[user_id % len(receive)]
+    logger.info(f"User '{user_id}' is sending a message to 'customer support'.")
+    new_ticket = Ticket(
+        user_id=user_id,
+        subject=subject,
+        description=message or "Attachment only",
+        assigned_to=receive.id,
+    )
+    db.add(new_ticket)
+    await db.flush()
     new_message = Messaging(
         user_id=user_id,
-        customer_support=support.name,
-        identifier=support.id,
-        pics=pics,
-        customer=name.name,
+        pics=filename,
         message=message,
+        ticket_id=new_ticket.id,
         time_of_chat=datetime.now(timezone.utc),
     )
+    db.add(new_message)
     try:
-        db.add(new_message)
         await db.commit()
-        await db.refresh(new_message)
     except IntegrityError:
         await db.rollback()
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
-            logger.error("Removed orphaned file from database:%s", file_path)
-        logger.error(
-            f"Message send failed due to database error for user '{username}'."
-        )
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                f"failed to remove orphaned  file for user '{user_id}'.",
+                "removed orphaned file from database",
+            )
+        logger.error("database error at text_support endpoint")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                f"failed to remove orphaned  file for user '{user_id}'.",
+                "removed orphaned file from database",
+            )
+        logger.exception("error at text_support endpoint")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Message successfully sent from '{username}' to customer.")
+    logger.info(f"Message successfully sent from '{user_id}' to customer.")
     return {"success": f"message successfully sent to customer support"}
 
 
-async def text_customer(
-    message,
-    customer_id,
-    pics,
-    db,
-    payload,
-):
+async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
     user_id = payload.get("user_id")
-    username = payload.get("sub")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt by user: {username}")
+        logger.warning(f"Unauthorized access attempt at text_customer endpoint")
         raise HTTPException(status_code=403, detail="not a valid user")
-    restricted = (
-        (await db.execute(select(User).where(User.id == user_id, User.role == "c_c")))
-        .scalars()
-        .all()
-    )
-    if not restricted:
-        raise HTTPException(status_code=403, detail="restricted service")
-    try:
-        stmt = select(User).where(User.id == customer_id, User.is_active == True)
-        receive = (await db.execute(stmt)).scalar_one_or_none()
-    except Exception as e:
-        logger.error(f"Database error while fetching customer '{customer_id}': {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-    if not receive:
-        logger.info(f"Message send failed: customer '{customer_id}' not found.")
-        raise HTTPException(status_code=404, detail="user not found")
-    name = (
-        await db.execute(select(User).where(User.id == user_id))
+    filename = None
+    if pics:
+        filename = await upload_photo_helper(pics, db, payload, get_supabase)
+    ticket = (
+        await db.execute(
+            select(Ticket)
+            .where(
+                Ticket.id == ticket_id,
+                or_(Ticket.assigned_to == user_id, Ticket.user_id == user_id),
+            )
+            .with_for_update()
+        )
     ).scalar_one_or_none()
-    file_path = None
-    file_url = None
-    if pics is not None:
-        try:
-            filename = f"{uuid.uuid4()}_{secure_filename(pics.filename)}"
-            file_path = os.path.join("images", filename)
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(pics.file, buffer)
-            file_url = f"/images/{filename}"
-            pics = file_url
-        except Exception as e:
-            logger.exception("File upload failed")
-            raise HTTPException(status_code=500, detail="Error uploading image")
-    else:
-        pics = None
+    if not ticket:
+        raise HTTPException(status_code=403, detail="restricted service")
+    if ticket.status == TicketStatus.closed:
+        raise HTTPException(status_code=400, detail="ticket already closed")
     if not message and not pics:
-        logger.info(f"Message send failed: empty message from user '{username}'.")
+        logger.info(f"Message send failed: empty message from user '{user_id}'.")
         raise HTTPException(status_code=400, detail="can not send empty messages")
-    logger.info(f"User '{username}' is sending a message to '{customer_id}'.")
+    receiver = ticket.assigned_to if user_id == ticket.user_id else ticket.user_id
+    logger.info(
+        f"User '{user_id}' is sending a message to '{receiver}', ticket_id: {ticket.id}"
+    )
     new_message = Messaging(
         user_id=user_id,
-        customer=receive.name,
-        customer_id=receive.id,
-        customer_support=name.name,
-        pics=pics,
+        ticket_id=ticket.id,
+        pics=filename,
         message=message,
         time_of_chat=datetime.now(timezone.utc),
     )
+    if ticket.user_id == user_id:
+        new_message.support_id = ticket.assigned_to
+        new_message.customer_id = user_id
+    elif ticket.assigned_to == user_id:
+        new_message.customer_id = ticket.user_id
+        new_message.support_id = ticket.assigned_to
+    else:
+        raise HTTPException(status_code=403, detail="invalid participant")
     try:
+        ticket.status = (
+            TicketStatus.in_progress
+            if ticket.status == TicketStatus.open
+            else ticket.status
+        )
         db.add(new_message)
         await db.commit()
         await db.refresh(new_message)
     except IntegrityError:
         await db.rollback()
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
-            logger.error("Removed orphaned file from database:%s", file_path)
-        logger.error(
-            f"Message send failed due to database error for user '{username}'."
-        )
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                f"failed to remove orphaned  file for user '{user_id}'.",
+                "removed orphaned file from database",
+            )
+        logger.error("database error at text_customer endpoint")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                f"failed to remove orphaned  file for user '{user_id}'.",
+                "removed orphaned file from database",
+            )
+        logger.exception("error at text_customer endpoint")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Message successfully sent from '{username}' to '{customer_id}'.")
-    return {"success": f"message successfully sent to {customer_id}"}
+    logger.info(
+        f"Message successfully sent from '{user_id}' to '{receiver}', ticket_id:{ticket.id}"
+    )
+    return {"success": "message sent successfully"}
 
 
 async def customer_view(
@@ -400,7 +421,7 @@ async def customer_delete_message(
     return {"success": f"message ID {message_id} successfully deleted"}
 
 
-async def customer_delete_message(
+async def customer_care_delete_message(
     message_id,
     db,
     payload,
@@ -436,7 +457,7 @@ async def customer_delete_message(
     return {"success": f"message ID {message_id} successfully deleted"}
 
 
-async def clear_conversation(
+async def clear_conversations(
     db,
     payload,
 ):
