@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from datetime import timezone, datetime
 from app.logs.logger import get_logger
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select, or_, func, and_, update
+from sqlalchemy import select, or_, func, and_, update, case
 from app.utils.redis import cache, cached
 from app.utils.helper import upload_photo_helper
 from app.utils.supabase_url import cleaned_up
@@ -191,7 +191,7 @@ async def customer_support_messages(
 ):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("Unauthorized attempt at the customer_view_message endpoint")
+        logger.warning("Unauthorized attempt at the customer_view_messages endpoint")
         raise HTTPException(status_code=401, detail="not a valid user")
     if page < 1 or limit < 1:
         raise HTTPException(
@@ -205,7 +205,7 @@ async def customer_support_messages(
     message_cache = await cache(cache_key)
     if message_cache:
         logger.info(
-            f"cache hit for ticket_id: {ticket_id}, page: {page} at customer_support_view endpoint"
+            f"cache hit for ticket_id: {ticket_id}, page: {page} at customer_support_messages endpoint"
         )
         return StandardResponse(**message_cache)
     conversation_key = func.concat(
@@ -305,7 +305,9 @@ async def customer_support_conversations(
 ):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt by user: {user_id}")
+        logger.warning(
+            f"Unauthorized access attempt at customer_support_conversations endpoint"
+        )
         raise HTTPException(status_code=403, detail="not a valid user")
     if page < 1 or limit < 1:
         raise HTTPException(
@@ -318,7 +320,9 @@ async def customer_support_conversations(
     cache_key = f"conversations:{user_id}:{views}:{page}:{limit}"
     message_cache = await cache(cache_key)
     if message_cache:
-        logger.info(f"cache hit for page: {page} at customer_support_views endpoint")
+        logger.info(
+            f"cache hit for page: {page} at customer_support_conversations endpoint"
+        )
         return StandardResponse(**message_cache)
     conversation_key = func.concat(
         func.least(Messaging.customer_id, Messaging.support_id),
@@ -372,7 +376,7 @@ async def customer_support_conversations(
     view_result = (await db.execute(stmt.offset(offset).limit(limit))).all()
     if not view_result:
         logger.info(
-            "user: %s, search for customer support messages returned null", user_id
+            "user: %s, search for customer support conversations returned null", user_id
         )
         return {"status": "success", "message": "no messages"}
     if views == "customer_view":
@@ -424,148 +428,49 @@ async def customer_support_conversations(
     return full_response
 
 
-async def support_customer(
-    customer_id,
-    page,
-    limit,
+async def remove_message(
+    message_id,
     db,
     payload,
 ):
-    user_id = payload.get(user_id)
-    username = payload.get("sub")
+    user_id = payload.get("user_id")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt by user: {username}")
+        logger.warning(f"Unauthorized access attempt at the remove_message endpoint")
         raise HTTPException(status_code=403, detail="not a valid user")
-    offset = (page - 1) * limit
-    restricted = (
-        (await db.execute(select(User).where(User.id == user_id, User.role == "c_c")))
-        .scalars()
-        .all()
-    )
-    if not restricted:
-        raise HTTPException(status_code=403, detail="restricted service")
-    conversation_key = func.concat(
-        func.least(Messaging.customer, Messaging.customer_support),
-        ":",
-        func.greatest(Messaging.customer_support, Messaging.customer),
-    )
-    stmt = (
-        select(Messaging, conversation_key.label("conversation_id"))
+    is_sender = Messaging.user_id == user_id
+    is_customer = Messaging.customer_id == user_id
+    is_support = Messaging.support_id == user_id
+    updates = await db.execute(
+        update(Messaging)
         .where(
-            or_(
-                and_(
-                    Messaging.user_id == user_id,
-                    Messaging.customer_id == customer_id,
-                    Messaging.sender_deleted == False,
-                ),
-                and_(
-                    Messaging.customer_id == customer_id,
-                    Messaging.identifier == user_id,
-                    Messaging.receiver_deleted == False,
-                ),
-            )
+            Messaging.id == message_id,
+            or_(is_sender, is_customer, is_support),
         )
-        .order_by(Messaging.time_of_chat.desc())
-    )
-    total = (
-        await db.execute(select(func.count()).select_from(stmt.subquery()))
-    ).scalar() or 0
-    logger.info(
-        f"Total messages found between '{username}' and '{customer_id}': {total}"
-    )
-    view = (await db.execute(stmt.offset(offset).limit(limit))).all()
-    for msg, _ in view:
-        if msg.receiver == username:
-            msg.seen = True
-    await db.commit()
-    customer_ids = [msg.user_id for msg in view]
-    customer = await db.execute(select(User).where(User.id.in_(customer_ids)))
-    customer_map = {c.id: c for c in customer}
-    conversations = {}
-    for msg, conv_id in view:
-        chat_data = Chat.model_validate(msg)
-        customer_name = customer_map.get(msg.user)
-        chat_data.customer = customer_name.name
-        conversations.setdefault(conv_id, []).append(chat_data)
-    data = {
-        "conversations": conversations,
-        "pagination": PaginatedResponse(page=page, limit=limit, total=total),
-    }
-    logger.info(
-        f"Fetched messages between '{username}' and '{customer_id}' (page={page})."
-    )
-    return StandardResponse(status="success", message="your messages", data=data)
-
-
-async def customer_delete_message(
-    message_id,
-    db,
-    payload,
-):
-    user_id = payload.get("user_id")
-    username = payload.get("sub")
-    if not user_id:
-        logger.warning(f"Unauthorized access attempt by user: {user_id}")
-        raise HTTPException(status_code=403, detail="not a valid user")
-    stmt = select(Messaging).where(Messaging.id == message_id)
-    message = (await db.execute(stmt)).scalar_one_or_none()
-    if not message:
-        logger.info(f"Delete failed: message ID '{message_id}' not found.")
-        raise HTTPException(status_code=404, detail="message not found")
-    if message.customer_id != user_id and message.user_id != user_id:
-        logger.warning(
-            f"Unauthorized delete attempt by user '{user_id}' on message ID '{message_id}'."
+        .values(
+            sender_deleted=case((is_sender, True), else_=Messaging.sender_deleted),
+            receiver_deleted=case(
+                (
+                    and_(~is_sender, or_(is_customer, is_support)),
+                    True,
+                ),
+                else_=Messaging.receiver_deleted,
+            ),
         )
-        raise HTTPException(status_code=400, detail="invalid operation")
-    if message.user_id == user_id:
-        message.sender_deleted = True
-    elif message.customer_id == user_id:
-        message.receiver_deleted = True
+    )
+    if updates.rowcount == 0:
+        logger.info(f"Delete failed: Message {message_id} not found or unauthorized.")
+        raise HTTPException(status_code=404, detail="Message not found")
     try:
         await db.commit()
     except IntegrityError:
-        logger.error(
-            f"Failed to delete message ID '{message_id}' by user '{username}'."
-        )
+        await db.rollback()
+        logger.error(f"database error at remove_message endpoint")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        logger.error(f"Failed to delete message ID '{message_id}' by user '{user_id}'.")
         await db.rollback()
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Message ID '{message_id}' deleted by user '{username}'.")
-    return {"success": f"message ID {message_id} successfully deleted"}
-
-
-async def customer_care_delete_message(
-    message_id,
-    db,
-    payload,
-):
-    user_id = payload.get("user_id")
-    username = payload.get("sub")
-    if not user_id:
-        logger.warning(f"Unauthorized access attempt by user: {user_id}")
-        raise HTTPException(status_code=403, detail="not a valid user")
-    stmt = select(Messaging).where(Messaging.id == message_id)
-    message = (await db.execute(stmt)).scalar_one_or_none()
-    if not message:
-        logger.info(f"Delete failed: message ID '{message_id}' not found.")
-        raise HTTPException(status_code=404, detail="message not found")
-    if message.identifier != user_id and message.user_id != user_id:
-        logger.warning(
-            f"Unauthorized delete attempt by user '{user_id}' on message ID '{message_id}'."
-        )
-        raise HTTPException(status_code=400, detail="invalid operation")
-    if message.user_id == user_id:
-        message.sender_deleted = True
-    elif message.identifier == user_id:
-        message.receiver_deleted = True
-    try:
-        await db.commit()
-    except IntegrityError:
-        logger.error(
-            f"Failed to delete message ID '{message_id}' by user '{username}'."
-        )
-        await db.rollback()
-        raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Message ID '{message_id}' deleted by user '{username}'.")
+    logger.info(f"Message ID '{message_id}' deleted by user '{user_id}'.")
     return {"success": f"message ID {message_id} successfully deleted"}
 
 
