@@ -4,6 +4,7 @@ from app.api.v1.schemas import (
     PaginatedResponse,
 )
 from app.models import Messaging, User, Ticket, TicketStatus
+from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
 from datetime import timezone, datetime
 from app.logs.logger import get_logger
@@ -180,7 +181,7 @@ async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
     return {"success": "message sent successfully"}
 
 
-async def customer_support_view(
+async def customer_support_messages(
     ticket_id,
     view,
     page,
@@ -197,6 +198,9 @@ async def customer_support_view(
             status_code=400, detail="page number and limit must be greater than 0"
         )
     offset = (page - 1) * limit
+    view = view.lower().strip()
+    if view not in {"customer_view", "support_view"}:
+        raise HTTPException(status_code=400, detail="invalid view type")
     cache_key = f"mailbox:{user_id}:{ticket_id}:{view}:{page}:{limit}"
     message_cache = await cache(cache_key)
     if message_cache:
@@ -261,7 +265,7 @@ async def customer_support_view(
             (m.customer_id for m, _ in view_result if m.customer_id), None
         )
         if customer_id is None:
-            raise HTTPException(status_code=409, detail="can not access support")
+            raise HTTPException(status_code=409, detail="can not access customer")
         customer_obj = await db.get(User, customer_id)
     if msg_ids_to_mark:
         await db.execute(
@@ -292,7 +296,8 @@ async def customer_support_view(
     return full_response
 
 
-async def support_view(
+async def customer_support_conversations(
+    views,
     page,
     limit,
     db,
@@ -302,60 +307,121 @@ async def support_view(
     if not user_id:
         logger.warning(f"Unauthorized access attempt by user: {user_id}")
         raise HTTPException(status_code=403, detail="not a valid user")
+    if page < 1 or limit < 1:
+        raise HTTPException(
+            status_code=400, detail="page number and limit must be greater than 0"
+        )
     offset = (page - 1) * limit
-    restricted = (
-        (await db.execute(select(User).where(User.id == user_id, User.role == "c_c")))
-        .scalars()
-        .all()
-    )
-    if not restricted:
-        raise HTTPException(status_code=403, detail="restricted service")
+    views = views.lower().strip()
+    if views not in {"customer_view", "support_view"}:
+        raise HTTPException(status_code=400, detail="invalid view type")
+    cache_key = f"conversations:{user_id}:{views}:{page}:{limit}"
+    message_cache = await cache(cache_key)
+    if message_cache:
+        logger.info(f"cache hit for page: {page} at customer_support_views endpoint")
+        return StandardResponse(**message_cache)
     conversation_key = func.concat(
-        func.least(Messaging.customer, Messaging.customer_support),
+        func.least(Messaging.customer_id, Messaging.support_id),
         ":",
-        func.greatest(Messaging.customer_support, Messaging.customer),
+        func.greatest(Messaging.support_id, Messaging.customer_id),
+    )
+    filters = (
+        Messaging.customer_id == user_id
+        if views == "customer_view"
+        else Messaging.support_id == user_id
+    )
+    base_filter = or_(
+        and_(
+            Messaging.user_id == user_id,
+            ~Messaging.sender_deleted,
+        ),
+        and_(
+            filters,
+            ~Messaging.receiver_deleted,
+        ),
+    )
+    subq = (
+        select(
+            conversation_key.label("conversation_id"),
+            func.max(Messaging.time_of_chat).label("latest_time"),
+            func.max(Messaging.id).label("latest_id"),
+        )
+        .where(base_filter)
+        .group_by(conversation_key)
+        .subquery()
     )
     stmt = (
-        select(Messaging, conversation_key.label("conversation_id"))
-        .where(
-            or_(
-                and_(
-                    Messaging.identifier == user_id, Messaging.sender_deleted == False
-                ),
-                and_(Messaging.user_id == user_id, Messaging.receiver_deleted == False),
-            )
+        select(Messaging, subq)
+        .join(
+            subq,
+            and_(
+                Messaging.time_of_chat == subq.c.latest_time,
+                conversation_key == subq.c.conversation_id,
+                Messaging.id == subq.c.latest_id,
+            ),
         )
-        .distinct(conversation_key)
-        .order_by(conversation_key, Messaging.time_of_chat.desc())
+        .options(selectinload(Messaging.user))
+        .order_by(subq.c.latest_time.desc())
     )
     total = (
-        await db.execute(select(func.count()).select_from(stmt.subquery()))
+        await db.execute(
+            select(func.count(func.distinct((conversation_key)))).where(base_filter)
+        )
     ).scalar() or 0
     logger.info(f"Total conversations found for user '{user_id}': {total}")
-    view = (await db.execute(stmt.offset(offset).limit(limit))).all()
-    for msg, _ in view:
-        if msg.identifier == user_id:
-            await db.execute(
-                update(Messaging)
-                .where(Messaging.identifier == user_id, Messaging.delivered == False)
-                .values(delivered=True)
-            )
-    await db.commit()
-    customer_ids = [msg.id for msg in view]
-    customer = await db.execute(select(User).where(User.id.in_(customer_ids)))
-    customer_map = {c.id: c for c in customer.scalars().all()}
+    view_result = (await db.execute(stmt.offset(offset).limit(limit))).all()
+    if not view_result:
+        logger.info(
+            "user: %s, search for customer support messages returned null", user_id
+        )
+        return {"status": "success", "message": "no messages"}
+    if views == "customer_view":
+        msg_ids_to_mark = [
+            m.id
+            for m, _ in view_result
+            if m.customer_id == user_id and m.user_id != user_id and not m.delivered
+        ]
+        other_ids = [m.support_id for m, _ in view_result]
+        if not other_ids:
+            raise HTTPException(status_code=409, detail="can not access support")
+    elif views == "support_view":
+        msg_ids_to_mark = [
+            m.id
+            for m, _ in view_result
+            if m.support_id == user_id and m.user_id != user_id and not m.delivered
+        ]
+        other_ids = [m.customer_id for m, _ in view_result if m.customer_id]
+        if not other_ids:
+            raise HTTPException(status_code=409, detail="can not access customer")
+    if msg_ids_to_mark:
+        await db.execute(
+            update(Messaging)
+            .where(Messaging.id.in_(msg_ids_to_mark), ~Messaging.delivered)
+            .values(delivered=True)
+        )
+        await db.commit()
+    other = await db.execute(select(User).where(User.id.in_(other_ids)))
+    id_map = {c.id: c for c in other.scalars().all()}
     conversations = {}
-    for msg, conv_id in view:
+    for msg, conv_id in view_result:
+        other_id = msg.support_id if msg.customer_id == user_id else msg.customer_id
         chat_data = Chat.model_validate(msg)
-        customer_name = customer_map.get(msg.id)
-        chat_data.customer = customer_name.name
+        other_obj = id_map.get(other_id)
+        if views == "customer_view":
+            chat_data.customer_support = other_obj.name if other_obj else None
+        elif views == "support_view":
+            chat_data.customer = (c := other_obj) and c.name
         conversations.setdefault(conv_id, []).append(chat_data)
     data = {
         "conversations": conversations,
         "pagination": PaginatedResponse(page=page, limit=limit, total=total),
     }
     logger.info(f"Fetched conversations for user '{user_id}' (page={page}).")
-    return StandardResponse(status="success", message="your messages", data=data)
+    full_response = StandardResponse(
+        status="success", message="your messages", data=data
+    )
+    await cached(cache_key, full_response, ttl=20)
+    return full_response
 
 
 async def support_customer(
