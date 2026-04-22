@@ -213,7 +213,7 @@ async def customer_support_messages(
         ":",
         func.greatest(Messaging.support_id, Messaging.customer_id),
     )
-    filters = (
+    role_filter = (
         Messaging.customer_id == user_id
         if view == "customer_view"
         else Messaging.support_id == user_id
@@ -226,7 +226,7 @@ async def customer_support_messages(
         ),
         and_(
             Messaging.ticket_id == ticket_id,
-            filters,
+            role_filter,
             ~Messaging.receiver_deleted,
         ),
     )
@@ -439,18 +439,17 @@ async def remove_message(
         raise HTTPException(status_code=403, detail="not a valid user")
     is_sender = Messaging.user_id == user_id
     is_customer = Messaging.customer_id == user_id
-    is_support = Messaging.support_id == user_id
     updates = await db.execute(
         update(Messaging)
         .where(
             Messaging.id == message_id,
-            or_(is_sender, is_customer, is_support),
+            or_(is_sender, is_customer),
         )
         .values(
             sender_deleted=case((is_sender, True), else_=Messaging.sender_deleted),
             receiver_deleted=case(
                 (
-                    and_(~is_sender, or_(is_customer, is_support)),
+                    and_(~is_sender, is_customer),
                     True,
                 ),
                 else_=Messaging.receiver_deleted,
@@ -467,81 +466,83 @@ async def remove_message(
         logger.error(f"database error at remove_message endpoint")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
-        logger.error(f"Failed to delete message ID '{message_id}' by user '{user_id}'.")
+        logger.exception(
+            f"Failed to delete message ID '{message_id}' by user '{user_id}'."
+        )
         await db.rollback()
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Message ID '{message_id}' deleted by user '{user_id}'.")
     return {"success": f"message ID {message_id} successfully deleted"}
 
 
-async def clear_conversations(
-    db,
-    payload,
-):
-    user_id = payload.get("user_id")
-    username = payload.get("sub")
-    if not user_id:
-        logger.warning(f"Unauthorized access attempt by user: {user_id}")
-        raise HTTPException(status_code=403, detail="not a valid user")
-    stmt = select(Messaging).where((Messaging.user_id == user_id))
-    messages = (await db.execute(stmt)).scalars().all()
-    if not messages:
-        logger.info(
-            f"No messages found between '{username}' and customer support to delete."
-        )
-        raise HTTPException(status_code=404, detail="no messages found to delete")
-    for message in messages:
-        if message.user_id == user_id:
-            message.sender_deleted = True
-        elif message.customer_id == user_id:
-            message.receiver_deleted = True
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        logger.error(
-            f"Failed to clear conversation between '{username}' and customer support."
-        )
-        raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(
-        f"All messages between '{username}' and customer support deleted by user '{username}'."
-    )
-    return {"success": f"all messages with customer support successfully deleted"}
-
-
 async def clear_conversation(
-    chat_id,
+    agent,
+    ticket_id,
     db,
     payload,
 ):
     user_id = payload.get("user_id")
-    username = payload.get("sub")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt by user: {user_id}")
+        logger.warning(f"Unauthorized access attempt at the clear_conversation")
         raise HTTPException(status_code=403, detail="not a valid user")
-    stmt = select(Messaging).where(
-        (Messaging.user_id == user_id, Messaging.customer_id == chat_id)
-    )
-    messages = (await db.execute(stmt)).scalars().all()
-    if not messages:
-        logger.info(
-            f"No messages found between '{username}' and '{chat_id}' to delete."
+    if agent not in ["customer", "support"]:
+        raise HTTPException(
+            status_code=409, detail="agent must be either customer or support"
         )
+    ticket_filter = (
+        and_(
+            Ticket.user_id == user_id,
+            Ticket.status.in_([TicketStatus.open, TicketStatus.in_progress]),
+        )
+        if agent == "customer"
+        else and_(Ticket.assigned_to == user_id, Ticket.status == TicketStatus.closed)
+    )
+    role_filter = (
+        Messaging.customer_id == user_id
+        if agent == "customer"
+        else Messaging.support_id == user_id
+    )
+    ticket_check = (
+        await db.execute(select(Ticket).where(Ticket.id == ticket_id, ticket_filter))
+    ).scalar_one_or_none()
+    if not ticket_check:
+        logger.warning(
+            "user: %s, tried clearing the messages of a ticket not validated with ticket_id: %s",
+            user_id,
+            ticket_id,
+        )
+        raise HTTPException(status_code=409, detail="invalid request")
+    clear = await db.execute(
+        update(Messaging)
+        .where(
+            Messaging.ticket_id == ticket_id,
+            or_(Messaging.user_id == user_id, role_filter),
+        )
+        .values(
+            sender_deleted=case(
+                (Messaging.user_id == user_id, True), else_=Messaging.sender_deleted
+            ),
+            receiver_deleted=case(
+                (
+                    and_(role_filter, Messaging.user_id != user_id),
+                    True,
+                ),
+                else_=Messaging.receiver_deleted,
+            ),
+        )
+    )
+    if clear.rowcount == 0:
+        logger.info(f"No messages found with ticket '{ticket_id}'")
         raise HTTPException(status_code=404, detail="no messages found to delete")
-    for message in messages:
-        if message.user_id == user_id:
-            message.sender_deleted = True
-        elif message.customer_id == user_id:
-            message.receiver_deleted = True
     try:
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        logger.error(
-            f"Failed to clear conversation between '{username}' and '{chat_id}'."
-        )
+        logger.error(f"database error at clear_conversation endpoint")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception(f"Failed to clear conversation with ticket '{ticket_id}'")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(
-        f"All messages between '{username}' and '{chat_id}' deleted by user '{username}'."
-    )
-    return {"success": f"all messages with {chat_id} successfully deleted"}
+    logger.info(f"All messages with ticket '{ticket_id}' deleted by user '{user_id}'.")
+    return {"success": "all messages successfully deleted"}
