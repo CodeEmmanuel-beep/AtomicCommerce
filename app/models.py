@@ -75,7 +75,8 @@ class Messaging(Base):
     __tablename__ = "messages"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True)
-    identifier = Column(Integer, index=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id"), index=True)
+    support_id = Column(Integer, index=True)
     customer_id = Column(Integer, index=True)
     message = Column(String, nullable=True)
     pics = Column(String, nullable=True)
@@ -86,6 +87,7 @@ class Messaging(Base):
     time_of_chat = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="messages")
+    ticket = relationship("Ticket", back_populates="messages")
 
 
 class TicketStatus(str, Enum):
@@ -123,6 +125,7 @@ class Ticket(Base):
     agent = relationship(
         "User", foreign_keys=[assigned_to], back_populates="assigned_tickets"
     )
+    messages = relationship("Messaging", back_populates="ticket")
 
 
 class BusinessType(str, Enum):
