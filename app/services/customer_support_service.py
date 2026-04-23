@@ -3,13 +3,21 @@ from app.api.v1.schemas import (
     StandardResponse,
     PaginatedResponse,
 )
-from app.models import Messaging, User, Ticket, TicketStatus
+from app.models import (
+    Messaging,
+    User,
+    Ticket,
+    TicketStatus,
+    Store,
+    store_staffs,
+    store_owners,
+)
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
 from datetime import timezone, datetime
 from app.logs.logger import get_logger
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select, or_, func, and_, update, case
+from sqlalchemy import select, or_, func, and_, update, case, exists
 from app.utils.redis import cache, cached
 from app.utils.helper import upload_photo_helper
 from app.utils.supabase_url import cleaned_up
@@ -17,50 +25,74 @@ from app.utils.supabase_url import cleaned_up
 logger = get_logger("chat_support")
 
 
-async def text_support(message, pics, subject, db, payload, get_supabase):
+async def text_support(store_id, message, pics, subject, db, payload, get_supabase):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("Unauthorized attempt st the text_support endpoint")
+        logger.warning("Unauthorized attempt at the text_support endpoint")
         raise HTTPException(status_code=401, detail="not a valid user")
     allowed_roles = ["Owner", "customer_care"]
-    try:
-        stmt = (
-            select(User)
-            .outerjoin(
-                Ticket,
-                and_(
-                    User.id == Ticket.assigned_to,
-                    Ticket.status.in_([TicketStatus.open, TicketStatus.in_progress]),
-                ),
+    if store_id:
+        store_exist = (
+            await db.execute(exists().where(Store.id == store_id, ~Store.is_deleted))
+        ).scalar_one_or_none()
+        if not store_exist:
+            raise HTTPException(status_code=404, detail="store_not_found")
+    ticket_exist = await db.execute(
+        select(
+            exists().where(
+                Ticket.user_id == user_id, Ticket.status != TicketStatus.closed
             )
-            .where(
-                User.role.in_(allowed_roles),
+        )
+    ).scalar()
+    if ticket_exist:
+        raise HTTPException(status_code=409, detail="you already have an active ticket")
+    try:
+        domain_check = (
+            or_(
+                store_owners.c.stores_id == store_id,
+                store_staffs.c.stores_id == store_id,
+            )
+            if store_id
+            else User.role.in_(allowed_roles)
+        )
+        subq = (
+            select(
+                Ticket.assigned_to.label("assigned"),
+                func.count(Ticket.id).label("cnt"),
+            )
+            .where(Ticket.status.in_([TicketStatus.open, TicketStatus.in_progress]))
+            .group_by(Ticket.assigned_to)
+        ).subquery()
+        stmt = select(User.id).outerjoin(subq, User.id == subq.c.assigned)
+        if store_id:
+            stmt = stmt.outerjoin(store_owners, User.id == store_owners.c.users_id)
+            stmt = stmt.outerjoin(store_staffs, User.id == store_staffs.c.users_id)
+        stmt = (
+            stmt.where(
+                domain_check,
                 User.is_active,
             )
-            .group_by(User.id)
-            .order_by(func.count(Ticket.id).asc())
+            .group_by(User.id, subq.c.cnt)
+            .order_by(func.coalesce(subq.c.cnt, 0).asc(), User.id)
         )
         receive = (await db.execute(stmt)).scalars().first()
     except Exception:
         logger.exception("database error while fetching customer support")
-        raise HTTPException(status_code=400, detail="databaase error")
+        raise HTTPException(status_code=400, detail="database error")
     if not receive:
-        logger.info("Message send failed: support support not found.")
+        logger.info("Message send failed: support not found.")
         raise HTTPException(status_code=404, detail="no active support found")
     filename = None
-    if pics is not None:
-        filename = await upload_photo_helper(pics, db, payload, get_supabase)
-    else:
-        pics = None
     if not message and not pics:
         logger.info(f"Message send failed: empty message from user '{user_id}'.")
         raise HTTPException(status_code=400, detail="can not send empty messages")
+    if pics:
+        filename = await upload_photo_helper(pics, db, payload, get_supabase)
     logger.info(f"User '{user_id}' is sending a message to 'customer support'.")
     new_ticket = Ticket(
         user_id=user_id,
         subject=subject,
-        description=message or "Attachment only",
-        assigned_to=receive.id,
+        assigned_to=receive,
     )
     db.add(new_ticket)
     await db.flush()
@@ -68,6 +100,8 @@ async def text_support(message, pics, subject, db, payload, get_supabase):
         user_id=user_id,
         pics=filename,
         message=message,
+        customer_id=user_id,
+        support_id=receive,
         ticket_id=new_ticket.id,
         time_of_chat=datetime.now(timezone.utc),
     )
@@ -96,7 +130,7 @@ async def text_support(message, pics, subject, db, payload, get_supabase):
             )
         logger.exception("error at text_support endpoint")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Message successfully sent from '{user_id}' to customer.")
+    logger.info(f"Message successfully sent from '{user_id}' to customer support.")
     return {"success": "message successfully sent to customer support"}
 
 
