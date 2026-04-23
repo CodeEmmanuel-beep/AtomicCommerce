@@ -14,7 +14,7 @@ from app.models import (
 )
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
-from datetime import timezone, datetime
+from datetime import timezone, datetime, timedelta
 from app.logs.logger import get_logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, or_, func, and_, update, case, exists
@@ -179,11 +179,8 @@ async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
     else:
         raise HTTPException(status_code=403, detail="invalid participant")
     try:
-        ticket.status = (
-            TicketStatus.in_progress
-            if ticket.status == TicketStatus.open
-            else ticket.status
-        )
+        ticket.status = TicketStatus.in_progress
+        ticket.updated_at = func.now()
         db.add(new_message)
         await db.commit()
         await db.refresh(new_message)
@@ -462,7 +459,81 @@ async def customer_support_conversations(
     return full_response
 
 
+async def mark_as_resolved(ticket_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning(f"Unauthorized access attempt at the mark_as_resolved endpoint")
+        raise HTTPException(status_code=403, detail="not a valid user")
+    ticket = (
+        await db.execute(
+            select(Ticket)
+            .where(
+                Ticket.id == ticket_id,
+                Ticket.user_id == user_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if not ticket:
+        logger.warning(
+            "user: %s, tried accessing a ticket that does not match his credentials",
+            user_id,
+        )
+        raise HTTPException(status_code=404, detail="ticket not found")
+    if ticket.status == TicketStatus.closed:
+        return {"status": "success", "message": "ticket already resolved"}
+    ticket.status = TicketStatus.closed
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.error(f"database error at mark_as_resolved endpoint")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception(f"Failed to update ticket status foor ticket '{ticket_id}'.")
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info(f"ticket '{ticket_id}' closed by user '{user_id}'.")
+    return {"status": "success", "message": "ticket status update"}
+
+
+async def close_ticket(ticket_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning(f"Unauthorized access attempt at the close_ticket endpoint")
+        raise HTTPException(status_code=403, detail="not a valid user")
+    ticket = await db.execute(
+        select(Ticket)
+        .where(Ticket.id == ticket_id, Ticket.assigned_to == user_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if not ticket:
+        logger.warning(
+            "user: %s, tried accessing a ticket that does not match his credentials",
+            user_id,
+        )
+        raise HTTPException(status_code=404, detail="ticket not found")
+    if ticket.updated_at > datetime.now(timezone.utc) - timedelta(days=2):
+        raise HTTPException(status_code=400, detail="ticket cannot be closed yet")
+    if ticket.status == TicketStatus.closed:
+        return {"status": "success", "message": "ticket already resolved"}
+    ticket.status = TicketStatus.closed
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.error(f"database error at close_ticket endpoint")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception(f"Failed to update ticket status foor ticket '{ticket_id}'.")
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info(f"ticket '{ticket_id}' closed by user '{user_id}'.")
+    return {"status": "success", "message": "ticket closed due to inactivity"}
+
+
 async def remove_message(
+    ticket_id,
     message_id,
     db,
     payload,
@@ -473,6 +544,21 @@ async def remove_message(
         raise HTTPException(status_code=403, detail="not a valid user")
     is_sender = Messaging.user_id == user_id
     is_customer = Messaging.customer_id == user_id
+    ticket_check = (
+        await db.execute(
+            select(Ticket).where(
+                Ticket.id == ticket_id,
+                Ticket.user_id == user_id,
+                Ticket.status != TicketStatus.closed,
+            )
+        )
+    ).scalar_one_or_none()
+    if not ticket_check:
+        logger.warning(
+            "user: %s, tried clearing the messages of a ticket not validated with ticket_id: %s",
+            user_id,
+            ticket_id,
+        )
     updates = await db.execute(
         update(Messaging)
         .where(
@@ -500,10 +586,10 @@ async def remove_message(
         logger.error(f"database error at remove_message endpoint")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
+        await db.rollback()
         logger.exception(
             f"Failed to delete message ID '{message_id}' by user '{user_id}'."
         )
-        await db.rollback()
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Message ID '{message_id}' deleted by user '{user_id}'.")
     return {"success": f"message ID {message_id} successfully deleted"}
@@ -526,7 +612,6 @@ async def clear_conversation(
     ticket_filter = (
         and_(
             Ticket.user_id == user_id,
-            Ticket.status.in_([TicketStatus.open, TicketStatus.in_progress]),
         )
         if agent == "customer"
         else and_(Ticket.assigned_to == user_id, Ticket.status == TicketStatus.closed)
