@@ -80,7 +80,7 @@ async def view_reviews(store_id, page, limit, db):
         .join(Store)
         .options(
             selectinload(Review.user),
-            selectinload(Review.reply).selectinload(Reply.user),
+            selectinload(Review.replies).selectinload(Reply.user),
         )
         .where(Review.store_id == store_id, ~Store.is_deleted)
         .order_by(Review.date_of_review.desc())

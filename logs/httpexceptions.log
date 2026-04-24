@@ -2,3 +2,5 @@
 2026-04-24 15:50:52,225-WARNING-HTTPEXCEPTION: Refresh token missing-PATH:/auth/refresh
 2026-04-24 15:51:23,588-WARNING-HTTPEXCEPTION: no category found-PATH:/group/get_cart
 2026-04-24 16:29:40,814-WARNING-HTTPEXCEPTION: all fields can not be left blank-PATH:/product/search_products
+2026-04-24 17:17:05,735-WARNING-HTTPEXCEPTION: store not found-PATH:/store_analytics/store_public_dashboard/{store_id}
+2026-04-24 17:17:21,403-WARNING-HTTPEXCEPTION: store not found-PATH:/store_analytics/store_extra_datails/fh
