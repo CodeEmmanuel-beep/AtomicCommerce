@@ -266,7 +266,7 @@ class Product(Base):
     replies = relationship("Reply", back_populates="product")
     cart_items = relationship("CartItem", back_populates="product")
     category = relationship("Category", back_populates="products")
-    inventories = relationship("Inventory", back_populates="product")
+    inventory = relationship("Inventory", back_populates="product")
 
 
 class Inventory(Base):
@@ -286,7 +286,7 @@ class Inventory(Base):
         UniqueConstraint("store_id", "product_id", name="store_product_inventory"),
         CheckConstraint("quantity >= 0", name="positive_quantity"),
     )
-    product = relationship("Product", back_populates="inventories")
+    product = relationship("Product", back_populates="inventory")
     store = relationship("Store", back_populates="inventories")
 
 

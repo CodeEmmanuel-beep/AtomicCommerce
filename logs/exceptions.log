@@ -9,3 +9,4 @@
 2026-04-24 15:25:59,220-WARNING-UNHANDLED ERROR: PATH-/product_replies/view_product_replies/6/3| ERROR Mapper 'Mapper[Reply(replies)]' has no property 'react'.  If this property was indicated from other mappers or configure events, ensure registry.configure() has been called.
 2026-04-24 15:53:07,046-WARNING-UNHANDLED ERROR: PATH-/product/list| ERROR 'coroutine' object does not support the asynchronous context manager protocol
 2026-04-24 16:04:08,337-WARNING-UNHANDLED ERROR: PATH-/product/list| ERROR 'AsyncSession' object has no attribute 'connect'
+2026-04-24 16:11:22,041-WARNING-UNHANDLED ERROR: PATH-/product/list| ERROR type object 'Product' has no attribute 'inventory'
