@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="E Commerce", version="1.0", lifespan=lifespan)
+app = FastAPI(title="AtomicCommerce", version="1.0", lifespan=lifespan)
 
 
 @app.middleware("http")
