@@ -350,8 +350,8 @@ async def list_products(
         return StandardResponse(**product_cache)
     total = None
     products = None
-    async with db.connection() as conn:
-        (await conn.execute(text("SELECT setseed(:s)"), {"s": seed}))
+    async with db.connect() as conn:
+        await conn.execute(text("SELECT setseed(:s)"), {"s": seed})
         stmt = (
             select(Product)
             .options(selectinload(Product.inventory))
