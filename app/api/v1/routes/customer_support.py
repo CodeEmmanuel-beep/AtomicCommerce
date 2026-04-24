@@ -6,7 +6,7 @@ from app.database.get import get_db
 from app.auth.verify_jwt import verify_token
 from app.utils.supabase_url import _supabase
 
-router = APIRouter(prefix="customer_service", tags=["Customer Service"])
+router = APIRouter(prefix="/customer_service", tags=["Customer Service"])
 
 
 @router.post("/message_support")
