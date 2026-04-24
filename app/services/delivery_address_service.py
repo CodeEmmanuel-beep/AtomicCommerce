@@ -170,7 +170,7 @@ async def choose_order_address(store_id, order_id, address_id, db, payload):
     return {"status": "success", "message": "delivery address chosen successfully"}
 
 
-async def delete_delivery_address(store_id, address_id, background_task, db, payload):
+async def remove_delivery_address(store_id, address_id, background_task, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.error("Unauthorized attempt to delete delivery address")

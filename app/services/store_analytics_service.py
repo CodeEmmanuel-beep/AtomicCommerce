@@ -11,7 +11,7 @@ from app.models import (
     Inventory,
 )
 from app.utils.redis import cache, cached
-from sqlalchemy import cast, Float, Date, select, func, desc, asc, Integer, Operators
+from sqlalchemy import cast, Float, Date, select, func, desc, asc, Integer
 from fastapi import HTTPException
 from app.logs.logger import get_logger
 from datetime import date, datetime, timezone

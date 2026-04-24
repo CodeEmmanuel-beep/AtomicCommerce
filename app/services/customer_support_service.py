@@ -337,7 +337,7 @@ async def customer_support_conversations(
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning(
-            f"Unauthorized access attempt at customer_support_conversations endpoint"
+            "Unauthorized access attempt at customer_support_conversations endpoint"
         )
         raise HTTPException(status_code=403, detail="not a valid user")
     if page < 1 or limit < 1:
@@ -462,7 +462,7 @@ async def customer_support_conversations(
 async def mark_as_resolved(ticket_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt at the mark_as_resolved endpoint")
+        logger.warning("Unauthorized access attempt at the mark_as_resolved endpoint")
         raise HTTPException(status_code=403, detail="not a valid user")
     ticket = (
         await db.execute(
@@ -487,7 +487,7 @@ async def mark_as_resolved(ticket_id, db, payload):
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        logger.error(f"database error at mark_as_resolved endpoint")
+        logger.error("database error at mark_as_resolved endpoint")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
@@ -500,7 +500,7 @@ async def mark_as_resolved(ticket_id, db, payload):
 async def close_ticket(ticket_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt at the close_ticket endpoint")
+        logger.warning("Unauthorized access attempt at the close_ticket endpoint")
         raise HTTPException(status_code=403, detail="not a valid user")
     ticket = await db.execute(
         select(Ticket)
@@ -522,7 +522,7 @@ async def close_ticket(ticket_id, db, payload):
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        logger.error(f"database error at close_ticket endpoint")
+        logger.error("database error at close_ticket endpoint")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
@@ -540,7 +540,7 @@ async def remove_message(
 ):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt at the remove_message endpoint")
+        logger.warning("Unauthorized access attempt at the remove_message endpoint")
         raise HTTPException(status_code=403, detail="not a valid user")
     is_sender = Messaging.user_id == user_id
     is_customer = Messaging.customer_id == user_id
@@ -583,7 +583,7 @@ async def remove_message(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        logger.error(f"database error at remove_message endpoint")
+        logger.error("database error at remove_message endpoint")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
@@ -603,7 +603,7 @@ async def clear_conversation(
 ):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning(f"Unauthorized access attempt at the clear_conversation")
+        logger.warning("Unauthorized access attempt at the clear_conversation")
         raise HTTPException(status_code=403, detail="not a valid user")
     if agent not in ["customer", "support"]:
         raise HTTPException(
@@ -657,7 +657,7 @@ async def clear_conversation(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        logger.error(f"database error at clear_conversation endpoint")
+        logger.error("database error at clear_conversation endpoint")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()

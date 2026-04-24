@@ -1,10 +1,10 @@
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     CategoryResponse,
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
 )
-from app.models_sql import Category, User
+from app.models import Category, User
 from fastapi import HTTPException
 from app.logs.logger import get_logger
 from sqlalchemy import select, func, or_
