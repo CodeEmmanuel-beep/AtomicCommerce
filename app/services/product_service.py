@@ -350,7 +350,7 @@ async def list_products(
         return StandardResponse(**product_cache)
     total = None
     products = None
-    async with db.connect() as conn:
+    async with db as conn:
         await conn.execute(text("SELECT setseed(:s)"), {"s": seed})
         stmt = (
             select(Product)
