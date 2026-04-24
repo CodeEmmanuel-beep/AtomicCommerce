@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from app.services import product_reply_service
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     Reply,
     StandardResponse,
     PaginatedMetadata,

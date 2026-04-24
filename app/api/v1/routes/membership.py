@@ -6,7 +6,6 @@ from app.services import membership_service
 from app.api.v1.schemas import (
     StandardResponse,
     PaginatedMetadata,
-    MembershipResponse,
     MembershipRes,
 )
 

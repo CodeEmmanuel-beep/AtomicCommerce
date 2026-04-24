@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, UploadFile, File, BackgroundTasks
 from app.database.get import get_db
 from app.auth.verify_jwt import verify_token
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     PaginatedMetadata,
     ProductResponse,
     StandardResponse,

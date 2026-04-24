@@ -1,4 +1,4 @@
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     CartItems,
     CartResponse,
     PaginatedMetadata,

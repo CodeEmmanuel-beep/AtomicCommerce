@@ -1,6 +1,6 @@
 from fastapi import UploadFile, File, APIRouter, Depends, Request, Query
 from app.services import store_service
-from app.api.v1.models import (
+from app.api.v1.schemas import (
     StoreAccountDetails,
     StandardResponse,
     StoreAccountResponse,
