@@ -453,9 +453,7 @@ async def view_store_addresses(store_id, page, limit, db):
 
 
 async def view_stores_by_category(seed, category_name, page, limit, db):
-    return await view_store_helper(
-        seed, category_name, Store.category.name, page, limit, db
-    )
+    return await view_store_helper(seed, category_name, Category.name, page, limit, db)
 
 
 async def view_stores_by_business_type(seed, business_type, page, limit, db):
@@ -466,7 +464,7 @@ async def view_stores_by_business_type(seed, business_type, page, limit, db):
 
 async def view_stores_by_product_name(seed, product_name, page, limit, db):
     return await view_store_helper(
-        seed, product_name, Store.products.product_name, page, limit, db
+        seed, product_name, Product.product_name, page, limit, db
     )
 
 

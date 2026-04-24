@@ -1,3 +1,4 @@
 2026-04-24 15:11:42,644-WARNING-HTTPEXCEPTION: Not authenticated-PATH:/group/delete
 2026-04-24 15:50:52,225-WARNING-HTTPEXCEPTION: Refresh token missing-PATH:/auth/refresh
 2026-04-24 15:51:23,588-WARNING-HTTPEXCEPTION: no category found-PATH:/group/get_cart
+2026-04-24 16:29:40,814-WARNING-HTTPEXCEPTION: all fields can not be left blank-PATH:/product/search_products
