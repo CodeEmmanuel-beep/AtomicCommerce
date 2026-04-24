@@ -15,6 +15,8 @@ import uuid
 from app.logs.logger import get_logger
 from datetime import timedelta
 from app.database.config import settings
+from app.utils.helper import file_generator
+from app.utils.supabase_url import cleaned_up
 
 logger = get_logger("auth")
 
@@ -59,19 +61,39 @@ async def reg(
     filename = None
     if profile_picture is not None:
         try:
+            allowed_files = ["image/png", "image/jpg", "image/webp"]
+            if profile_picture.content_type not in allowed_files:
+                logger.warning(
+                    "user tried uploading an invalid file type: %s",
+                    profile_picture.content_type,
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
+                )
+            file_byte = file_generator(profile_picture, "not_registered")
             filename = f"{uuid.uuid4()}_{secure_filename(profile_picture.filename)}"
-            file_byte = await profile_picture.read()
             client = await get_supabase.storage.from_(settings.BUCKET).upload(
                 filename, file_byte, {"content-type": profile_picture.content_type}
             )
             if hasattr(client, "error"):
                 logger.error("error uploading profile picture %s", client)
                 raise HTTPException(status_code=500, detail="error uploading image")
+        except HTTPException:
+            await db.rollback()
+            raise
         except Exception:
+            await db.rollback()
             logger.exception("error saving profile picture")
+            if filename:
+                await cleaned_up(
+                    get_supabase,
+                    filename,
+                    context_1="error removing orphaned profile photo",
+                    context_2="successfully removed orphaned profile photo",
+                )
+                raise HTTPException(status_code=500, detail="error saving photo")
         profile_picture = filename
-    else:
-        profile_picture = None
     password = hashed_password(password)
     new_user = User(
         profile_picture=profile_picture,
@@ -92,24 +114,22 @@ async def reg(
     except IntegrityError:
         logger.error("could not register user %s", username)
         if filename:
-            clean_up = await get_supabase.storage.from_(settings.BUCKET).remove(
-                [filename]
+            await cleaned_up(
+                get_supabase,
+                filename,
+                context_1="error removing orphaned profile photo",
+                context_2="successfully removed orphaned profile photo",
             )
-            if hasattr(clean_up, "error"):
-                logger.error("error removing orphaned profile picture %s", clean_up)
-            else:
-                logger.info("Orphaned profile picture successfully removed")
         raise HTTPException(status_code=500, detail="database error")
     except Exception:
         logger.exception("could not register user %s", username)
         if filename:
-            clean_up = await get_supabase.storage.from_(settings.BUCKET).remove(
-                [filename]
+            await cleaned_up(
+                get_supabase,
+                filename,
+                context_1="error removing orphaned profile photo",
+                context_2="successfully removed orphaned profile photo",
             )
-            if hasattr(clean_up, "error"):
-                logger.error("error removing orphaned profile picture %s", clean_up)
-            else:
-                logger.info("Orphaned profile picture successfully removed")
         raise HTTPException(status_code=500, detail="internal server error")
     return {f"Registeration Successful {username}, login to continue"}
 
