@@ -69,13 +69,13 @@ async def view_store_helper(seed, search_value, filter_column, page, limit, db):
         (await conn.execute(text("SELECT setseed(:s)"), {"s": seed}))
         if not isinstance(search_value, Enum):
             stmt = (
-                select(Store)
+                select(Store, func.random())
                 .join(Category, Store.category_id == Category.id)
                 .join(Product, Store.id == Product.store_id)
                 .options(selectinload(Store.category), selectinload(Store.products))
                 .where(filter_column.ilike(f"%{search_value}%"), Store.approved)
                 .order_by(func.random())
-                .distinct()
+                .distinct(Store)
             )
         else:
             stmt = (

@@ -12,3 +12,10 @@
 2026-04-24 16:11:22,041-WARNING-UNHANDLED ERROR: PATH-/product/list| ERROR type object 'Product' has no attribute 'inventory'
 2026-04-24 16:31:54,016-WARNING-UNHANDLED ERROR: PATH-/store/view_store_by_category| ERROR Neither 'InstrumentedAttribute' object nor 'Comparator' object associated with Store.category has an attribute 'name'
 2026-04-24 16:49:25,427-WARNING-UNHANDLED ERROR: PATH-/store/view_store_by_category| ERROR 'coroutine' object does not support the asynchronous context manager protocol
+2026-04-24 16:55:06,215-WARNING-UNHANDLED ERROR: PATH-/store/view_store_by_category| ERROR (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.InvalidColumnReferenceError'>: for SELECT DISTINCT, ORDER BY expressions must appear in select list
+[SQL: SELECT DISTINCT stores.id, stores.business_logo, stores.store_photo, stores.store_name, stores.motto, stores.edited_name, stores.store_previous_name, stores.store_description, stores.slug, stores.business_type, stores.category_id, stores.store_email, stores.shipping_fee, stores.tax_amount, stores.store_contact, stores.approved, stores.is_deleted, stores.founded 
+FROM stores JOIN categories ON stores.category_id = categories.id JOIN products ON stores.id = products.store_id 
+WHERE categories.name ILIKE $1::VARCHAR AND stores.approved ORDER BY random() 
+ LIMIT $2::INTEGER OFFSET $3::INTEGER]
+[parameters: ('%dd%', 10, 0)]
+(Background on this error at: https://sqlalche.me/e/20/f405)
