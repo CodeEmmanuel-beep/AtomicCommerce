@@ -6,3 +6,4 @@
   File "/app/app/api/v1/routes/store_reply.py", line 25, in store_reply_list
     GET /store_replies/view_store_replies/{store_id}/{review_id}
 2026-04-24 15:16:10,542-WARNING-UNHANDLED ERROR: PATH-/product_replies/view_product_replies/6/3| ERROR When initializing mapper Mapper[Store(stores)], expression 'StoreAddress' failed to locate a name ('StoreAddress'). If this is a class name, consider adding this relationship() to the <class 'app.models.Store'> class after both dependent classes have been defined.
+2026-04-24 15:25:59,220-WARNING-UNHANDLED ERROR: PATH-/product_replies/view_product_replies/6/3| ERROR Mapper 'Mapper[Reply(replies)]' has no property 'react'.  If this property was indicated from other mappers or configure events, ensure registry.configure() has been called.

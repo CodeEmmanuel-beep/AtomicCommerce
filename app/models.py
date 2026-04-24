@@ -236,7 +236,7 @@ class Reply(Base):
     review = relationship("Review", back_populates="replies")
     product = relationship("Product", back_populates="replies")
     store = relationship("Store", back_populates="replies")
-    reply = relationship("React", back_populates="reply")
+    react = relationship("React", back_populates="reply")
 
 
 class ProductSize(str, Enum):
@@ -437,7 +437,7 @@ class Review(Base):
     replies = relationship(
         "Reply", back_populates="review", cascade="all, delete-orphan"
     )
-    reacts = relationship("React", back_populates="review")
+    react = relationship("React", back_populates="review")
 
 
 class ReactionType(str, Enum):
