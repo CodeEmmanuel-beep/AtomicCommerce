@@ -180,7 +180,7 @@ class Store(Base):
     category = relationship("Category", back_populates="stores")
     review = relationship("Review", back_populates="store")
     replies = relationship("Reply", back_populates="store")
-    addresses = relationship("StoreAddress", back_populates="store")
+    addresses = relationship("Address", back_populates="store")
     order = relationship("Order", back_populates="store", uselist=False)
     account = relationship("StoreAccount", back_populates="store")
     products = relationship("Product", back_populates="store")
