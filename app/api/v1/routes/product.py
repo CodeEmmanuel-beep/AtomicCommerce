@@ -75,8 +75,8 @@ async def list_products(
     response_model_exclude_defaults=True,
 )
 async def list_one(
-    product_name: str,
-    category: str,
+    product_name: str | None = None,
+    category: str | None = None,
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
     db: AsyncSession = Depends(get_db),
