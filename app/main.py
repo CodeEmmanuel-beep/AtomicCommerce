@@ -13,6 +13,11 @@ from app.api.v1.routes import (
     membership,
     store_analytics,
     store,
+    payment,
+    customer_support,
+    delivery_address,
+    reactions,
+    inventory,
 )
 from app.exceptions import (
     make_exception_handler,
@@ -31,7 +36,6 @@ from cryptography.fernet import Fernet
 async def lifespan(app: FastAPI):
     supabase = await create_async_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
     app.state.supabase = supabase
-
     if not settings.CIPHER_KEY:
         raise RuntimeError("key not found")
     app.state.cipher = Fernet(settings.CIPHER_KEY.encode())
@@ -69,15 +73,20 @@ def home():
 
 
 app.include_router(auth.router)
-app.include_router(product.router)
 app.include_router(category.router)
+app.include_router(product.router)
+app.include_router(inventory.router)
 app.include_router(cart.router)
 app.include_router(order.router)
+app.include_router(delivery_address.router)
 app.include_router(product_reviews.router)
 app.include_router(product_reply.router)
+app.include_router(reactions.router)
 app.include_router(membership.router)
 app.include_router(store.router)
 app.include_router(store_analytics.router)
+app.include_router(payment.router)
+app.include_router(customer_support.router)
 app.include_router(store_reviews.router)
 app.include_router(store_reply.router)
 app.add_exception_handler(RequestValidationError, make_validation_error_handler())
