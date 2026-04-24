@@ -75,7 +75,7 @@ async def view_store_helper(seed, search_value, filter_column, page, limit, db):
                 .options(selectinload(Store.category), selectinload(Store.products))
                 .where(filter_column.ilike(f"%{search_value}%"), Store.approved)
                 .order_by(func.random())
-                .distinct(Store)
+                .distinct()
             )
         else:
             stmt = (
