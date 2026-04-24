@@ -11,3 +11,4 @@
 2026-04-24 16:04:08,337-WARNING-UNHANDLED ERROR: PATH-/product/list| ERROR 'AsyncSession' object has no attribute 'connect'
 2026-04-24 16:11:22,041-WARNING-UNHANDLED ERROR: PATH-/product/list| ERROR type object 'Product' has no attribute 'inventory'
 2026-04-24 16:31:54,016-WARNING-UNHANDLED ERROR: PATH-/store/view_store_by_category| ERROR Neither 'InstrumentedAttribute' object nor 'Comparator' object associated with Store.category has an attribute 'name'
+2026-04-24 16:49:25,427-WARNING-UNHANDLED ERROR: PATH-/store/view_store_by_category| ERROR 'coroutine' object does not support the asynchronous context manager protocol

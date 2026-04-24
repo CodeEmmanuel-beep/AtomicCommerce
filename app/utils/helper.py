@@ -12,7 +12,7 @@ import uuid
 from werkzeug.utils import secure_filename
 from sqlalchemy.orm import selectinload
 from app.logs.logger import get_logger
-from app.models import Store, Category, Membership, User, store_owners, store_staffs
+from app.models import Store, Category, Membership, store_owners, store_staffs, Product
 from enum import Enum
 from app.utils.supabase_url import cleaned_up
 from app.database.config import settings
@@ -65,12 +65,13 @@ async def view_store_helper(seed, search_value, filter_column, page, limit, db):
         return StandardResponse(**store_cache)
     total = None
     store_type = None
-    async with db.connection() as conn:
+    async with db as conn:
         (await conn.execute(text("SELECT setseed(:s)"), {"s": seed}))
         if not isinstance(search_value, Enum):
             stmt = (
                 select(Store)
-                .join(Category.products)
+                .join(Category, Store.category_id == Category.id)
+                .join(Product, Store.id == Product.store_id)
                 .options(selectinload(Store.category), selectinload(Store.products))
                 .where(filter_column.ilike(f"%{search_value}%"), Store.approved)
                 .order_by(func.random())
@@ -181,7 +182,7 @@ async def file_generator(file, user_id):
                 total_size,
             )
             raise HTTPException(
-                status_code=400, detail="image should not be morethan 5mb"
+                status_code=400, detail="image should not be more than 5mb"
             )
         yield chunk
 
@@ -263,5 +264,5 @@ async def view_selected_members(
         status="success", message="membership information", data=data
     )
     await cached(cache_key, response, ttl=3600)
-    logger.info("{context} members data cached successfully for admin: %s", user_id)
+    logger.info(f"{context} members data cached successfully for admin: %s", user_id)
     return response
