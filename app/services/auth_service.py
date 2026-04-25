@@ -62,7 +62,7 @@ async def reg(
     filename = None
     if profile_picture is not None:
         try:
-            allowed_files = ["image/png", "image/jpg", "image/webp"]
+            allowed_files = ["image/png", "image/jpeg", "image/webp"]
             if profile_picture.content_type not in allowed_files:
                 logger.warning(
                     "user tried uploading an invalid file type: %s",

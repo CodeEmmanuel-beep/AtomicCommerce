@@ -4,3 +4,11 @@
 2026-04-24 16:29:40,814-WARNING-HTTPEXCEPTION: all fields can not be left blank-PATH:/product/search_products
 2026-04-24 17:17:05,735-WARNING-HTTPEXCEPTION: store not found-PATH:/store_analytics/store_public_dashboard/{store_id}
 2026-04-24 17:17:21,403-WARNING-HTTPEXCEPTION: store not found-PATH:/store_analytics/store_extra_datails/fh
+2026-04-25 16:43:39,828-WARNING-HTTPEXCEPTION: An email address must have an @-sign.-PATH:/auth/register
+2026-04-25 16:46:25,364-WARNING-HTTPEXCEPTION: The part after the @-sign is not valid. It should have a period.-PATH:/auth/register
+2026-04-25 16:46:48,646-WARNING-HTTPEXCEPTION: An email address cannot end with a period.-PATH:/auth/register
+2026-04-25 16:47:05,403-WARNING-HTTPEXCEPTION: The domain name gmail.co does not accept email.-PATH:/auth/register
+2026-04-25 16:47:17,005-WARNING-HTTPEXCEPTION: confirm password does not match password-PATH:/auth/register
+2026-04-25 16:48:35,764-WARNING-HTTPEXCEPTION: Invalid file type. Only JPG, PNG, WEBP allowed.-PATH:/auth/register
+2026-04-25 16:50:17,068-WARNING-HTTPEXCEPTION: Invalid file type. Only JPG, PNG, WEBP allowed.-PATH:/auth/register
+2026-04-25 16:50:29,550-WARNING-HTTPEXCEPTION: Invalid file type. Only JPG, PNG, WEBP allowed.-PATH:/auth/register
