@@ -165,7 +165,12 @@ async def logins(login, response, db):
     response.set_cookie(
         key="refresh", value=refresh_token, secure=True, samesite="lax", httponly=True
     )
-    return {"access_token": access_token, "token_type": "Bearer"}
+    return {
+        "status": "success",
+        "message": "login successful",
+        "access_token": access_token,
+        "token_type": "Bearer",
+    }
 
 
 async def create_role(username, role, db, payload):
