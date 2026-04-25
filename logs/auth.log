@@ -13,3 +13,15 @@ Traceback (most recent call last):
     open(file, "rb"),
     ^^^^^^^^^^^^^^^^
 TypeError: expected str, bytes or os.PathLike object, not async_generator
+2026-04-25 17:17:08,311-ERROR-error saving profile picture
+Traceback (most recent call last):
+  File "/app/app/services/auth_service.py", line 77, in reg
+    client = await get_supabase.storage.from_(settings.BUCKET).upload(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 596, in upload
+    return await self._upload_or_update("POST", path_parts, file, file_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 563, in _upload_or_update
+    open(file, "rb"),
+    ^^^^^^^^^^^^^^^^
+TypeError: expected str, bytes or os.PathLike object, not coroutine

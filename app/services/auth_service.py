@@ -72,7 +72,7 @@ async def reg(
                     status_code=400,
                     detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
                 )
-            file_byte = file_generator(profile_picture, "not_registered")
+            file_byte = await file_generator(profile_picture, "not_registered")
             filename = f"{uuid.uuid4()}_{secure_filename(profile_picture.filename)}"
             client = await get_supabase.storage.from_(settings.BUCKET).upload(
                 filename, file_byte, {"content-type": profile_picture.content_type}

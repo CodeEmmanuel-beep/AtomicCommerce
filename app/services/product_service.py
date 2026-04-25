@@ -62,7 +62,7 @@ async def create(
             )
             raise HTTPException(status_code=400, detail="file format not supported")
         filename = f"{uuid.uuid4()}_{secure_filename(primary_image.filename)}"
-        file_byte = file_generator(primary_image, user_id)
+        file_byte = await file_generator(primary_image, user_id)
         client = await get_supabase.storage.from_(settings.BUCKET).upload(
             filename, file_byte, {"content-type": primary_image.content_type}
         )
@@ -89,7 +89,9 @@ async def create(
                     status_code=400,
                     detail=f"maximum number of images allowed is {max_image}",
                 )
-            file_list = [file_generator(img, user_id) for img in image]
+            file_list = await asyncio.gather(
+                *(file_generator(img, user_id) for img in image)
+            )
             for file, file_byte in zip(image, file_list):
                 filenames = f"{uuid.uuid4()}_{secure_filename(file.filename)}"
                 tasks.append(
@@ -210,7 +212,7 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
                         status_code=400, detail="file type not supported"
                     )
                 filename = f"{uuid.uuid4()}_{secure_filename(primary_image.filename)}"
-                file_byte = file_generator(primary_image, user_id)
+                file_byte = await file_generator(primary_image, user_id)
                 response = await get_supabase.storage.from_(settings.BUCKET).upload(
                     filename,
                     file_byte,
@@ -244,7 +246,9 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
                         status_code=400,
                         detail=f"maximum number of images allowed is {max_image}",
                     )
-                file_list = [file_generator(img, user_id) for img in image]
+                file_list = await asyncio.gather(
+                    *(file_generator(img, user_id) for img in image)
+                )
                 for file, file_byte in zip(image, file_list):
                     filenames = f"{uuid.uuid4()}_{secure_filename(file.filename)}"
                     tasks.append(
