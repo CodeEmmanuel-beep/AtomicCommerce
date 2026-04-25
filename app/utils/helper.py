@@ -168,7 +168,7 @@ async def upload_photo_helper(photo, db, payload, get_supabase):
                 raise HTTPException(status_code=500, detail="error saving photo")
 
 
-async def file_generator(file, user_id):
+async def pre_file_generator(file, user_id):
     total_size = 0
     max_image_size = 5 * 1024 * 1024
     while chunk := await file.read(1024 * 1024):
@@ -183,6 +183,13 @@ async def file_generator(file, user_id):
                 status_code=400, detail="image should not be more than 5mb"
             )
         yield chunk
+
+
+async def file_generator(file, user_id):
+    buffer = bytearray()
+    async for chunk in pre_file_generator(file, user_id):
+        buffer.extend(chunk)
+        return bytes(buffer)
 
 
 async def view_selected_members(
