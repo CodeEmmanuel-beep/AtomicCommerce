@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_KEY: str
     BUCKET: str
+    BUCKET1: str
     Standard: str
     Premium: str
     Regular: str
