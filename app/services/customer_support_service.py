@@ -19,8 +19,11 @@ from app.logs.logger import get_logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, or_, func, and_, update, case, exists
 from app.utils.redis import cache, cached
-from app.utils.helper import upload_photo_helper
 from app.utils.supabase_url import cleaned_up
+from app.database.config import settings
+from io import BytesIO
+from werkzeug.utils import secure_filename
+import uuid
 
 logger = get_logger("chat_support")
 
@@ -87,7 +90,59 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
         logger.info(f"Message send failed: empty message from user '{user_id}'.")
         raise HTTPException(status_code=400, detail="can not send empty messages")
     if pics:
-        filename = await upload_photo_helper(pics, db, payload, get_supabase)
+        filename = None
+        max_size = 5 * 1024 * 1024
+        allowed_types = ["image/jpeg", "image/webp", "image/png"]
+        total_size = 0
+        file_byte = b""
+        with BytesIO() as buffer:
+            try:
+                if pics.content_type not in allowed_types:
+                    logger.warning(
+                        "user '%s', tried uploading an invalid file type: %s",
+                        user_id,
+                        pics.content_type,
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
+                    )
+                filename = f"{uuid.uuid4()}_{secure_filename(pics.filename)}"
+                while chunk := await pics.read(1024 * 1024):
+                    total_size += len(chunk)
+                    if total_size > max_size:
+                        logger.warning(
+                            "user: %s, tried uploading a file larger than file limit, file size '%s'",
+                            user_id,
+                            total_size,
+                        )
+                        raise HTTPException(
+                            status_code=400, detail="File too large. Max 5MB."
+                        )
+                    buffer.write(chunk)
+                file_byte = buffer.getvalue()
+                upload_photo = await get_supabase.storage.from_(settings.BUCKET).upload(
+                    filename, file_byte, {"content-type": pics.content_type}
+                )
+                if hasattr(upload_photo, "error"):
+                    logger.error("error uploading photo %s", upload_photo)
+                    raise HTTPException(
+                        status_code=500, detail="error uploading store photo"
+                    )
+            except HTTPException:
+                await db.rollback()
+                raise
+            except Exception:
+                await db.rollback()
+                if filename:
+                    await cleaned_up(
+                        get_supabase,
+                        filename,
+                        context_1="error removing orphaned photo",
+                        context_2="successfully removed orphaned photo",
+                    )
+                    logger.exception("error saving photo")
+                    raise HTTPException(status_code=500, detail="error saving photo")
     logger.info(f"User '{user_id}' is sending a message to 'customer support'.")
     new_ticket = Ticket(
         user_id=user_id,
@@ -141,7 +196,59 @@ async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
         raise HTTPException(status_code=401, detail="not a valid user")
     filename = None
     if pics:
-        filename = await upload_photo_helper(pics, db, payload, get_supabase)
+        filename = None
+        max_size = 5 * 1024 * 1024
+        allowed_types = ["image/jpeg", "image/webp", "image/png"]
+        total_size = 0
+        file_byte = b""
+        with BytesIO() as buffer:
+            try:
+                if pics.content_type not in allowed_types:
+                    logger.warning(
+                        "user '%s', tried uploading an invalid file type: %s",
+                        user_id,
+                        pics.content_type,
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
+                    )
+                filename = f"{uuid.uuid4()}_{secure_filename(pics.filename)}"
+                while chunk := await pics.read(1024 * 1024):
+                    total_size += len(chunk)
+                    if total_size > max_size:
+                        logger.warning(
+                            "user: %s, tried uploading a file larger than file limit, file size '%s'",
+                            user_id,
+                            total_size,
+                        )
+                        raise HTTPException(
+                            status_code=400, detail="File too large. Max 5MB."
+                        )
+                    buffer.write(chunk)
+                file_byte = buffer.getvalue()
+                upload_photo = await get_supabase.storage.from_(settings.BUCKET).upload(
+                    filename, file_byte, {"content-type": pics.content_type}
+                )
+                if hasattr(upload_photo, "error"):
+                    logger.error("error uploading photo %s", upload_photo)
+                    raise HTTPException(
+                        status_code=500, detail="error uploading store photo"
+                    )
+            except HTTPException:
+                await db.rollback()
+                raise
+            except Exception:
+                await db.rollback()
+                if filename:
+                    await cleaned_up(
+                        get_supabase,
+                        filename,
+                        context_1="error removing orphaned photo",
+                        context_2="successfully removed orphaned photo",
+                    )
+                    logger.exception("error saving store photo")
+                    raise HTTPException(status_code=500, detail="error saving photo")
     ticket = (
         await db.execute(
             select(Ticket)

@@ -149,10 +149,8 @@ async def upload_photo_helper(photo, db, payload, get_supabase):
                 filename, file_byte, {"content-type": photo.content_type}
             )
             if hasattr(upload_photo, "error"):
-                logger.error("error uploading store photo %s", upload_photo)
-                raise HTTPException(
-                    status_code=500, detail="error uploading store photo"
-                )
+                logger.error("error uploading photo %s", upload_photo)
+                raise HTTPException(status_code=500, detail="error uploading photo")
             return filename
         except HTTPException:
             await db.rollback()
@@ -163,11 +161,11 @@ async def upload_photo_helper(photo, db, payload, get_supabase):
                 await cleaned_up(
                     get_supabase,
                     filename,
-                    context_1="error removing orphaned store photo",
-                    context_2="successfully removed orphaned store photo",
+                    context_1="error removing orphaned photo",
+                    context_2="successfully removed orphaned photo",
                 )
-                logger.exception("error saving store photo")
-                raise HTTPException(status_code=500, detail="error saving store photo")
+                logger.exception("error saving photo")
+                raise HTTPException(status_code=500, detail="error saving photo")
 
 
 async def file_generator(file, user_id):
