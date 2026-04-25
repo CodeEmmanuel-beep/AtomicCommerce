@@ -20,7 +20,8 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register")
 async def registration(
-    name: str = Form(...),
+    first_name: str = Form(...),
+    surname: str = Form(...),
     username: str = Form(...),
     email: str = Form(...),
     nationality: str = Form(...),
@@ -32,7 +33,8 @@ async def registration(
     get_supabase=Depends(_supabase),
 ):
     return await auth_service.reg(
-        name=name,
+        first_name=first_name,
+        surname=surname,
         username=username,
         email=email,
         nationality=nationality,

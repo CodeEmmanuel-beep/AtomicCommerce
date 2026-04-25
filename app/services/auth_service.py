@@ -22,7 +22,8 @@ logger = get_logger("auth")
 
 
 async def reg(
-    name,
+    first_name,
+    surname,
     username,
     email,
     nationality,
@@ -97,7 +98,8 @@ async def reg(
     password = hashed_password(password)
     new_user = User(
         profile_picture=profile_picture,
-        name=name.strip(),
+        first_name=first_name.strip(),
+        surname=surname.strip(),
         role="user",
         username=username.strip(),
         email=email.strip(),
