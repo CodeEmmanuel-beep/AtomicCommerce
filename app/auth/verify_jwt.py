@@ -30,7 +30,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security_s
         username = payload.get("sub")
         if username is None:
             raise credentials_exception
-        return username
+        return payload
     except ExpiredSignatureError:
         raise HTTPException(status_code=400, detail="expired session")
     except JWTError:
@@ -48,7 +48,7 @@ def decode_token(token: str):
         username = payload.get("sub")
         if username is None:
             raise credentials_exception
-        return username
+        return payload
     except ExpiredSignatureError:
         raise HTTPException(status_code=400, detail="expired session")
     except JWTError:
