@@ -42,7 +42,9 @@ store_owners = Table(
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
+    first_name = Column(String, index=True)
+    middle_name = Column(String, nullable=True)
+    surname = Column(String, index=True)
     username = Column(String, index=True)
     password = Column(String)
     is_active = Column(Boolean, default=True)
