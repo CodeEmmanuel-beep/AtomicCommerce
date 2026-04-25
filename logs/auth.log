@@ -25,3 +25,99 @@ Traceback (most recent call last):
     open(file, "rb"),
     ^^^^^^^^^^^^^^^^
 TypeError: expected str, bytes or os.PathLike object, not coroutine
+2026-04-25 17:30:36,550-ERROR-error saving profile picture
+Traceback (most recent call last):
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 80, in _request
+    response.raise_for_status()
+  File "/root/.local/lib/python3.12/site-packages/httpx/_models.py", line 829, in raise_for_status
+    raise HTTPStatusError(message, request=request, response=self)
+httpx.HTTPStatusError: Client error '400 Bad Request' for url 'https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/e_commerce/95d47143-7a13-453b-8536-e0730a87ebd7_Snapchat-881566214.jpg'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/services/auth_service.py", line 77, in reg
+    client = await get_supabase.storage.from_(settings.BUCKET).upload(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 596, in upload
+    return await self._upload_or_update("POST", path_parts, file, file_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 568, in _upload_or_update
+    response = await self._request(
+               ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 84, in _request
+    raise StorageApiError(
+storage3.exceptions.StorageApiError: {'statusCode': 403, 'error': Unauthorized, 'message': new row violates row-level security policy}
+2026-04-25 17:31:26,834-ERROR-error saving profile picture
+Traceback (most recent call last):
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 80, in _request
+    response.raise_for_status()
+  File "/root/.local/lib/python3.12/site-packages/httpx/_models.py", line 829, in raise_for_status
+    raise HTTPStatusError(message, request=request, response=self)
+httpx.HTTPStatusError: Client error '400 Bad Request' for url 'https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/e_commerce/bec196df-2af3-47d7-99f1-d60b72d8c756_Snapchat-881566214.jpg'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/services/auth_service.py", line 77, in reg
+    client = await get_supabase.storage.from_(settings.BUCKET).upload(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 596, in upload
+    return await self._upload_or_update("POST", path_parts, file, file_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 568, in _upload_or_update
+    response = await self._request(
+               ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 84, in _request
+    raise StorageApiError(
+storage3.exceptions.StorageApiError: {'statusCode': 403, 'error': Unauthorized, 'message': new row violates row-level security policy}
+2026-04-25 17:36:17,587-ERROR-error saving profile picture
+Traceback (most recent call last):
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 80, in _request
+    response.raise_for_status()
+  File "/root/.local/lib/python3.12/site-packages/httpx/_models.py", line 829, in raise_for_status
+    raise HTTPStatusError(message, request=request, response=self)
+httpx.HTTPStatusError: Client error '400 Bad Request' for url 'https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/e_commerce/0b51edcf-f81c-4930-ab9a-47f0b7aa85b3_Snapchat-881566214.jpg'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/services/auth_service.py", line 77, in reg
+    client = await get_supabase.storage.from_(settings.BUCKET).upload(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 596, in upload
+    return await self._upload_or_update("POST", path_parts, file, file_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 568, in _upload_or_update
+    response = await self._request(
+               ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 84, in _request
+    raise StorageApiError(
+storage3.exceptions.StorageApiError: {'statusCode': 403, 'error': Unauthorized, 'message': new row violates row-level security policy}
+2026-04-25 19:31:19,556-ERROR-error saving profile picture
+Traceback (most recent call last):
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 80, in _request
+    response.raise_for_status()
+  File "/root/.local/lib/python3.12/site-packages/httpx/_models.py", line 829, in raise_for_status
+    raise HTTPStatusError(message, request=request, response=self)
+httpx.HTTPStatusError: Client error '400 Bad Request' for url 'https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/e_commerce/2a5a5e3b-d05a-40ce-a952-4451508a0b21_Snapchat-881566214.jpg'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/services/auth_service.py", line 77, in reg
+    client = await get_supabase.storage.from_(settings.BUCKET).upload(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 596, in upload
+    return await self._upload_or_update("POST", path_parts, file, file_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 568, in _upload_or_update
+    response = await self._request(
+               ^^^^^^^^^^^^^^^^^^^^
+  File "/root/.local/lib/python3.12/site-packages/storage3/_async/file_api.py", line 84, in _request
+    raise StorageApiError(
+storage3.exceptions.StorageApiError: {'statusCode': 403, 'error': Unauthorized, 'message': new row violates row-level security policy}

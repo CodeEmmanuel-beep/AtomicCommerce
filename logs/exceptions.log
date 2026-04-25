@@ -21,3 +21,4 @@ WHERE categories.name ILIKE $1::VARCHAR AND stores.approved ORDER BY random()
 (Background on this error at: https://sqlalche.me/e/20/f405)
 2026-04-24 17:08:11,979-WARNING-UNHANDLED ERROR: PATH-/store/view_store_by_category| ERROR GROUP BY / OF / etc. expression expected, got <class 'app.models.Store'>.
 2026-04-24 17:17:42,249-WARNING-UNHANDLED ERROR: PATH-/store_reviews/view_store_reviews| ERROR type object 'Review' has no attribute 'reply'
+2026-04-25 19:48:56,062-WARNING-UNHANDLED ERROR: PATH-/auth/login| ERROR 'User' object has no attribute 'name'

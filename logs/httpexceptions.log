@@ -14,3 +14,8 @@
 2026-04-25 16:50:29,550-WARNING-HTTPEXCEPTION: Invalid file type. Only JPG, PNG, WEBP allowed.-PATH:/auth/register
 2026-04-25 16:57:27,123-WARNING-HTTPEXCEPTION: error saving photo-PATH:/auth/register
 2026-04-25 17:17:09,355-WARNING-HTTPEXCEPTION: error saving photo-PATH:/auth/register
+2026-04-25 17:30:36,866-WARNING-HTTPEXCEPTION: error saving photo-PATH:/auth/register
+2026-04-25 17:31:27,448-WARNING-HTTPEXCEPTION: error saving photo-PATH:/auth/register
+2026-04-25 17:36:17,848-WARNING-HTTPEXCEPTION: error saving photo-PATH:/auth/register
+2026-04-25 19:31:19,881-WARNING-HTTPEXCEPTION: error saving photo-PATH:/auth/register
+2026-04-25 19:47:14,931-WARNING-HTTPEXCEPTION: password should be letters and numbers-PATH:/auth/register

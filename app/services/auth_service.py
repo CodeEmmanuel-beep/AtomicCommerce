@@ -145,7 +145,7 @@ async def logins(login, response, db):
     token_expires = timedelta(minutes=60)
     access_token = create_access_token(
         data={
-            "name": user.name,
+            "name": user.surname,
             "sub": user.username,
             "user_id": user.id,
             "nationality": user.nationality,
@@ -155,7 +155,7 @@ async def logins(login, response, db):
     )
     refresh_token = create_refresh_token(
         data={
-            "name": user.name,
+            "name": user.surname,
             "sub": user.username,
             "user_id": user.id,
             "nationality": user.nationality,
@@ -218,7 +218,7 @@ async def refresh_token(request, response):
     if not payload or payload.get("type") != "refresh_token":
         raise HTTPException(status_code=400, detail="invalid refresh token")
     username = payload.get("sub")
-    name = payload.get("name")
+    surname = payload.get("surname")
     user_id = payload.get("user_id")
     nationality = payload.get("nationality")
     role = payload.get("role")
@@ -226,7 +226,7 @@ async def refresh_token(request, response):
     new_access = create_access_token(
         data={
             "sub": username,
-            "name": name,
+            "surname": surname,
             "user_id": user_id,
             "nationality": nationality,
             "role": role,
@@ -235,7 +235,7 @@ async def refresh_token(request, response):
     new_token = create_refresh_token(
         data={
             "sub": username,
-            "name": name,
+            "surname": surname,
             "user_id": user_id,
             "nationality": nationality,
             "role": role,
