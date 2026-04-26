@@ -41,6 +41,7 @@ async def category(name, db, payload):
         new_category.id,
         new_category.name,
     )
+    logger.info("category: %s, created successfully", name)
     return {"status": "success", "message": "category created"}
 
 
