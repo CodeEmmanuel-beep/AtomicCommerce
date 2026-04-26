@@ -122,3 +122,4 @@ Traceback (most recent call last):
     raise StorageApiError(
 storage3.exceptions.StorageApiError: {'statusCode': 403, 'error': Unauthorized, 'message': new row violates row-level security policy}
 2026-04-26 15:50:19,031-INFO-User Jesus logged in successfully
+2026-04-26 16:29:54,634-INFO-Refresh token successful for username: Jesus
