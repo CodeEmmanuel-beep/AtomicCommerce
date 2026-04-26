@@ -258,8 +258,7 @@ async def refresh_token(request, response):
     return {"access_token": new_access, "token_type": "Bearer"}
 
 
-async def logout(request, response):
-    request.cookies.get("refresh")
+async def logout(response):
     response.delete_cookie("refresh")
     logger.info("User logged out successfully")
     return {"message": "logged out"}
