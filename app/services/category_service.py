@@ -23,6 +23,12 @@ async def category(name, db, payload):
     if not admin:
         logger.warning("Forbidden access: user_id=%s is not admin/owner", user_id)
         raise HTTPException(status_code=403, detail="you are not admin")
+    category_exists = (
+        await db.execute(select(Category).where(Category.name == name))
+    ).scalar_one_or_none()
+    if category_exists:
+        logger.warning("user: %s, tried duplicating category name", user_id)
+        raise HTTPException(status_code=400, detail="category name already exists")
     new_category = Category(name=name)
     try:
         db.add(new_category)
@@ -106,7 +112,7 @@ async def delete_one(category_id, db, payload):
     logger.info("deleted category %s", category_id)
     return {
         "status": "success",
-        "message": "deleted product",
+        "message": "deleted category",
         "data": {
             "id": category_id,
             "username": user_id,
