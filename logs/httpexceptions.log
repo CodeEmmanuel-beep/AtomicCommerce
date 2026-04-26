@@ -19,3 +19,5 @@
 2026-04-25 17:36:17,848-WARNING-HTTPEXCEPTION: error saving photo-PATH:/auth/register
 2026-04-25 19:31:19,881-WARNING-HTTPEXCEPTION: error saving photo-PATH:/auth/register
 2026-04-25 19:47:14,931-WARNING-HTTPEXCEPTION: password should be letters and numbers-PATH:/auth/register
+2026-04-25 20:43:20,136-WARNING-HTTPEXCEPTION: not authenticated-PATH:/group/create_category
+2026-04-25 20:45:04,717-WARNING-HTTPEXCEPTION: not authenticated-PATH:/group/create_category

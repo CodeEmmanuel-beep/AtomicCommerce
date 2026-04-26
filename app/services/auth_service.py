@@ -72,6 +72,7 @@ async def reg(
                     status_code=400,
                     detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
                 )
+            logger.info("Starting file upload for new user")
             file_byte = await file_generator(profile_picture, "not_registered")
             filename = f"{uuid.uuid4()}_{secure_filename(profile_picture.filename)}"
             client = await get_supabase.storage.from_(settings.BUCKET).upload(
@@ -96,6 +97,7 @@ async def reg(
                 raise HTTPException(status_code=500, detail="error saving photo")
         profile_picture = filename
     password = hashed_password(password)
+    logger.info("Starting registration for user: %s", username)
     new_user = User(
         profile_picture=profile_picture,
         first_name=first_name.strip(),
@@ -133,6 +135,7 @@ async def reg(
                 context_2="successfully removed orphaned profile photo",
             )
         raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("user: %s, successfully registered", username)
     return {f"Registeration Successful {username}, login to continue"}
 
 
@@ -165,6 +168,7 @@ async def logins(login, response, db):
     response.set_cookie(
         key="refresh", value=refresh_token, secure=True, samesite="lax", httponly=True
     )
+    logger.info(f"User {login.username} logged in successfully")
     return {
         "status": "success",
         "message": "login successful",
@@ -250,4 +254,12 @@ async def refresh_token(request, response):
     response.set_cookie(
         key="refresh", value=new_token, httponly=True, samesite="lax", secure=True
     )
+    logger.info(f"Refresh token successful for username: {username}")
     return {"access_token": new_access, "token_type": "Bearer"}
+
+
+async def logout(request, response):
+    request.cookies.get("refresh")
+    response.delete_cookie("refresh")
+    logger.info("User logged out successfully")
+    return {"message": "logged out"}

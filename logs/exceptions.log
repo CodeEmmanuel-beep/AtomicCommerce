@@ -23,3 +23,11 @@ WHERE categories.name ILIKE $1::VARCHAR AND stores.approved ORDER BY random()
 2026-04-24 17:17:42,249-WARNING-UNHANDLED ERROR: PATH-/store_reviews/view_store_reviews| ERROR type object 'Review' has no attribute 'reply'
 2026-04-25 19:48:56,062-WARNING-UNHANDLED ERROR: PATH-/auth/login| ERROR 'User' object has no attribute 'name'
 2026-04-25 20:18:57,508-WARNING-UNHANDLED ERROR: PATH-/auth/refresh| ERROR 'str' object has no attribute 'get'
+2026-04-25 20:40:00,693-WARNING-UNHANDLED ERROR: PATH-/auth/refresh| ERROR 'str' object has no attribute 'get'
+2026-04-25 20:46:50,398-WARNING-UNHANDLED ERROR: PATH-/group/create_category| ERROR (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.ConnectionDoesNotExistError'>: connection was closed in the middle of operation
+[SQL: SELECT users.id, users.first_name, users.middle_name, users.surname, users.username, users.password, users.is_active, users.role, users.email, users.nationality, users.profile_picture, users.address 
+FROM users 
+WHERE users.role = $1::VARCHAR OR users.role = $2::VARCHAR]
+[parameters: ('Admin', 'Owner')]
+(Background on this error at: https://sqlalche.me/e/20/dbapi)
+2026-04-25 20:55:16,639-WARNING-UNHANDLED ERROR: PATH-/group/create_category| ERROR unexpected connection_lost() call
