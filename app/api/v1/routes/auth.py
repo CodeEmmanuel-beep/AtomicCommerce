@@ -69,3 +69,8 @@ async def create_roles(
 @router.post("/refresh")
 async def refresh_token(request: Request, response: Response):
     return await auth_service.refresh_token(request=request, response=response)
+
+
+@router.post("/log_out")
+async def logout_user(response: Response):
+    return await auth_service.logout(response)
