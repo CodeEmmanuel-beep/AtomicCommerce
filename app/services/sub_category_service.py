@@ -69,7 +69,7 @@ async def retrieve(page, limit, db):
     logger.info(
         f"all categories fetched successfully page={page}, limit={limit}, total={total}"
     )
-    return StandardResponse(status="success", message="categories", data=data)
+    return StandardResponse(status="success", message="sub_categories", data=data)
 
 
 async def delete_sub_category(sub_category_id, db, payload):
