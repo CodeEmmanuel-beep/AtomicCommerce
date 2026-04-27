@@ -18,6 +18,7 @@ from app.api.v1.routes import (
     delivery_address,
     reactions,
     inventory,
+    sub_category,
 )
 from app.exceptions import (
     make_exception_handler,
@@ -74,6 +75,7 @@ def home():
 
 app.include_router(auth.router)
 app.include_router(category.router)
+app.include_router(sub_category.router)
 app.include_router(product.router)
 app.include_router(inventory.router)
 app.include_router(cart.router)
