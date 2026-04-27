@@ -1,4 +1,4 @@
-from app.models import SubCategory, User
+from app.models import SubCategory, User, Category
 from app.logs.logger import get_logger
 from fastapi import HTTPException
 from sqlalchemy import select, or_, func
@@ -23,6 +23,16 @@ async def sub_category(category_id, name, db, payload):
     if not admin:
         logger.warning("Forbidden access: user_id=%s is not admin/owner", user_id)
         raise HTTPException(status_code=403, detail="restricted access")
+    target = (
+        await db.execute(
+            select(Category).where(Category.id == category_id, ~Category.is_deleted)
+        )
+    ).scalar_one_or_none()
+    if not target:
+        logger.warning(
+            "user: %s, tried adding a sub_category to a non-existent category"
+        )
+        raise HTTPException(status_code=404, detail="category not found")
     sub_category_exists = (
         await db.execute(select(SubCategory).where(SubCategory.name == name))
     ).scalar_one_or_none()
