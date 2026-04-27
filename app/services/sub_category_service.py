@@ -23,12 +23,12 @@ async def sub_category(category_id, name, db, payload):
     if not admin:
         logger.warning("Forbidden access: user_id=%s is not admin/owner", user_id)
         raise HTTPException(status_code=403, detail="restricted access")
-    target = (
+    category_exists = (
         await db.execute(
             select(Category).where(Category.id == category_id, ~Category.is_deleted)
         )
     ).scalar_one_or_none()
-    if not target:
+    if not category_exists:
         logger.warning(
             "user: %s, tried adding a sub_category to a non-existent category"
         )
