@@ -6,3 +6,20 @@
 2026-04-26 18:01:18,701-INFO-deleted tasks 2
 2026-04-26 18:02:43,644-INFO-all categories fetched successfully page=1, limit=10, total=5
 2026-04-26 18:03:35,978-INFO-deleted tasks 3
+2026-04-26 18:25:27,504-WARNING-user: 1, tried duplicating category name
+2026-04-26 18:25:42,657-INFO-Category successfully created: id=9, name=Electronic_and_Technology
+2026-04-26 18:25:42,658-INFO-category: Electronic_and_Technology, created successfully
+2026-04-26 18:26:29,542-INFO-Category successfully created: id=10, name=Food_Drink_Edible
+2026-04-26 18:26:29,542-INFO-category: Food_Drink_Edible, created successfully
+2026-04-26 18:27:25,749-INFO-Category successfully created: id=11, name=Cosmetic_and_Extension
+2026-04-26 18:27:25,750-INFO-category: Cosmetic_and_Extension, created successfully
+2026-04-26 18:28:06,362-INFO-Category successfully created: id=12, name=Fashion_Accessory
+2026-04-26 18:28:06,363-INFO-category: Fashion_Accessory, created successfully
+2026-04-26 18:28:27,874-INFO-deleted category 5
+2026-04-26 18:29:09,324-INFO-deleted category 6
+2026-04-26 18:29:41,278-INFO-deleted category 4
+2026-04-26 18:30:29,301-INFO-all categories fetched successfully page=1, limit=10, total=6
+2026-04-26 18:30:54,038-INFO-deleted category 7
+2026-04-26 18:31:25,887-INFO-Category successfully created: id=13, name=Home_and_Living
+2026-04-26 18:31:25,889-INFO-category: Home_and_Living, created successfully
+2026-04-26 18:31:32,028-INFO-all categories fetched successfully page=1, limit=10, total=6

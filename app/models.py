@@ -131,22 +131,30 @@ class Ticket(Base):
 
 
 class BusinessType(str, Enum):
-    beauty_therapy = "beauty and hair"
+    beauty_therapy = "beauty_therapy"
     skincare = "skincare"
-    computer = "computer"
     computer_accessories = "computer_accessories"
     hair = "hair"
     home_appliance = "home_appliance"
-    clothes = "clothes"
-    kitchen_wares = "kitchen wares"
+    men_clothes = "men_clothes"
+    women_clothes = "women_clothes"
+    children_clothes = "children_clothes"
+    kitchenware = "kitchenware"
     groceries = "groceries"
-    fruits_and_vegetables = "fruits and vegetables"
-    footwear = "footwear"
+    fruits_and_vegetables = "fruits_and_vegetables"
+    men_footwear = "men_footwear"
+    women_footwear = "women_footwear"
+    children_footwear = "children_footwear"
     bags = "bags"
+    ladies_bags = "ladies_bags"
+    drinks = "drinks"
+    alcoholic_drinks = "alcoholic_drinks"
+    office_furniture = "office_furniture"
+    home_furniture = "home_furniture"
     watch = "watch"
     hat = "hat"
-    jewelries = "jewelries"
-    luggages = "luggages"
+    jewelry = "jewelry"
+    luggage = "luggage"
     games = "games"
     computers = "computers"
 
@@ -169,6 +177,9 @@ class Store(Base):
     )
     category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("categories.id"), index=True
+    )
+    subcategory_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("subcategories.id"), index=True
     )
     store_email: Mapped[str] = mapped_column(String, nullable=True)
     shipping_fee: Mapped[Decimal] = mapped_column(
@@ -194,6 +205,7 @@ class Store(Base):
     inventories = relationship("Inventory", back_populates="store")
     carts = relationship("Cart", back_populates="store")
     membership = relationship("Membership", back_populates="store")
+    subcategory = relationship("SubCategory", back_populates="stores")
 
 
 class Address(Base):
@@ -255,17 +267,24 @@ class ProductSize(str, Enum):
 
 class Product(Base):
     __tablename__ = "products"
-    id = Column(Integer, primary_key=True, index=True)
-    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
-    product_name = Column(String)
-    primary_image = Column(String, nullable=False)
-    image = Column(String, nullable=True)
-    product_price = Column(Numeric(precision=12, scale=2))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    product_name: Mapped[str] = mapped_column(String)
+    primary_image: Mapped[str] = mapped_column(String, nullable=False)
+    image: Mapped[dict] = mapped_column(JSONB, nullable=True)
+    product_price: Mapped[Decimal] = mapped_column(Numeric(precision=12, scale=2))
     product_type: Mapped[str] = mapped_column(String)
-    description = Column(String)
-    product_size = Column(SQLEnum(ProductSize), default=ProductSize.small, index=True)
-    category_id = Column(Integer, ForeignKey("categories.id"), index=True)
-    product_availability = Column(String, default="available")
+    description: Mapped[str] = mapped_column(String)
+    product_size: Mapped[ProductSize] = mapped_column(
+        SQLEnum(ProductSize), default=ProductSize.small, index=True
+    )
+    category_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("categories.id"), index=True
+    )
+    subcategory_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("subcategories.id"), index=True
+    )
+    product_availability: Mapped[str] = mapped_column(String, default="available")
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
     store = relationship("Store", back_populates="products")
@@ -274,6 +293,7 @@ class Product(Base):
     cart_items = relationship("CartItem", back_populates="product")
     category = relationship("Category", back_populates="products")
     inventory = relationship("Inventory", back_populates="product")
+    subcategory = relationship("SubCategory", back_populates="products")
 
 
 class Inventory(Base):
@@ -490,11 +510,25 @@ class React(Base):
 
 class Category(Base):
     __tablename__ = "categories"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String, unique=True)
 
     products = relationship("Product", back_populates="category")
     stores = relationship("Store", back_populates="category")
+    subcategories = relationship("Category", back_populates="category")
+
+
+class SubCategory(Base):
+    __tablename__ = "subcategories"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    category_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("categories.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(String, unique=True)
+
+    products = relationship("Product", back_populates="subcategory")
+    stores = relationship("Store", back_populates="subcategory")
+    category = relationship("Category", back_populates="subcategories")
 
 
 class CartItem(Base):
