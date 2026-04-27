@@ -28,11 +28,14 @@ async def create_a_sub_category(
     response_model_exclude_defaults=True,
 )
 async def sub_category_list(
+    category_id: int | None = None,
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    return await sub_category_service.retrieve(db=db, page=page, limit=limit)
+    return await sub_category_service.retrieve(
+        category_id=category_id, db=db, page=page, limit=limit
+    )
 
 
 @router.delete("/delete")
