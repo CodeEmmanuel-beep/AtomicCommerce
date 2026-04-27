@@ -1,7 +1,7 @@
 from app.models import SubCategory, User, Category
 from app.logs.logger import get_logger
 from fastapi import HTTPException
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, and_
 from app.api.v1.schemas import (
     StandardResponse,
     PaginatedMetadata,
@@ -57,11 +57,14 @@ async def sub_category(category_id, name, db, payload):
     return {"status": "success", "message": "sub_category created"}
 
 
-async def retrieve_category_sub_category(category_id, page, limit, db):
+async def retrieve(category_id, page, limit, db):
     offset = (page - 1) * limit
-    stmt = select(SubCategory).where(
-        SubCategory.category_id == category_id, ~SubCategory.is_deleted
+    check = (
+        and_(SubCategory.category_id == category_id, ~SubCategory.is_deleted)
+        if category_id
+        else ~SubCategory.is_deleted
     )
+    stmt = select(SubCategory).where(check)
     sub_categories = (
         (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     )
@@ -72,36 +75,7 @@ async def retrieve_category_sub_category(category_id, page, limit, db):
         )
         raise HTTPException(status_code=404, detail="no sub category found")
     total = (
-        await db.execute(
-            select(func.count(SubCategory.id)).where(
-                SubCategory.category_id == category_id, ~SubCategory.is_deleted
-            )
-        )
-    ).scalar() or 0
-    data = PaginatedMetadata[SubCategoryResponse](
-        items=[SubCategoryResponse.model_validate(item) for item in sub_categories],
-        pagination=PaginatedResponse(page=page, limit=limit, total=total),
-    )
-    logger.info(
-        f"all categories fetched successfully page={page}, limit={limit}, total={total}"
-    )
-    return StandardResponse(status="success", message="sub_categories", data=data)
-
-
-async def retrieve(page, limit, db):
-    offset = (page - 1) * limit
-    stmt = select(SubCategory).where(~SubCategory.is_deleted)
-    sub_categories = (
-        (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
-    )
-    if not sub_categories:
-        logger.warning(
-            "No sub_categories found: page=%s",
-            page,
-        )
-        raise HTTPException(status_code=404, detail="no sub category found")
-    total = (
-        await db.execute(select(func.count()).select_from(stmt.subquery()))
+        await db.execute(select(func.count(SubCategory.id)).where(check))
     ).scalar() or 0
     data = PaginatedMetadata[SubCategoryResponse](
         items=[SubCategoryResponse.model_validate(item) for item in sub_categories],
