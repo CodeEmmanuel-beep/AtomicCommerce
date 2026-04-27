@@ -1,7 +1,13 @@
 from app.models import SubCategory, User
 from app.logs.logger import get_logger
 from fastapi import HTTPException
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
+from app.api.v1.schemas import (
+    StandardResponse,
+    PaginatedMetadata,
+    PaginatedResponse,
+    SubCategoryResponse,
+)
 from sqlalchemy.exc import IntegrityError
 
 logger = get_logger("sub_categories")
@@ -39,6 +45,31 @@ async def sub_category(category_id, name, db, payload):
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("sub_category: %s, created successfully", name)
     return {"status": "success", "message": "sub_category created"}
+
+
+async def retrieve(page, limit, db):
+    offset = (page - 1) * limit
+    stmt = select(SubCategory)
+    total = (
+        await db.execute(select(func.count()).select_from(stmt.subquery()))
+    ).scalar() or 0
+    sub_categories = (
+        (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
+    )
+    if not sub_categories:
+        logger.warning(
+            "No sub_categories found: page=%s",
+            page,
+        )
+        raise HTTPException(status_code=404, detail="no category found")
+    data = PaginatedMetadata[SubCategoryResponse](
+        items=[SubCategoryResponse.model_validate(item) for item in sub_categories],
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+    )
+    logger.info(
+        f"all categories fetched successfully page={page}, limit={limit}, total={total}"
+    )
+    return StandardResponse(status="success", message="categories", data=data)
 
 
 async def delete_sub_category(sub_category_id, db, payload):
