@@ -178,7 +178,7 @@ class Store(Base):
     category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("categories.id"), index=True
     )
-    subcategory_id: Mapped[int] = mapped_column(
+    sub_category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("subcategories.id"), index=True
     )
     store_email: Mapped[str] = mapped_column(String, nullable=True)
@@ -205,7 +205,7 @@ class Store(Base):
     inventories = relationship("Inventory", back_populates="store")
     carts = relationship("Cart", back_populates="store")
     membership = relationship("Membership", back_populates="store")
-    subcategory = relationship("SubCategory", back_populates="stores")
+    sub_category = relationship("SubCategory", back_populates="stores")
 
 
 class Address(Base):
@@ -281,7 +281,7 @@ class Product(Base):
     category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("categories.id"), index=True
     )
-    subcategory_id: Mapped[int] = mapped_column(
+    sub_category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("subcategories.id"), index=True
     )
     product_availability: Mapped[str] = mapped_column(String, default="available")
@@ -293,7 +293,7 @@ class Product(Base):
     cart_items = relationship("CartItem", back_populates="product")
     category = relationship("Category", back_populates="products")
     inventory = relationship("Inventory", back_populates="product")
-    subcategory = relationship("SubCategory", back_populates="products")
+    sub_category = relationship("SubCategory", back_populates="products")
 
 
 class Inventory(Base):
@@ -515,7 +515,7 @@ class Category(Base):
 
     products = relationship("Product", back_populates="category")
     stores = relationship("Store", back_populates="category")
-    subcategories = relationship("Category", back_populates="category")
+    sub_categories = relationship("Category", back_populates="category")
 
 
 class SubCategory(Base):
@@ -526,9 +526,9 @@ class SubCategory(Base):
     )
     name: Mapped[str] = mapped_column(String, unique=True)
 
-    products = relationship("Product", back_populates="subcategory")
-    stores = relationship("Store", back_populates="subcategory")
-    category = relationship("Category", back_populates="subcategories")
+    products = relationship("Product", back_populates="sub_category")
+    stores = relationship("Store", back_populates="sub_category")
+    category = relationship("Category", back_populates="sub_categories")
 
 
 class CartItem(Base):
