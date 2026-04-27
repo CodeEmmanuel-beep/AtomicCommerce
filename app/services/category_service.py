@@ -47,7 +47,7 @@ async def category(name, db, payload):
 
 async def retrieve(page, limit, db):
     offset = (page - 1) * limit
-    stmt = select(Category)
+    stmt = select(Category).where(~Category.is_deleted)
     total = (
         await db.execute(select(func.count()).select_from(stmt.subquery()))
     ).scalar() or 0

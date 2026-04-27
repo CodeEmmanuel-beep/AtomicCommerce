@@ -24,3 +24,7 @@
 2026-04-26 18:31:25,889-INFO-category: Home_and_Living, created successfully
 2026-04-26 18:31:32,028-INFO-all categories fetched successfully page=1, limit=10, total=6
 2026-04-27 15:18:53,885-INFO-all categories fetched successfully page=1, limit=10, total=6
+2026-04-27 15:25:58,037-INFO-category: great, created successfully
+2026-04-27 15:26:05,486-INFO-all categories fetched successfully page=1, limit=10, total=7
+2026-04-27 15:26:21,527-INFO-deleted category 14
+2026-04-27 15:26:34,324-INFO-all categories fetched successfully page=1, limit=10, total=7
