@@ -16,6 +16,7 @@ venv.bak/
 app/logs/*.log
 *.db
 *.sqlite3
+logs/*.log
 
 # OS generated files
 .DS_Store
