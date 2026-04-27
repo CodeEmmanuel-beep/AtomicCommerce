@@ -22,18 +22,17 @@ async def category(name, db, payload):
     admin = (await db.execute(stmt)).scalar_one_or_none()
     if not admin:
         logger.warning("Forbidden access: user_id=%s is not admin/owner", user_id)
-        raise HTTPException(status_code=403, detail="you are not admin")
+        raise HTTPException(status_code=403, detail="restricted access")
     category_exists = (
         await db.execute(select(Category).where(Category.name == name))
     ).scalar_one_or_none()
     if category_exists:
-        logger.warning("user: %s, tried duplicating category name", user_id)
+        logger.warning("user: %s, tried duplicating category name: %s", user_id, name)
         raise HTTPException(status_code=400, detail="category name already exists")
     new_category = Category(name=name)
     try:
         db.add(new_category)
         await db.commit()
-        await db.refresh(new_category)
     except IntegrityError:
         logger.error("database error while creating category: name=%s", name)
         await db.rollback()
@@ -42,11 +41,6 @@ async def category(name, db, payload):
         logger.exception("error while creating category: name=%s", name)
         await db.rollback()
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(
-        "Category successfully created: id=%s, name=%s",
-        new_category.id,
-        new_category.name,
-    )
     logger.info("category: %s, created successfully", name)
     return {"status": "success", "message": "category created"}
 
@@ -77,7 +71,7 @@ async def retrieve(page, limit, db):
     return StandardResponse(status="success", message="categories", data=data)
 
 
-async def delete_one(category_id, db, payload):
+async def delete_category(category_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning(
@@ -91,15 +85,15 @@ async def delete_one(category_id, db, payload):
             f"{user_id}, tried deleting a category without admin powers, product id: {category_id}"
         )
         raise HTTPException(status_code=403, detail="not authorized")
-    stmt = select(Category).where(Category.id == category_id)
+    stmt = select(Category).where(Category.id == category_id, ~Category.is_deleted)
     data = (await db.execute(stmt)).scalar_one_or_none()
     if not data:
         logger.warning(
             f"{user_id}, tried deleting a nonexistent category, category id: {category_id}"
         )
-        raise HTTPException(status_code=404, detail="invalid field")
+        raise HTTPException(status_code=404, detail="category not found")
+    data.is_deleted = True
     try:
-        await db.delete(data)
         await db.commit()
     except IntegrityError:
         db.rollback()
