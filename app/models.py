@@ -515,7 +515,7 @@ class Category(Base):
 
     products = relationship("Product", back_populates="category")
     stores = relationship("Store", back_populates="category")
-    sub_categories = relationship("Category", back_populates="category")
+    sub_categories = relationship("SubCategory", back_populates="category")
 
 
 class SubCategory(Base):

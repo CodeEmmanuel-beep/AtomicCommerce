@@ -31,3 +31,4 @@ WHERE users.role = $1::VARCHAR OR users.role = $2::VARCHAR]
 [parameters: ('Admin', 'Owner')]
 (Background on this error at: https://sqlalche.me/e/20/dbapi)
 2026-04-25 20:55:16,639-WARNING-UNHANDLED ERROR: PATH-/group/create_category| ERROR unexpected connection_lost() call
+2026-04-27 13:52:21,270-WARNING-UNHANDLED ERROR: PATH-/auth/login| ERROR Could not determine join condition between parent/child tables on relationship Category.sub_categories - there are no foreign keys linking these tables.  Ensure that referencing columns are associated with a ForeignKey or ForeignKeyConstraint, or specify a 'primaryjoin' expression.

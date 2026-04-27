@@ -124,3 +124,4 @@ storage3.exceptions.StorageApiError: {'statusCode': 403, 'error': Unauthorized, 
 2026-04-26 15:50:19,031-INFO-User Jesus logged in successfully
 2026-04-26 16:29:54,634-INFO-Refresh token successful for username: Jesus
 2026-04-26 17:42:07,742-INFO-Refresh token successful for username: Jesus
+2026-04-27 13:51:33,818-INFO-User logged out successfully
