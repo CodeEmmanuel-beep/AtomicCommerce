@@ -130,35 +130,6 @@ class Ticket(Base):
     messages = relationship("Messaging", back_populates="ticket")
 
 
-class BusinessType(str, Enum):
-    beauty_therapy = "beauty_therapy"
-    skincare = "skincare"
-    computer_accessories = "computer_accessories"
-    hair = "hair"
-    home_appliance = "home_appliance"
-    men_clothes = "men_clothes"
-    women_clothes = "women_clothes"
-    children_clothes = "children_clothes"
-    kitchenware = "kitchenware"
-    groceries = "groceries"
-    fruits_and_vegetables = "fruits_and_vegetables"
-    men_footwear = "men_footwear"
-    women_footwear = "women_footwear"
-    children_footwear = "children_footwear"
-    bags = "bags"
-    ladies_bags = "ladies_bags"
-    drinks = "drinks"
-    alcoholic_drinks = "alcoholic_drinks"
-    office_furniture = "office_furniture"
-    home_furniture = "home_furniture"
-    watch = "watch"
-    hat = "hat"
-    jewelry = "jewelry"
-    luggage = "luggage"
-    games = "games"
-    computers = "computers"
-
-
 class Store(Base):
     __tablename__ = "stores"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -172,9 +143,7 @@ class Store(Base):
     slug: Mapped[str] = mapped_column(
         String(255), nullable=False, unique=True, index=True
     )
-    business_type: Mapped[BusinessType] = mapped_column(
-        SQLEnum(BusinessType), index=True
-    )
+    business_type: Mapped[str] = mapped_column(String, index=True)
     category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("categories.id"), index=True
     )
