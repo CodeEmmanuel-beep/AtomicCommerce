@@ -218,8 +218,8 @@ class Reply(BaseModel):
 
 
 class Chat(BaseModel):
-    customer: List[str] = Field(default_factory=list)
-    customer_support: List[str] = Field(default_factory=list)
+    customer: Optional[str] = Field(default_factory=str)
+    customer_support: Optional[str] = Field(default_factory=str)
     message: str | None = None
     pics: str | None = None
     delivered: bool = Field(default=False)
@@ -372,6 +372,14 @@ class Review(BaseModel):
 
 class CategoryResponse(BaseModel):
     id: int
+    name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubCategoryResponse(BaseModel):
+    id: int
+    category_id: int
     name: str
 
     model_config = ConfigDict(from_attributes=True)
