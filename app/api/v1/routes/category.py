@@ -9,7 +9,7 @@ from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
 from app.services import category_service
 
-router = APIRouter(prefix="/group", tags=["Category"])
+router = APIRouter(prefix="/category", tags=["Category"])
 
 
 @router.post("/create_category")
@@ -34,11 +34,11 @@ async def retrieve(
 
 
 @router.delete("/delete", response_model=StandardResponse)
-async def delete_one(
+async def delete_one_category(
     category_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await category_service.delete_one(
+    return await category_service.delete_category(
         category_id=category_id, db=db, payload=payload
     )
