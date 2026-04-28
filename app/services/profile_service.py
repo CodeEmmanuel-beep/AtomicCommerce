@@ -2,6 +2,7 @@ from fastapi import HTTPException
 from app.logs.logger import get_logger
 from sqlalchemy import select
 from app.models import User, Membership
+from app.utils.supabase_url import get_public_url
 from sqlalchemy.orm import selectinload
 from app.api.v1.schemas import StandardResponse, UserResponse
 
@@ -32,5 +33,8 @@ async def view_profile(db, payload):
     members = [pro[1] for pro in profile if pro[1] is not None]
     membership = {mem.store.store_name: mem.membership_type for mem in members}
     userres = UserResponse.model_validate(user)
-    userres.membership = membership
+    userres.profile_picture = (
+        get_public_url(user.profile_picture) if user.profile_picture else None
+    )
+    userres.membership = [membership]
     return StandardResponse(status="success", message="profile", data=userres)
