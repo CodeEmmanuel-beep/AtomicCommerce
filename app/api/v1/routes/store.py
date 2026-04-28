@@ -4,7 +4,6 @@ from app.api.v1.schemas import (
     StoreAccountDetails,
     StandardResponse,
     StoreAccountResponse,
-    BusinessType,
     PaginatedMetadata,
     AddressDetails,
     StoreObj,
@@ -188,7 +187,7 @@ async def view_store_through_name(
     response_model_exclude_defaults=True,
 )
 async def view_store_through_business_type(
-    business_type: BusinessType,
+    business_type: str,
     seed: float = 0.5,
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),

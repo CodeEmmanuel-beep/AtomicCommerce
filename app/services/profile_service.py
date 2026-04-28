@@ -3,7 +3,7 @@ from app.logs.logger import get_logger
 from sqlalchemy import select
 from app.models import User, Membership
 from sqlalchemy.orm import selectinload
-from app.api.v1.schemas import StandardResponse, PaginatedMetadata, UserResponse
+from app.api.v1.schemas import StandardResponse, UserResponse
 
 logger = get_logger("profiles")
 
@@ -16,11 +16,11 @@ async def view_profile(db, payload):
     profile = (
         await db.execute(
             select(User, Membership)
-            .join(Membership, User.id == Membership.user_id)
+            .outerjoin(Membership, User.id == Membership.user_id)
             .options(selectinload(Membership.store))
             .where(User.id == user_id)
         )
-    ).first()
+    ).all()
     if not profile:
         logger.warning("user: %s, has no user profile in the database", user_id)
         raise HTTPException(status_code=404, detail="profile not found")
