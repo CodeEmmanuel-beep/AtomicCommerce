@@ -10,7 +10,6 @@ from typing import Optional, List, TypeVar, Generic, Any
 from datetime import datetime, date
 from app.utils.supabase_url import get_public_url
 from decimal import Decimal
-import orjson
 from enum import Enum
 
 T = TypeVar("T")
@@ -29,6 +28,11 @@ class ProfileResponse(BaseModel):
     name: str
     profile_picture: str
 
+    @computed_field
+    def render_picture(self) -> str | None:
+        if self.profile_picture:
+            return get_public_url(self.profile_picture)
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -42,6 +46,7 @@ class UserResponse(BaseModel):
     email: str
     nationality: str
     address: str
+    membership: dict = Field(default_factory=dict)
 
     @computed_field
     def render_picture(self) -> str | None:
@@ -51,26 +56,10 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class BusinessType(str, Enum):
-    beauty_and_hair = "beauty and hair"
-    skincare = "skincare"
-    hair = "hair"
-    electronics = "electronics"
-    fashion = "fashion"
-    kitchen_wares = "kitchen wares"
-    groceries = "groceries"
-    fruits_and_vegetables = "fruits and vegetables"
-    footwear = "footwear"
-    bags = "bags"
-    luggages = "luggages"
-    games = "games"
-    computers = "computers"
-
-
 class StoreObj(BaseModel):
     store_name: str
     owners: List[int]
-    business_type: BusinessType
+    business_type: List[str]
     store_email: str | None = None
     store_contact: str | None = None
 
@@ -79,7 +68,7 @@ class StoreUpdate(BaseModel):
     store_id: int
     store_name: str | None
     motto: str | None
-    business_type: BusinessType | None
+    business_type: List[str]
     store_description: str | None
     store_email: str | None = None
     store_contact: str | None = None
@@ -91,7 +80,7 @@ class StoreResponse(BaseModel):
     store_photo: str
     store_name: str
     motto: str
-    business_type: BusinessType
+    business_type: List[str]
     approved: bool = Field(default=False)
 
     @computed_field
