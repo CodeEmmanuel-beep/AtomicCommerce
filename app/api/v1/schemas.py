@@ -38,14 +38,14 @@ class ProfileResponse(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
-    profile_picture: str
+    profile_picture: str | None = None
     first_name: str
-    middle_name: str
+    middle_name: str | None = None
     surname: str
     username: str
     email: str
     nationality: str
-    address: str
+    address: str | None = None
     membership: dict = Field(default_factory=dict)
 
     @computed_field
