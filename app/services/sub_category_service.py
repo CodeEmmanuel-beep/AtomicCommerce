@@ -95,11 +95,13 @@ async def delete_sub_category(sub_category_id, db, payload):
             sub_category_id,
         )
         raise HTTPException(status_code=403, detail="Unauthorized access.")
-    stmt = select(User).where(or_(User.role == "Admin", User.role == "Owner"))
+    stmt = select(User).where(
+        User.id == user_id, or_(User.role == "Admin", User.role == "Owner")
+    )
     admin = (await db.execute(stmt)).scalar_one_or_none()
     if not admin:
         logger.warning(
-            f"{user_id}, tried deleting a sub_category without admin powers, product id: {sub_category_id}"
+            f"{user_id}, tried deleting a sub_category without admin powers, sub_category id: {sub_category_id}"
         )
         raise HTTPException(status_code=403, detail="not authorized")
     stmt = select(SubCategory).where(
@@ -115,12 +117,12 @@ async def delete_sub_category(sub_category_id, db, payload):
     try:
         await db.commit()
     except IntegrityError:
-        db.rollback()
-        logger.error("database error occured while deleting sub_category; %s", data.id)
-        raise HTTPException(status_code=500, detail="database error")
+        await db.rollback()
+        logger.error("database error occured while deleting sub_category: %s", data.id)
+        raise HTTPException(status_code=400, detail="database error")
     except Exception:
-        db.rollback()
-        logger.exception("error occured while deleting sub_category; %s", data.id)
+        await db.rollback()
+        logger.exception("error occured while deleting sub_category: %s", data.id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("deleted sub_category %s", sub_category_id)
     return {
@@ -128,7 +130,7 @@ async def delete_sub_category(sub_category_id, db, payload):
         "message": "deleted sub_category",
         "data": {
             "id": sub_category_id,
-            "username": user_id,
+            "user_id": user_id,
             "deleted": "Yes",
         },
     }
