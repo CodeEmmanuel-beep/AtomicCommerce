@@ -21,7 +21,7 @@ A modular, service-oriented FastAPI backend architected for global scale, platfo
 ---
 
 ## 📁 Modular Service Architecture (SOA)
-The system is divided into **17+ Domain-Specific Services**, ensuring zero circular dependencies and high maintainability for a 8,800+ line codebase.
+The system is divided into **17+ Domain-Specific Services**, ensuring zero circular dependencies and high maintainability for a 10,000+ line codebase.
 
 ```text
 .
