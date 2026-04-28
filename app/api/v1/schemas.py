@@ -46,12 +46,7 @@ class UserResponse(BaseModel):
     email: str
     nationality: str
     address: str | None = None
-    membership: dict = Field(default_factory=dict)
-
-    @computed_field
-    def render_picture(self) -> str | None:
-        if self.profile_picture:
-            return get_public_url(self.profile_picture)
+    membership: List = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
