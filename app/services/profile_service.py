@@ -18,7 +18,7 @@ async def view_profile(db, payload):
             await db.execute(
                 select(User, Membership)
                 .outerjoin(Membership, User.id == Membership.user_id)
-                .options(selectinload(Membership.store))
+                .options(selectinload(Membership.store), selectinload(User.membership))
                 .where(User.id == user_id)
             )
         )
