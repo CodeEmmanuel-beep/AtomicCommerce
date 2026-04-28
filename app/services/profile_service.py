@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from sqlalchemy import select
+from sqlalchemy import select, or_, and_
 from app.models import User, Membership
 from app.utils.supabase_url import get_public_url, cleaned_up
 from sqlalchemy.orm import selectinload
@@ -149,7 +149,7 @@ async def edit_profile(
                 context_1="error removing orphaned profile photo",
                 context_2="successfully removed orphaned profile photo",
             )
-        raise HTTPException(status_code=500, detail="database error")
+        raise HTTPException(status_code=400, detail="database error")
     except Exception:
         logger.exception("could not edit profile for user %s", user_id)
         if filename:
@@ -162,3 +162,71 @@ async def edit_profile(
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("user: %s, successfully edited his profile", user_id)
     return {"status": "success", "message": "profile successfully edited"}
+
+
+delete_profile_log = get_logger("delete_profile")
+
+
+async def delete_profile(userId, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        delete_profile_log.warning(
+            "unauthorized attempt at the delete_profile endpoint"
+        )
+        raise HTTPException(status_code=403, detail="Unauthorized access.")
+    access = userId if userId else user_id
+    stmt = select(User).where(User.id == access).with_for_update()
+    data = (await db.execute(stmt)).scalar_one_or_none()
+    if not data:
+        delete_profile_log.warning(
+            f"{user_id}, tried deleting a nonexistent profile, profile id: {userId}"
+        )
+        raise HTTPException(status_code=404, detail="profile not found")
+    if data.id != user_id:
+        stmt = select(User).where(User.id == user_id, User.role.in_(["Admin", "Owner"]))
+        admin = (await db.execute(stmt)).scalar_one_or_none()
+        if not admin:
+            delete_profile_log.warning(
+                f"{user_id}, tried deleting a profile without admin powers, profile id: {userId}"
+            )
+            raise HTTPException(status_code=403, detail="not authorized")
+        if data.role == "Owner":
+            delete_profile_log.warning(
+                "admin: %s, tried deleting Owner's profile", user_id
+            )
+            raise HTTPException(status_code=403, detail="FORBIDDEN")
+        if data.role == "Admin" and admin.role != "Owner":
+            delete_profile_log.warning(
+                f"Admin {user_id} tried deleting another Admin {data.id}"
+            )
+            raise HTTPException(
+                status_code=403, detail="Admins cannot delete other Admins."
+            )
+    if not data.is_active:
+        return {"status": "success", "message": "user already deactivated"}
+    data.is_active = False
+    profile_id = data.id
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        delete_profile_log.error(
+            "database error occured while deleting profile: %s", profile_id
+        )
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        delete_profile_log.exception(
+            "error occured while deleting profile: %s", profile_id
+        )
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("deleted profile %s", profile_id)
+    return {
+        "status": "success",
+        "message": "deleted profile",
+        "data": {
+            "id": profile_id,
+            "user_id": user_id,
+            "deleted": "Yes",
+        },
+    }
