@@ -78,11 +78,13 @@ async def delete_category(category_id, db, payload):
             "Unauthorized delete attempt: missing user_id, category_id=%s", category_id
         )
         raise HTTPException(status_code=403, detail="Unauthorized access.")
-    stmt = select(User).where(or_(User.role == "Admin", User.role == "Owner"))
+    stmt = select(User).where(
+        User.id == user_id, or_(User.role == "Admin", User.role == "Owner")
+    )
     admin = (await db.execute(stmt)).scalar_one_or_none()
     if not admin:
         logger.warning(
-            f"{user_id}, tried deleting a category without admin powers, product id: {category_id}"
+            f"{user_id}, tried deleting a category without admin powers, category id: {category_id}"
         )
         raise HTTPException(status_code=403, detail="not authorized")
     stmt = select(Category).where(Category.id == category_id, ~Category.is_deleted)
@@ -96,12 +98,12 @@ async def delete_category(category_id, db, payload):
     try:
         await db.commit()
     except IntegrityError:
-        db.rollback()
-        logger.error("database error occured while deleting category; %s", data.id)
-        raise HTTPException(status_code=500, detail="database error")
+        await db.rollback()
+        logger.error("database error occured while deleting category: %s", data.id)
+        raise HTTPException(status_code=400, detail="database error")
     except Exception:
-        db.rollback()
-        logger.exception("error occured while deleting category; %s", data.id)
+        await db.rollback()
+        logger.exception("error occured while deleting category: %s", data.id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("deleted category %s", category_id)
     return {
@@ -109,7 +111,7 @@ async def delete_category(category_id, db, payload):
         "message": "deleted category",
         "data": {
             "id": category_id,
-            "username": user_id,
+            "user_id": user_id,
             "deleted": "Yes",
         },
     }
