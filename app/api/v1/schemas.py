@@ -35,11 +35,18 @@ class ProfileResponse(BaseModel):
 class UserResponse(BaseModel):
     id: int
     profile_picture: str
-    name: str
+    first_name: str
+    middle_name: str
+    surname: str
     username: str
     email: str
     nationality: str
     address: str
+
+    @computed_field
+    def render_picture(self) -> str | None:
+        if self.profile_picture:
+            return get_public_url(self.profile_picture)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -290,10 +297,9 @@ class ProductResponse(BaseModel):
     def image_urls(self) -> list[str]:
         if self.image and len(self.image) > 2:
             try:
-                filenames = orjson.loads(self.image)
                 return [
                     url
-                    for f in filenames
+                    for f in self.image
                     if f and (url := get_public_url(f)) is not None
                 ]
             except Exception:
