@@ -14,17 +14,22 @@ async def view_profile(db, payload):
         logger.warning("unauthorized attempt at the view_profile endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
     profile = (
-        await db.execute(
-            select(User, Membership)
-            .outerjoin(Membership, User.id == Membership.user_id)
-            .options(selectinload(Membership.store))
-            .where(User.id == user_id)
+        (
+            await db.execute(
+                select(User, Membership)
+                .outerjoin(Membership, User.id == Membership.user_id)
+                .options(selectinload(Membership.store))
+                .where(User.id == user_id)
+            )
         )
-    ).all()
+        .unique()
+        .all()
+    )
     if not profile:
         logger.warning("user: %s, has no user profile in the database", user_id)
         raise HTTPException(status_code=404, detail="profile not found")
-    user, members = profile
+    user = profile[0][0]
+    members = [pro[1] for pro in profile if pro[1] is not None]
     membership = {mem.store.store_name: mem.membership_type for mem in members}
     userres = UserResponse.model_validate(user)
     userres.membership = membership
