@@ -24,7 +24,6 @@ from sqlalchemy import func
 from decimal import Decimal
 from datetime import datetime
 
-
 store_staffs = Table(
     "store_staffs",
     Base.metadata,
@@ -41,18 +40,19 @@ store_owners = Table(
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    first_name = Column(String, index=True)
-    middle_name = Column(String, nullable=True)
-    surname = Column(String, index=True)
-    username = Column(String, index=True)
-    password = Column(String)
-    is_active = Column(Boolean, default=True)
-    role = Column(String, default="user", index=True)
-    email = Column(String)
-    nationality = Column(String)
-    profile_picture = Column(String, nullable=True)
-    address = Column(String)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    first_name: Mapped[str] = mapped_column(String, index=True)
+    middle_name: Mapped[str] = mapped_column(String, nullable=True)
+    surname: Mapped[str] = mapped_column(String, index=True)
+    username: Mapped[str] = mapped_column(String, index=True)
+    password: Mapped[str] = mapped_column(String)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    role: Mapped[str] = mapped_column(String, default="user", index=True)
+    email: Mapped[str] = mapped_column(String)
+    nationality: Mapped[str] = mapped_column(String)
+    profile_picture: Mapped[str] = mapped_column(String, nullable=True)
+    phone_number: Mapped[str] = mapped_column(String, nullable=True)
+    address: Mapped[str] = mapped_column(String, nullable=True)
 
     payments = relationship("Payment", back_populates="user")
     membership = relationship("Membership", back_populates="user")
@@ -195,7 +195,7 @@ class StoreAccount(Base):
     __tablename__ = "store_accounts"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
-    account_name: Mapped[bytes] = mapped_column(String, nullable=False)
+    account_name: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     account_number: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     tax_identification_number: Mapped[bytes] = mapped_column(
         LargeBinary, nullable=False
