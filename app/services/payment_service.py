@@ -363,7 +363,7 @@ async def create_payment(
 async def update_payment(sub_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("unauthourized attempt at update_payment endpoint")
+        logger.warning("unauthorized attempt at update_payment endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
     sub = (
         await db.execute(select(Subscription).where(Subscription.id == sub_id))
@@ -633,8 +633,8 @@ async def get_payment(store_id, payment_status, time_frame, page, limit, db, pay
     role = payload.get("role")
     allowed_roles = ["Admin", "Owner"]
     if not user_id:
-        logger.warning("unauthourized attempt at get_payment endpoint")
-        raise HTTPException(status_code=401, detail="unauthourized attempt")
+        logger.warning("unauthorized attempt at get_payment endpoint")
+        raise HTTPException(status_code=401, detail="unauthorized attempt")
     cache_key = f"payment_list:{store_id}:{payment_status}:{time_frame}:{page}:{limit}"
     payment_cache = await cache(cache_key)
     if payment_cache:
