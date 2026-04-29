@@ -25,7 +25,7 @@ async def registration(
     username: str = Form(...),
     email: str = Form(...),
     nationality: str = Form(...),
-    address: str = Form(...),
+    address: str = Form(None),
     password: str = Form(...),
     confirm_password: str = Form(...),
     profile_picture: UploadFile | None = File(None),
