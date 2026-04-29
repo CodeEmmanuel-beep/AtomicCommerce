@@ -53,6 +53,7 @@ async def edit_profile(
     email,
     nationality,
     address,
+    phone_number,
     profile_picture,
     db,
     get_supabase,
@@ -123,6 +124,7 @@ async def edit_profile(
         "middle_name": middle_name,
         "surname": surname,
         "email": email,
+        "phone_number": phone_number,
         "nationality": nationality,
         "address": address,
     }
