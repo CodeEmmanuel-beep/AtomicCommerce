@@ -60,7 +60,7 @@ async def reg(
             status_code=400, detail="email is already in use by another user"
         )
     filename = None
-    if profile_picture is not None:
+    if profile_picture:
         try:
             allowed_files = ["image/png", "image/jpeg", "image/webp"]
             if profile_picture.content_type not in allowed_files:
@@ -81,10 +81,7 @@ async def reg(
             if hasattr(client, "error"):
                 logger.error("error uploading profile picture %s", client)
                 raise HTTPException(status_code=500, detail="error uploading image")
-        except HTTPException:
-            await db.rollback()
-            raise
-        except Exception:
+        except Exception as e:
             await db.rollback()
             logger.exception("error saving profile picture")
             if filename:
@@ -94,12 +91,14 @@ async def reg(
                     context_1="error removing orphaned profile photo",
                     context_2="successfully removed orphaned profile photo",
                 )
+                if isinstance(e, HTTPException):
+                    await db.rollback()
+                    raise
                 raise HTTPException(status_code=500, detail="error saving photo")
-        profile_picture = filename
     password = hashed_password(password)
     logger.info("Starting registration for user: %s", username)
     new_user = User(
-        profile_picture=profile_picture,
+        profile_picture=filename,
         first_name=first_name.strip(),
         surname=surname.strip(),
         role="user",
@@ -124,7 +123,7 @@ async def reg(
                 context_1="error removing orphaned profile photo",
                 context_2="successfully removed orphaned profile photo",
             )
-        raise HTTPException(status_code=500, detail="database error")
+        raise HTTPException(status_code=400, detail="database error")
     except Exception:
         logger.exception("could not register user %s", username)
         if filename:
