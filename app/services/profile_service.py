@@ -66,20 +66,23 @@ async def edit_profile(
     user_exists = (
         await db.execute(select(User).where(User.id == user_id).with_for_update())
     ).scalar_one_or_none()
-    try:
-        validate_email(email)
-    except EmailNotValidError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    if not user_exists:
-        logger.warning("user: %s, do not have a profile in database", user_id)
-        raise HTTPException(status_code=404, detail="profile not found")
-    email_exists = (
-        await db.execute(select(User).where(User.email == email, User.id != user_id))
-    ).scalar_one_or_none()
-    if email_exists:
-        raise HTTPException(
-            status_code=400, detail="email is already in use by another user"
-        )
+    if email:
+        try:
+            validate_email(email)
+        except EmailNotValidError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not user_exists:
+            logger.warning("user: %s, do not have a profile in database", user_id)
+            raise HTTPException(status_code=404, detail="profile not found")
+        email_exists = (
+            await db.execute(
+                select(User).where(User.email == email, User.id != user_id)
+            )
+        ).scalar_one_or_none()
+        if email_exists:
+            raise HTTPException(
+                status_code=400, detail="email is already in use by another user"
+            )
     filename = None
     old_filename = None
     if profile_picture:
@@ -118,7 +121,7 @@ async def edit_profile(
                 if isinstance(e, HTTPException):
                     raise
                 raise HTTPException(status_code=500, detail="error saving photo")
-    logger.info("Starting registration for user: %s", user_id)
+    logger.info("Starting update for user: %s", user_id)
     fields = {
         "first_name": first_name,
         "middle_name": middle_name,
@@ -129,7 +132,8 @@ async def edit_profile(
         "address": address,
     }
     for attr, field in fields.items():
-        setattr(user_exists, attr, field)
+        if field:
+            setattr(user_exists, attr, field)
     try:
         await db.commit()
         if old_filename:
@@ -142,8 +146,8 @@ async def edit_profile(
     except HTTPException:
         await db.rollback()
         raise
-    except IntegrityError:
-        logger.error("could not edit profile for user %s", user_id)
+    except IntegrityError as e:
+        logger.error(f"could not edit profile for user, {user_id}: {str(e)}")
         if filename:
             await cleaned_up(
                 get_supabase,
