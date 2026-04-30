@@ -43,6 +43,7 @@ class UserResponse(BaseModel):
     middle_name: str | None = None
     surname: str
     username: str
+    phone_number: str
     email: str
     nationality: str
     address: str | None = None
