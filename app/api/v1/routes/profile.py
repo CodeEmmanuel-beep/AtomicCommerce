@@ -21,7 +21,7 @@ async def get_personal_profile(
     return await profile_service.view_profile(db, payload)
 
 
-@router.put("update_profile")
+@router.put("/update_profile")
 async def update_personal_profile(
     profile_picture: UploadFile = File(None),
     first_name: str = Form(None),
@@ -50,7 +50,7 @@ async def update_personal_profile(
     )
 
 
-@router.delete("delete_personal_profile")
+@router.delete("/delete_personal_profile")
 async def profile_deletion(
     userId: int,
     db: AsyncSession = Depends(get_db),
