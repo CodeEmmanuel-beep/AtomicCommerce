@@ -18,3 +18,4 @@ orjson
 redis
 regex
 stripe
+sse_starlette
