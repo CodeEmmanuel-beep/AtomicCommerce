@@ -2,7 +2,11 @@ import orjson
 from app.database.config import settings
 from redis import asyncio as aioredis
 from fastapi.encoders import jsonable_encoder
-
+import asyncio
+from typing import Optional
+import aiopg
+import time
+from app.logs.logger import get_logger
 
 redis_url = settings.REDIS_URL
 if redis_url.startswith("rediss://"):
@@ -144,3 +148,63 @@ async def order_address_invalidation(user_id):
         if cursor == 0 or cursor == b"0":
             break
     return delete
+
+
+async def notifications_stream(user_id: Optional[int]):
+    pubsub = redis_client.pubsub()
+    channel_name = f"notifications_{user_id}"
+    await pubsub.subscribe(channel_name)
+    try:
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                yield {"data": message["data"]}
+            else:
+                continue
+    except asyncio.CancelledError:
+        await pubsub.unsubscribe(channel_name)
+        raise
+    finally:
+        await pubsub.close()
+
+
+logger = get_logger("listener")
+
+
+async def run_router():
+    dsn = f"db_name={settings.DB_NAME} user={settings.DB_USER} password={settings.DB_PASSWORD}"
+    last_heartbeat = 0
+    while True:
+        try:
+            async with aiopg.connect(dsn) as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("LISTEN app_events;")
+                    logger.info("Router running.. waiting for database events")
+                    while True:
+                        current_time = time.time()
+                        if current_time - last_heartbeat > 180:
+                            await redis_client.set(
+                                "router_heartbeat", int(current_time)
+                            )
+                            last_heartbeat = current_time
+                            logger.info("Heartbeat sent: Router is healthy.")
+                        while conn.notifies:
+                            try:
+                                notify = conn.notifies.get_nowait()
+                                payload = orjson.loads(notify.payload)
+                                user_id = payload.get("user_id")
+                                if user_id is not None:
+                                    channel_name = f"notifications_{user_id}"
+                                    await redis_client.publish(
+                                        channel_name, orjson.dumps(payload)
+                                    )
+                                    logger.info(
+                                        "Routed event for op %s to %s",
+                                        payload.get("action"),
+                                        channel_name,
+                                    )
+                            except asyncio.QueueEmpty:
+                                break
+                        await asyncio.sleep(0.05)
+        except Exception:
+            logger.exception("run_router crash")
+            await asyncio.sleep(1)
