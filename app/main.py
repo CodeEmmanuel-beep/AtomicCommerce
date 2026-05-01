@@ -21,6 +21,8 @@ from app.api.v1.routes import (
     sub_category,
     profile,
 )
+from app.utils.redis import run_router
+import asyncio
 from app.exceptions import (
     make_exception_handler,
     make_http_exception_handler,
@@ -41,7 +43,15 @@ async def lifespan(app: FastAPI):
     if not settings.CIPHER_KEY:
         raise RuntimeError("key not found")
     app.state.cipher = Fernet(settings.CIPHER_KEY.encode())
-    yield
+    app.state.router = asyncio.create_task(run_router())
+    try:
+        yield
+    finally:
+        app.state.router.cancel()
+    try:
+        await app.state.router
+    except asyncio.CancelledError:
+        print("Router task cancelled successfully.")
 
 
 app = FastAPI(title="AtomicCommerce", version="1.0", lifespan=lifespan)
