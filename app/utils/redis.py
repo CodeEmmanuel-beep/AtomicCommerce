@@ -195,7 +195,7 @@ async def run_router():
                                 if user_id is not None:
                                     channel_name = f"notifications_{user_id}"
                                     await redis_client.publish(
-                                        channel_name, orjson.dumps(payload)
+                                        channel_name, orjson.dumps(payload).decode()
                                     )
                                     logger.info(
                                         "Routed event for op %s to %s",
