@@ -6,6 +6,8 @@ import asyncio
 from typing import Optional
 import aiopg
 import time
+from app.models import Notification
+from app.database.async_config import AsyncSessionLocal
 from app.logs.logger import get_logger
 
 redis_url = settings.REDIS_URL
@@ -79,6 +81,20 @@ async def store_invalidation():
 async def order_invalidation(user_id: int):
     cursor = 0
     pattern = f"orders:v*:{user_id}:*"
+    delete = False
+    while True:
+        cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
+        if keys:
+            await redis_client.delete(*keys)
+            delete = True
+        if cursor == 0 or cursor == b"0":
+            break
+    return delete
+
+
+async def notification_invalidation(user_id: Optional[int]):
+    cursor = 0
+    pattern = f"notification:{user_id}:*"
     delete = False
     while True:
         cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
@@ -170,8 +186,41 @@ async def notifications_stream(user_id: Optional[int]):
 logger = get_logger("listener")
 
 
+async def add_commit_periodically(queue: asyncio.Queue):
+    while True:
+        items = []
+        try:
+            item = await queue.get()
+            items.append(item)
+            try:
+                while len(items) < 100:
+                    item = await asyncio.wait_for(queue.get(), timeout=0.1)
+                    items.append(item)
+            except asyncio.TimeoutError:
+                pass
+            async with AsyncSessionLocal() as db:
+                db.add_all(items)
+                await db.commit()
+            for _ in items:
+                queue.task_done()
+        except Exception:
+            logger.exception("could not save notification")
+            retry_items = []
+            for item in items:
+                item.retries = getattr(item, "retries", 0) + 1
+                if item.retries < 3:
+                    retry_items.append(item)
+                else:
+                    logger.error("Dropping notification after retries")
+            for item in retry_items:
+                await queue.put(item)
+
+
+notification_queue = asyncio.Queue(maxsize=1000)
+
+
 async def run_router():
-    dsn = f"db_name={settings.DB_NAME} user={settings.DB_USER} password={settings.DB_PASSWORD}"
+    dsn = f"dbname={settings.DB_NAME} user={settings.DB_USER} password={settings.DB_PASSWORD} host={settings.DB_HOST} port={settings.DB_PORT}"
     last_heartbeat = 0
     while True:
         try:
@@ -191,6 +240,12 @@ async def run_router():
                             try:
                                 notify = conn.notifies.get_nowait()
                                 payload = orjson.loads(notify.payload)
+                                notice = Notification(
+                                    notification=payload.get("notification"),
+                                    notified_user=payload.get("user_id"),
+                                    time_of_op=payload.get("time"),
+                                )
+                                await notification_queue.put(notice)
                                 user_id = payload.get("user_id")
                                 if user_id is not None:
                                     channel_name = f"notifications_{user_id}"
