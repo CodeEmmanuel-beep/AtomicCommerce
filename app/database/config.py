@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     DB_USER: str
     CIPHER_KEY: str
     DB_PASSWORD: str
+    DB_HOST: str
+    DB_PORT: int
     DATABASE_URL: str
     STRIPE_WEBHOOK_SECRET: str
     SYNC_DATABASE_URL: str
