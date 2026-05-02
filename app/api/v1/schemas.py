@@ -52,6 +52,16 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class NotificationResponse(BaseModel):
+    id: int
+    notification: str
+    notified_user: str
+    time_of_op: datetime
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class StoreObj(BaseModel):
     store_name: str
     owners: List[int]
