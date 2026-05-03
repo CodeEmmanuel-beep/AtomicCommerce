@@ -1,4 +1,3 @@
-from app.database.d_base import Base
 from sqlalchemy import (
     Column,
     DateTime,
@@ -19,10 +18,12 @@ from sqlalchemy import (
 from typing import Optional
 from sqlalchemy.dialects.postgresql import JSONB
 from enum import Enum
-from sqlalchemy.orm import relationship, mapped_column, Mapped
+from sqlalchemy.orm import relationship, mapped_column, Mapped, declarative_base
 from sqlalchemy import func
 from decimal import Decimal
 from datetime import datetime
+
+Base = declarative_base()
 
 store_staffs = Table(
     "store_staffs",
@@ -406,6 +407,17 @@ class Subscription(Base):
     membership = relationship("Membership", back_populates="subscriptions")
 
 
+class Notification(Base):
+    __tablename__ = "notifications"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    notification: Mapped[str] = mapped_column(String)
+    notified_user: Mapped[int] = mapped_column(Integer, index=True)
+    time_of_op: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class Review(Base):
     __tablename__ = "reviews"
     id = Column(Integer, primary_key=True, index=True)
@@ -419,7 +431,7 @@ class Review(Base):
     product_review_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     store_review_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     edited = Column(Boolean, default=False)
-    date_of_review = Column(
+    time_of_post = Column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
 
