@@ -4,14 +4,17 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
-    gcc \
     build-essential \
-    libmpfr-dev \
-    libc-dev \
+    libffi-dev \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+
+RUN python -m venv /opt/venv
+
+RUN /opt/venv/bin/pip install --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 FROM python:3.12-slim-bookworm
 
@@ -21,17 +24,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PATH="/root/.local/bin:$PATH" \
+    PATH="/opt/venv/bin:$PATH" \
     PYTHONPATH=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /root/.local /root/.local
+COPY --from=builder /opt/venv /opt/venv
 
-COPY . .
+COPY . /app
 
 EXPOSE 8000
 
-CMD ["sh", "-c","alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c","uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
