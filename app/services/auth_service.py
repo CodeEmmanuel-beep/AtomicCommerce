@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from app.auth.verify_jwt import decode_token
 from fastapi import HTTPException
 from werkzeug.utils import secure_filename
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app.models import User
 from email_validator import validate_email, EmailNotValidError
 import uuid
@@ -38,7 +38,11 @@ async def reg(
     if len(username) < min_chars:
         raise HTTPException(status_code=400, detail="input atleast 4 characters")
     user_exists = (
-        await db.execute(select(User).where(User.username == username))
+        await db.execute(
+            select(User).where(
+                func.lower(func.trim(User.username)) == username.strip().lower()
+            )
+        )
     ).scalar_one_or_none()
     try:
         validate_email(email)
@@ -102,10 +106,10 @@ async def reg(
         first_name=first_name.strip(),
         surname=surname.strip(),
         role="user",
-        username=username.strip(),
+        username=username.strip().lower(),
         email=email.strip(),
         nationality=nationality.strip(),
-        address=address.strip(),
+        address=address.strip() if address else None,
         password=password,
     )
     try:
