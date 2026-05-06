@@ -1,4 +1,4 @@
-from fastapi import UploadFile, File, APIRouter, Depends, Request, Query
+from fastapi import UploadFile, File, APIRouter, Depends, Request, Query, Form
 from app.services import store_service
 from app.api.v1.schemas import (
     StoreAccountDetails,
@@ -6,7 +6,6 @@ from app.api.v1.schemas import (
     StoreAccountResponse,
     PaginatedMetadata,
     AddressDetails,
-    StoreObj,
     StoreResponse,
     StoreUpdate,
 )
@@ -24,15 +23,25 @@ def get_cipher(request: Request):
 
 @router.post("/create")
 async def create_store(
-    storeobj: StoreObj,
-    get_supabase=Depends(_supabase),
     store_photo: UploadFile = File(...),
+    store_name: str = Form(...),
+    owners: str = Form(...),
+    category: str = Form(...),
+    sub_category: str = Form(...),
+    store_email: str = Form(None),
+    store_contact: str = Form(None),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
+    get_supabase=Depends(_supabase),
 ):
     return await store_service.store_creation(
         store_photo=store_photo,
-        storeobj=storeobj,
+        store_name=store_name,
+        owners=owners,
+        category=category,
+        sub_category=sub_category,
+        store_email=store_email,
+        store_contact=store_contact,
         db=db,
         payload=payload,
         get_supabase=get_supabase,
