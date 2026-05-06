@@ -9,6 +9,7 @@ from app.models import (
     StoreAccount,
     Product,
     Inventory,
+    SubCategory,
 )
 from app.api.v1.schemas import (
     StoreAccountResponse,
@@ -41,71 +42,113 @@ def generate_slug(name: str) -> str:
     return name
 
 
-async def store_creation(storeobj, store_photo, db, payload, get_supabase):
+async def store_creation(
+    store_name,
+    owners,
+    category,
+    sub_category,
+    store_email,
+    store_contact,
+    store_photo,
+    db,
+    payload,
+    get_supabase,
+):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at store_creation endpoint")
         raise HTTPException(
             status_code=401, detail="only registered users can own a store"
         )
-    if not store_name_pattern.fullmatch(storeobj.store_name):
+    if not store_name_pattern.fullmatch(store_name):
         raise HTTPException(status_code=400, detail="store names should be in letters")
-    store_slug = generate_slug(storeobj.store_name)
-    stmt = select(Store).where(Store.slug == store_slug)
-    existing_slug = (await db.execute(stmt)).scalar_one_or_none()
-    if existing_slug:
-        logger.warning("Slug collision for name: %s", storeobj.store_name)
+    store_slug = generate_slug(store_name)
+    try:
+        if isinstance(owners, str):
+            owners = [int(i.strip()) for i in owners.split(",")]
+        elif isinstance(owners, list):
+            owners = [int(i.strip()) for i in owners[0].split(",")]
+    except ValueError:
         raise HTTPException(
-            status_code=400, detail="This store name is too similar to an existing one"
+            status_code=400, detail="owners must be a comma-separated list of numbers"
         )
-    if user_id not in storeobj.owners:
-        logger.error("user: %s, tried being a third party creator")
+    try:
+        if isinstance(sub_category, str):
+            sub_category = [str(i.strip()) for i in sub_category.split(",")]
+        elif isinstance(sub_category, list):
+            sub_category = [str(i.strip()) for i in sub_category[0].split(",")]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="error inputing sub_category field")
+    owners_input = list(set(owners))
+    if user_id not in owners_input:
+        logger.warning("user: %s, tried being a third party creator", user_id)
         raise HTTPException(
             status_code=400, detail="you can not create a store you do not own"
         )
-    category_stmt = await db.execute(
-        select(Category).where(Category.name == storeobj.business_type)
+    subq = select(
+        select(exists().where(Store.slug == store_slug)).scalar_subquery(),
+        select(Category.id).where(Category.name == category).scalar_subquery(),
     )
+    result = (await db.execute(subq)).first() or (False, None)
+    existing_slug, category_id = result
+    if existing_slug:
+        logger.warning("Slug collision for name: %s", store_name)
+        raise HTTPException(
+            status_code=400, detail="This store name is too similar to an existing one"
+        )
+    if category_id is None:
+        logger.warning("Category '%s' not found in database", category)
+        raise HTTPException(
+            status_code=500, detail="Store category configuration error"
+        )
+    sub_count = (
+        await db.execute(
+            select(func.count(SubCategory.id)).where(
+                SubCategory.name.in_(sub_category),
+                SubCategory.category_id == category_id,
+            )
+        )
+    ).scalar() or 0
+    if sub_count != len(set(sub_category)):
+        logger.warning(
+            "user %s, tried inputing a sub_category not found in the database", user_id
+        )
+        raise HTTPException(
+            status_code=400, detail="sub_category do not match the values available"
+        )
     count_stmt = await db.execute(
-        select(store_owners.c.users_id, func.count(store_owners.c.stores_id))
-        .where(store_owners.c.users_id.in_(storeobj.owners))
-        .group_by(store_owners.c.users_id)
+        select(User, func.count(store_owners.c.stores_id))
+        .outerjoin(store_owners, User.id == store_owners.c.users_id)
+        .where(User.id.in_(owners_input))
+        .group_by(User.id)
     )
-    user_data = (
-        (await db.execute(select(User).where(User.id.in_(storeobj.owners))))
-        .scalars()
-        .all()
-    )
-    if len(user_data) != len(storeobj.owners):
+    count = count_stmt.all()
+    owner = []
+    for _user, store_count in count:
+        if store_count >= 10:
+            logger.warning("a user tried owning more than 10 stores user: %s", _user.id)
+            raise HTTPException(
+                status_code=400, detail="a user can not own more than 10 stores"
+            )
+        owner.append(_user)
+    if len(count) != len(owners_input):
         logger.warning(
             "user: %s, tried making a non-existent user a shop owner", user_id
         )
         raise HTTPException(
             status_code=400, detail="all owners must be registered users"
         )
-    count = dict(count_stmt.all())
-    for owner_id, store_count in count.items():
-        if store_count > 10:
-            logger.warning("a user tried owning more than 10 stores user: %s", owner_id)
-            raise HTTPException(
-                status_code=400, detail="a user can not own more than 10 stores"
-            )
-    category = category_stmt.scalar_one_or_none()
-    if not category:
-        logger.error("Category '%s' not found in database", storeobj.business_type)
-        raise HTTPException(
-            status_code=500, detail="Store category configuration error"
-        )
     store_photo = await upload_photo_helper(store_photo, db, payload, get_supabase)
     new_store = Store(
         store_photo=store_photo,
-        store_name=storeobj.store_name,
+        store_name=store_name,
         slug=store_slug,
-        business_type=storeobj.business_type,
-        category_id=category.id,
-        store_email=storeobj.store_email,
-        store_contact=storeobj.store_contact,
-        user_owners=user_data,
+        category_name=category,
+        sub_category=sub_category,
+        category_id=category_id,
+        store_email=store_email,
+        store_contact=store_contact,
+        user_owners=owner,
     )
     try:
         db.add(new_store)
