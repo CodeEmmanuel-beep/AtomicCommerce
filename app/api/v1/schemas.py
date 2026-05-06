@@ -43,7 +43,8 @@ class UserResponse(BaseModel):
     middle_name: str | None = None
     surname: str
     username: str
-    phone_number: str
+    role: str = Field(default="user")
+    phone_number: str | None = None
     email: str
     nationality: str
     address: str | None = None
@@ -60,14 +61,6 @@ class NotificationResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class StoreObj(BaseModel):
-    store_name: str
-    owners: List[int]
-    business_type: List[str]
-    store_email: str | None = None
-    store_contact: str | None = None
 
 
 class StoreUpdate(BaseModel):
