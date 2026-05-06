@@ -1,7 +1,7 @@
 from app.models import SubCategory, User, Category
 from app.logs.logger import get_logger
 from fastapi import HTTPException
-from sqlalchemy import select, or_, func, and_
+from sqlalchemy import select, func, and_
 from app.api.v1.schemas import (
     StandardResponse,
     PaginatedMetadata,
@@ -18,7 +18,7 @@ async def sub_category(category_id, name, db, payload):
     if not user_id:
         logger.warning("Unauthorized access attempt: missing user_id in payload")
         raise HTTPException(status_code=401, detail="unauthorized access")
-    stmt = select(User).where(or_(User.role == "Admin", User.role == "Owner"))
+    stmt = select(User).where(User.id == user_id, User.role.in_(["Admin", "Owner"]))
     admin = (await db.execute(stmt)).scalar_one_or_none()
     if not admin:
         logger.warning("Forbidden access: user_id=%s is not admin/owner", user_id)
@@ -95,9 +95,7 @@ async def delete_sub_category(sub_category_id, db, payload):
             sub_category_id,
         )
         raise HTTPException(status_code=403, detail="Unauthorized access.")
-    stmt = select(User).where(
-        User.id == user_id, or_(User.role == "Admin", User.role == "Owner")
-    )
+    stmt = select(User).where(User.id == user_id, User.role.in_(["Admin", "Owner"]))
     admin = (await db.execute(stmt)).scalar_one_or_none()
     if not admin:
         logger.warning(
