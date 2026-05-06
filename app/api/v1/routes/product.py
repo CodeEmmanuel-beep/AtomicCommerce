@@ -11,11 +11,10 @@ from app.api.v1.schemas import (
 from app.services import product_service
 from app.utils.supabase_url import _supabase
 
-
 router = APIRouter(prefix="/product", tags=["Products"])
 
 
-@router.post("add_product")
+@router.post("/add_product")
 async def create_product(
     prod: ProductObj,
     primary_image: UploadFile = File(...),
