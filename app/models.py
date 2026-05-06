@@ -137,19 +137,17 @@ class Store(Base):
     business_logo: Mapped[str] = mapped_column(String, nullable=True)
     store_photo: Mapped[str] = mapped_column(String, nullable=False)
     store_name: Mapped[str] = mapped_column(String, unique=True, index=True)
-    motto: Mapped[str] = mapped_column(String)
+    motto: Mapped[str] = mapped_column(String, nullable=True)
     edited_name: Mapped[bool] = mapped_column(Boolean, default=False)
-    store_previous_name: Mapped[str] = mapped_column(String, index=True)
-    store_description: Mapped[str] = mapped_column(String)
+    store_previous_name: Mapped[str] = mapped_column(String, nullable=True)
+    store_description: Mapped[str] = mapped_column(String, nullable=True)
     slug: Mapped[str] = mapped_column(
         String(255), nullable=False, unique=True, index=True
     )
-    business_type: Mapped[str] = mapped_column(String, index=True)
+    category_name: Mapped[str] = mapped_column(String, index=True)
+    sub_category: Mapped[list] = mapped_column(JSONB, index=True)
     category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("categories.id"), index=True
-    )
-    sub_category_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("subcategories.id"), index=True
     )
     store_email: Mapped[str] = mapped_column(String, nullable=True)
     shipping_fee: Mapped[Decimal] = mapped_column(
@@ -161,7 +159,7 @@ class Store(Base):
     store_contact: Mapped[str] = mapped_column(String, nullable=True)
     approved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    founded: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    founded: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user_owners = relationship("User", secondary=store_owners, back_populates="owners")
     user_staffs = relationship("User", secondary=store_staffs, back_populates="staffs")
@@ -175,7 +173,6 @@ class Store(Base):
     inventories = relationship("Inventory", back_populates="store")
     carts = relationship("Cart", back_populates="store")
     membership = relationship("Membership", back_populates="store")
-    sub_category = relationship("SubCategory", back_populates="stores")
 
 
 class Address(Base):
@@ -510,7 +507,6 @@ class SubCategory(Base):
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     products = relationship("Product", back_populates="sub_category")
-    stores = relationship("Store", back_populates="sub_category")
     category = relationship("Category", back_populates="sub_categories")
 
 
