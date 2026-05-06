@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select
 from app.models import User, Membership
 from app.utils.supabase_url import get_public_url, cleaned_up
 from sqlalchemy.orm import selectinload
