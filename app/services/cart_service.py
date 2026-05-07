@@ -221,7 +221,7 @@ async def retrieve_cart(store_id, cart_id, page, limit, db, payload):
     )
     cart = (await db.execute(stmt)).scalar_one_or_none()
     if not cart:
-        logger.error("user %s, tried retrieving a non-existent cart")
+        logger.error("user %s, tried retrieving a non-existent cart", user_id)
         raise HTTPException(status_code=404, detail="no cart found")
     logger.info(f"Cart {cart_id} found for user {user_id}, retrieving items")
     cart_model = CartResponse.model_validate(cart)
