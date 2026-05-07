@@ -78,18 +78,17 @@ class StoreResponse(BaseModel):
     business_logo: str
     store_photo: str
     store_name: str
+    category_name: List[str]
+    sub_category: str
+    store_previous_name: str | None = None
+    store_contact: str | None = None
+    store_email: str | None = None
+    avg_rating: Decimal
+    review_count: int
     motto: str
-    business_type: List[str]
+    description: str
     approved: bool = Field(default=False)
-
-    @computed_field
-    def photo_upload(self) -> str | None:
-        return get_public_url(self.store_photo)
-
-    def logo_upload(self) -> str | None:
-        if self.business_logo:
-            return get_public_url(self.business_logo)
-        return None
+    founded: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
