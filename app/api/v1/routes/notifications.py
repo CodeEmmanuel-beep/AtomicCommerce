@@ -35,7 +35,7 @@ async def notification_message(payload: dict = Depends(verify_token)):
 
 
 @router.get(
-    "notifications_list",
+    "/notifications_list",
     response_model=StandardResponse[NotificationResponse],
     response_model_exclude_defaults=True,
     response_model_exclude_none=True,
@@ -66,7 +66,7 @@ async def get_notifications(
     )
     if not notifier:
         logger.error("user %s, attempt to fetch notifications returned null")
-        return {"status": "success", "message": "no cart found"}
+        return {"status": "success", "message": "no notification found"}
     data = [NotificationResponse.model_validate(n) for n in notifier]
     full_data = StandardResponse(status="success", message="notifications", data=data)
     await cached(notification_key, full_data, ttl=3600)
@@ -75,7 +75,7 @@ async def get_notifications(
 
 
 @router.get(
-    "notifications_data",
+    "/notifications_data",
     response_model=StandardResponse[PaginatedMetadata[NotificationResponse]],
     response_model_exclude_defaults=True,
     response_model_exclude_none=True,
@@ -114,7 +114,7 @@ async def notifications_history(
     )
     if not notifier:
         logger.error("user %s, attempt to fetch notifications returned null")
-        return {"status": "success", "message": "no cart found"}
+        return {"status": "success", "message": "no notification found"}
     total = (
         await db.execute(
             select(func.count(Notification.id)).where(
