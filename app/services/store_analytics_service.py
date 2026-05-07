@@ -99,32 +99,6 @@ async def view_store_data(slug, db):
     return data
 
 
-async def view_store_details(slug, db):
-    cache_key = f"store_details:{slug}"
-    cached_data = await cache(cache_key)
-    if cached_data:
-        logger.info("cache hit at view store details endpoint for store: %s", slug)
-        return cached_data
-    target_store = (
-        await db.execute(select(Store).where(Store.slug == slug, Store.approved))
-    ).scalar_one_or_none()
-    if not target_store:
-        logger.error("user tried accessing an unvailable store: %s", slug)
-        raise HTTPException(status_code=404, detail="store not found")
-    data = {
-        "store_previous_name": target_store.store_previous_name,
-        "motto": target_store.motto,
-        "store_description": target_store.store_description,
-        "founded": target_store.founded,
-    }
-    data = {k: v for k, v in data.items() if v is not None}
-    await cached(cache_key, data, ttl=300)
-    logger.info(
-        "data returned at view store details endpoint for store: %s", target_store.id
-    )
-    return data
-
-
 async def view_overall_performance(slug, db, payload):
     result = await view_performanc_helper(slug, "view_overall_performance", db, payload)
     if isinstance(result, dict):
