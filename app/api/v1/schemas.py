@@ -257,6 +257,7 @@ class ProductRes(BaseModel):
     product_price: Decimal
     product_availability: str
     stock_quantity: InventoryObj
+    avg_rating: Decimal
 
     @computed_field
     def full_url(self) -> str | None:
@@ -272,6 +273,8 @@ class ProductResponse(BaseModel):
     image: str | None = Field(exclude=True)
     product_type: str
     product_price: Decimal
+    avg_rating: Decimal
+    review_count: int
     product_size: str
     description: str
     product_availability: str
