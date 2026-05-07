@@ -12,11 +12,6 @@ async def store_dashboard(slug: str, db: AsyncSession = Depends(get_db)):
     return await store_analytics_service.view_store_data(slug=slug, db=db)
 
 
-@router.get("/store_extra_datails/{slug}")
-async def view_store_extra_details(slug: str, db: AsyncSession = Depends(get_db)):
-    return await store_analytics_service.view_store_details(slug=slug, db=db)
-
-
 @router.get("/store_entire_performance/{slug}")
 async def view_store_entire_performance(
     slug: str, db: AsyncSession = Depends(get_db), payload: dict = Depends(verify_token)
