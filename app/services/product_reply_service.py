@@ -6,9 +6,16 @@ from app.api.v1.schemas import (
     StandardResponse,
     ReactionsSummary,
 )
-from fastapi import HTTPException
-from app.models import Review, Reply, Product, React, User
-from sqlalchemy import select, func, or_
+from fastapi import HTTPException, Response, status
+from app.models import (
+    Review,
+    Reply,
+    Product,
+    React,
+    User,
+    Store,
+)
+from sqlalchemy import select, func, exists, case
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.utils.redis import (
@@ -27,13 +34,28 @@ async def reply(reply, db, payload):
     if not user_id:
         logger.warning("unauthorized attempt at create reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = select(Review).where(
-        Review.product_id == reply.product_id, Review.id == reply.review_id
+    stmt = (
+        select(
+            Review,
+            exists()
+            .where(Reply.user_id == user_id, Reply.review_id == reply.review_id)
+            .label("already_replied"),
+        )
+        .where(Review.id == reply.review_id, Review.product_id == reply.product_id)
+        .with_for_update()
     )
-    rep = (await db.execute(stmt)).scalar_one_or_none()
-    if not rep:
-        logger.error("user %s, tried replying to a non-existent review", user_id)
+    row = (await db.execute(stmt)).first()
+    if not row:
+        logger.warning("user %s, tried replying to a non-existent review", user_id)
         raise HTTPException(status_code=404, detail="review not found")
+    review_obj, reply_exist = row
+    if reply_exist:
+        logger.warning(
+            "user: %s, tried replying to a review more than once, review: %s",
+            user_id,
+            reply.review_id,
+        )
+        raise HTTPException(status_code=400, detail="only one reply per review")
     new_reply = Reply(
         user_id=user_id,
         product_id=reply.product_id,
@@ -41,17 +63,17 @@ async def reply(reply, db, payload):
         reply_text=reply.reply_text,
     )
     try:
-        rep.product_reply_count = (rep.product_reply_count or 0) + 1
+        review_obj.product_reply_count = Review.product_reply_count + 1
         db.add(new_reply)
         await db.commit()
-        await product_reply_invalidation()
+        await product_reply_invalidation(reply.product_id)
     except IntegrityError:
         await db.rollback()
-        logger.error("database error occured while making reply user: %s", user_id)
-        raise HTTPException(status_code=400, detail="dataaase error")
+        logger.error("database error occurred while making reply user: %s", user_id)
+        raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
-        logger.exception("error occured while making reply user: %s", user_id)
+        logger.exception("error occurred while making reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("reply successfully saved in database responder: %s", user_id)
     return {"message": "reply successfully posted"}
@@ -59,37 +81,44 @@ async def reply(reply, db, payload):
 
 async def view_replies(product_id, review_id, page, limit, db):
     offset = (page - 1) * limit
-    version = await cache_version("product_reply_key")
+    version = await cache_version(f"product_reply_key:{product_id}")
     cache_key = f"product_reply:v{version}:{product_id}:{review_id}:{page}:{limit}"
     reply_cache = await cache(cache_key)
     if reply_cache:
         logger.info("cache hit for product_id '%s', page: %s", product_id, page)
         return StandardResponse(**reply_cache)
+    priority_case = case(
+        (Store.user_owners.any(User.id == Reply.user_id), 2),
+        (Store.user_staffs.any(User.id == Reply.user_id), 1),
+        else_=0,
+    ).desc()
     stmt = (
         select(Reply)
-        .join(Reply.user)
-        .join(Reply.product)
+        .join(User, Reply.user_id == User.id)
+        .join(Product, Reply.product_id == Product.id)
+        .outerjoin(Store, Product.store_id == Store.id)
         .options(selectinload(Reply.user))
         .where(
             Reply.product_id == product_id,
             ~Product.is_deleted,
             Reply.review_id == review_id,
+            User.is_active,
         )
         .order_by(
-            or_(
-                User.role == "Admin", User.role == "Owner", User.role == "customer_care"
-            ).desc(),
+            priority_case,
             Reply.time_of_post.desc(),
         )
     )
     total = (
         await db.execute(
             select(func.count(Reply.id))
-            .join(Reply.product)
+            .join(User, Reply.user_id == User.id)
+            .join(Product, Reply.product_id == Product.id)
             .where(
                 Reply.product_id == product_id,
                 ~Product.is_deleted,
                 Reply.review_id == review_id,
+                User.is_active,
             )
         )
     ).scalar() or 0
@@ -124,27 +153,37 @@ async def update(reply, db, payload):
     if not user_id:
         logger.warning("unauthorized attempt at edit reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = select(Reply).where(
-        Reply.user_id == user_id,
-        Reply.product_id == reply.product_id,
-        Reply.id == reply.id,
+    stmt = (
+        select(Reply)
+        .where(
+            Reply.user_id == user_id,
+            Reply.product_id == reply.product_id,
+            Reply.id == reply.id,
+        )
+        .with_for_update()
     )
     db_reply = (await db.execute(stmt)).scalar_one_or_none()
     if not db_reply:
         logger.error("user: %s, tried editing a non-existent reply", user_id)
         raise HTTPException(status_code=404, detail="reply not found")
-    db_reply.reply_text = reply.reply_text
+    has_changed = False
+    if reply.reply_text is not None and db_reply.reply_text != reply.reply_text:
+        logger.info("user %s, is updating their reply text", user_id)
+        db_reply.reply_text = reply.reply_text
+        has_changed = True
+    if not has_changed:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     try:
         db_reply.edited = True
         await db.commit()
-        await product_reply_invalidation()
+        await product_reply_invalidation(reply.product_id)
     except IntegrityError:
         await db.rollback()
-        logger.error("database error occured while editing reply user: %s", user_id)
+        logger.error("database error occurred while editing reply user: %s", user_id)
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
-        logger.exception("error occured while editing reply user: %s", user_id)
+        logger.exception("error occurred while editing reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("reply update by user '%s' successfully saved in database", user_id)
     return {"message": "reply successfully edited"}
@@ -163,6 +202,7 @@ async def delete_reply(reply, db, payload):
             Reply.product_id == reply.product_id,
             Reply.id == reply.id,
         )
+        .with_for_update()
     )
     db_reply = (await db.execute(stmt)).scalar_one_or_none()
     if not db_reply:
@@ -174,14 +214,14 @@ async def delete_reply(reply, db, payload):
         )
         await db.delete(db_reply)
         await db.commit()
-        await product_reply_invalidation()
+        await product_reply_invalidation(reply.product_id)
     except IntegrityError:
         await db.rollback()
-        logger.error("database error occured while deleting reply user: %s", user_id)
+        logger.error("database error occurred while deleting reply user: %s", user_id)
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
-        logger.exception("error occured while deleting reply user: %s", user_id)
+        logger.exception("error occurred while deleting reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("user '%s' successfully deleted their reply", user_id)
     return {"message": "deleted reply"}
