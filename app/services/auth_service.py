@@ -144,7 +144,9 @@ async def reg(
 
 async def logins(login, response, db):
     user = (
-        await db.execute(select(User).where(User.username == login.username.strip()))
+        await db.execute(
+            select(User).where(User.username == login.username.strip()), User.is_active
+        )
     ).scalar_one_or_none()
     if not user or not verify_password(login.password, user.password):
         raise HTTPException(status_code=400, detail="invalid username or password")
