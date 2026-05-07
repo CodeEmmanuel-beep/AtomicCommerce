@@ -48,27 +48,28 @@ async def product_invalidation():
     return value
 
 
-async def product_review_invalidation():
-    value = await redis_client.incr("product_review_key")
-    await redis_client.expire("product_review_key", 18000)
+async def product_review_invalidation(product_id: int):
+    value = await redis_client.incr(f"product_review_key:{product_id}")
+    await redis_client.expire(f"product_review_key:{product_id}", 18000)
     return value
 
 
-async def product_reply_invalidation():
-    value = await redis_client.incr("product_reply_key")
-    await redis_client.expire("product_reply_key", 18000)
+async def product_reply_invalidation(product_id: int):
+    version_key = f"product_reply_key:{product_id}"
+    value = await redis_client.incr(version_key)
+    await redis_client.expire(version_key, 18000)
     return value
 
 
-async def store_review_invalidation():
-    value = await redis_client.incr("store_review_key")
-    await redis_client.expire("store_review_key", 18000)
+async def store_review_invalidation(store_id: int):
+    value = await redis_client.incr(f"store_review_key:{store_id}")
+    await redis_client.expire(f"store_review_key:{store_id}", 18000)
     return value
 
 
-async def store_reply_invalidation():
-    value = await redis_client.incr("store_reply_key")
-    await redis_client.expire("store_reply_key", 18000)
+async def store_reply_invalidation(store_id: int):
+    value = await redis_client.incr(f"store_reply_key:{store_id}")
+    await redis_client.expire(f"store_reply_key:{store_id}", 18000)
     return value
 
 
