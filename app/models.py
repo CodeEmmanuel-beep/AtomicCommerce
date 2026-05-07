@@ -149,6 +149,10 @@ class Store(Base):
     category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("categories.id"), index=True
     )
+    avg_rating: Mapped[Decimal] = mapped_column(
+        Numeric(precision=3, scale=2), default=0
+    )
+    review_count: Mapped[int] = mapped_column(Integer, default=0)
     store_email: Mapped[str] = mapped_column(String, nullable=True)
     shipping_fee: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
@@ -241,6 +245,10 @@ class Product(Base):
     image: Mapped[dict] = mapped_column(JSONB, nullable=True)
     product_price: Mapped[Decimal] = mapped_column(Numeric(precision=12, scale=2))
     product_type: Mapped[str] = mapped_column(String)
+    avg_rating: Mapped[Decimal] = mapped_column(
+        Numeric(precision=3, scale=2), default=0
+    )
+    review_count: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str] = mapped_column(String)
     product_size: Mapped[ProductSize] = mapped_column(
         SQLEnum(ProductSize), default=ProductSize.small, index=True
