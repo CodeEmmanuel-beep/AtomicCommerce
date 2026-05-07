@@ -10,7 +10,6 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
 )
 
-
 router = APIRouter(prefix="/store_reviews", tags=["Store_Reviews"])
 
 
@@ -48,7 +47,9 @@ async def store_reviews_update(
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await store_reviews_service.update(review=review, db=db, payload=payload)
+    return await store_reviews_service.update_review(
+        review=review, db=db, payload=payload
+    )
 
 
 @router.delete("/store_review_delete")
