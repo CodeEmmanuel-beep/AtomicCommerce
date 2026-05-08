@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
 from app.utils.supabase_url import _supabase
+from typing import List
 
 router = APIRouter(prefix="/store", tags=["store"])
 
@@ -151,6 +152,20 @@ async def view_store_address(
     return await store_service.view_store_addresses(
         store_id=store_id, page=page, limit=limit, db=db
     )
+
+
+@router.get(
+    "/view_personal_stores",
+    response_model=StandardResponse[List[StoreResponse]],
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
+async def view_stores(
+    position: str = Query("owner", enum=["staff", "owner"]),
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await store_service.view_store(position=position, db=db, payload=payload)
 
 
 @router.get(
