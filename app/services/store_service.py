@@ -13,6 +13,7 @@ from app.models import (
 )
 from app.api.v1.schemas import (
     StoreAccountResponse,
+    StoreResponse,
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
@@ -21,10 +22,10 @@ from app.api.v1.schemas import (
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload
-from sqlalchemy import func, select, text, and_, exists, update
+from sqlalchemy import func, select, text, and_, exists, update, or_
 from sqlalchemy.exc import IntegrityError
 from app.utils.helper import view_store_helper, upload_photo_helper
-from app.utils.supabase_url import cleaned_up
+from app.utils.supabase_url import cleaned_up, get_public_url
 from app.utils.redis import store_invalidation, cache, cached
 import re
 import regex
@@ -493,6 +494,59 @@ async def view_store_addresses(store_id, page, limit, db):
         "data returned at view store addresses endpoint for store: %s", store_id
     )
     return full_response
+
+
+async def view_store(position, db, payload):
+    user_id = payload.get("user_id")
+    cache_key = f"store_view:{position}:{user_id}"
+    store_cache = await cache(cache_key)
+    if store_cache:
+        logger.info(f"cache hit for user '{user_id}' at view store endpoint")
+        return StandardResponse(**store_cache)
+    if position not in ["owner", "staff"]:
+        logger.warning(
+            "user: %s, tried accessing a restricted endpoint 'view_store endpoint' with position: %s",
+            user_id,
+            position,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    query = (
+        store_owners.c.users_id == user_id
+        if position == "owner"
+        else store_staffs.c.users_id == user_id
+    )
+    stmt = (
+        select(Store)
+        .outerjoin(store_owners, Store.id == store_owners.c.stores_id)
+        .outerjoin(store_staffs, Store.id == store_staffs.c.stores_id)
+        .where(query, ~Store.is_deleted)
+    )
+    store_type = (await db.execute(stmt)).scalars().all()
+    if not store_type:
+        msg = (
+            "you do not own any store yet"
+            if position == "owner"
+            else "you do not work in any store yet"
+        )
+        logger.info("search for stores returned an empty list")
+        return StandardResponse(
+            status="success",
+            message=msg,
+            data=None,
+        )
+    items = []
+    datas = [StoreResponse.model_validate(s_t) for s_t in store_type]
+    for data, s_type in zip(datas, store_type):
+        data.business_logo = (
+            get_public_url(s_type.business_logo) if s_type.business_logo else None
+        )
+        data.store_photo = get_public_url(s_type.store_photo)  # type: ignore
+        items.append(data)
+    message = "stores you own" if position == "owner" else "stores you work in"
+    response = StandardResponse(status="success", message=message, data=items)
+    await cached(cache_key, response, ttl=180)
+    logger.info("search for stores returned data")
+    return response
 
 
 async def view_stores_by_category(seed, category_name, page, limit, db):
