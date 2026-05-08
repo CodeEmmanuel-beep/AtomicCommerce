@@ -75,20 +75,20 @@ class StoreUpdate(BaseModel):
 
 class StoreResponse(BaseModel):
     id: int
-    business_logo: str
+    business_logo: str | None = None
     store_photo: str
     store_name: str
-    category_name: List[str]
-    sub_category: str
+    category_name: str
+    sub_category: List[str]
     store_previous_name: str | None = None
     store_contact: str | None = None
     store_email: str | None = None
-    avg_rating: Decimal
-    review_count: int
-    motto: str
-    description: str
+    avg_rating: Decimal = Field(default=Decimal(0))
+    review_count: int = Field(default=0)
+    motto: str | None = None
+    description: str | None = None
     approved: bool = Field(default=False)
-    founded: datetime
+    founded: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
