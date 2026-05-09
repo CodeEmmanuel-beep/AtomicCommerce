@@ -75,7 +75,7 @@ async def store_reply_invalidation(store_id: int):
 
 async def store_invalidation():
     value = await redis_client.incr("store_key")
-    await redis_client.expire("company_review_key", 18000)
+    await redis_client.expire("store_key", 18000)
     return value
 
 
