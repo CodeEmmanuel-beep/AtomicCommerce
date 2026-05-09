@@ -73,26 +73,6 @@ class StoreUpdate(BaseModel):
     store_contact: str | None = None
 
 
-class StoreResponse(BaseModel):
-    id: int
-    business_logo: str | None = None
-    store_photo: str
-    store_name: str
-    category_name: str
-    sub_category: List[str]
-    store_previous_name: str | None = None
-    store_contact: str | None = None
-    store_email: str | None = None
-    avg_rating: Decimal = Field(default=Decimal(0))
-    review_count: int = Field(default=0)
-    motto: str | None = None
-    description: str | None = None
-    approved: bool = Field(default=False)
-    founded: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class StoreAccountDetails(BaseModel):
     account_name: str
     account_number: str
@@ -299,6 +279,27 @@ class ProductResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class StoreResponse(BaseModel):
+    id: int
+    business_logo: str | None = None
+    store_photo: str
+    store_name: str
+    category_name: str
+    sub_category: List[str]
+    store_previous_name: str | None = None
+    store_contact: str | None = None
+    store_email: str | None = None
+    avg_rating: Decimal = Field(default=Decimal(0))
+    review_count: int = Field(default=0)
+    motto: str | None = None
+    featured_product: List[ProductRes] = Field(default_factory=list)
+    description: str | None = None
+    approved: bool = Field(default=False)
+    founded: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class PaymentResponse(BaseModel):
     id: int
     name: List[str] = Field(default_factory=list)
@@ -413,17 +414,17 @@ class Orders(BaseModel):
     price: float
 
 
-class OrderItemRes(BaseModel):
-    product: ProductRes
-    membership_type: str = Field(default_factory=str)
-    quantity: float
-    price: float
+class MemRes(BaseModel):
+    membership_type: str
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class MemRes(BaseModel):
-    membership_type: str
+class OrderItemRes(BaseModel):
+    product: ProductRes
+    membership_type: List[MemRes] = Field(default_factory=list)
+    quantity: float
+    price: float
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -449,7 +450,7 @@ class MembershipResponse(BaseModel):
 
     @computed_field
     def offer_status(self) -> str:
-        if ~self.is_active:
+        if not self.is_active:
             return "must be an active member to receive a membership discount"
         discounts = {"Regular": "3%", "Standard": "5%", "Premium": "10%"}
         rate = discounts.get(self.membership_type, "0%")
