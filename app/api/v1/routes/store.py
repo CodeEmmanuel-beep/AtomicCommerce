@@ -169,74 +169,28 @@ async def view_stores(
 
 
 @router.get(
-    "/view_store_by_category",
+    "/search_stores_global",
     response_model=StandardResponse[PaginatedMetadata[StoreResponse]],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def view_store_through_category(
-    category_name: str,
+async def view_stores_global(
+    search_value: str,
+    search: str = Query(
+        "category", enum=["category", "sub_category", "store_name", "product_name"]
+    ),
     seed: float = 0.5,
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    return await store_service.view_stores_by_category(
-        category_name=category_name, seed=seed, page=page, limit=limit, db=db
-    )
-
-
-@router.get(
-    "/view_store_by_name",
-    response_model=StandardResponse[PaginatedMetadata[StoreResponse]],
-    response_model_exclude_none=True,
-    response_model_exclude_defaults=True,
-)
-async def view_store_through_name(
-    store_name: str,
-    seed: float = 0.5,
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-):
-    return await store_service.view_stores_by_store_name(
-        store_name=store_name, seed=seed, page=page, limit=limit, db=db
-    )
-
-
-@router.get(
-    "/view_store_by_business_type",
-    response_model=StandardResponse[PaginatedMetadata[StoreResponse]],
-    response_model_exclude_none=True,
-    response_model_exclude_defaults=True,
-)
-async def view_store_through_business_type(
-    business_type: str,
-    seed: float = 0.5,
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-):
-    return await store_service.view_stores_by_business_type(
-        business_type=business_type, seed=seed, page=page, limit=limit, db=db
-    )
-
-
-@router.get(
-    "/view_store_by_product/{store_id}",
-    response_model=StandardResponse[PaginatedMetadata[StoreResponse]],
-    response_model_exclude_none=True,
-    response_model_exclude_defaults=True,
-)
-async def view_store_through_product(
-    product_name: str,
-    seed: float = 0.5,
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-):
-    return await store_service.view_stores_by_product_name(
-        product_name=product_name, seed=seed, page=page, limit=limit, db=db
+    return await store_service.search_stores(
+        search_value=search_value,
+        search=search,
+        seed=seed,
+        page=page,
+        limit=limit,
+        db=db,
     )
 
 
