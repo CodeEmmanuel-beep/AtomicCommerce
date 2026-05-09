@@ -17,16 +17,17 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
+    ProductRes,
     AddressDetails,
 )
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
-from sqlalchemy.orm import selectinload
-from sqlalchemy import func, select, text, and_, exists, update, or_
+from sqlalchemy.orm import selectinload, aliased
+from sqlalchemy import func, select, text, and_, exists, update, cast, String
 from sqlalchemy.exc import IntegrityError
-from app.utils.helper import view_store_helper, upload_photo_helper
+from app.utils.helper import upload_photo_helper
 from app.utils.supabase_url import cleaned_up, get_public_url
-from app.utils.redis import store_invalidation, cache, cached
+from app.utils.redis import store_invalidation, cache, cached, cache_version
 import re
 import regex
 
@@ -290,7 +291,7 @@ async def approve_stores(slug, db, payload):
     owner = payload.get("role")
     if not user_id or owner != "Owner":
         logger.warning("unauthorized attempt at approve_storea endpoint")
-        raise HTTPException(status_code=401, detail="restricted")
+        raise HTTPException(status_code=401, detail="restricted access")
     approved = (
         await db.execute(
             select(Store).where(Store.slug == slug, ~Store.is_deleted, ~Store.approved)
@@ -549,24 +550,103 @@ async def view_store(position, db, payload):
     return response
 
 
-async def view_stores_by_category(seed, category_name, page, limit, db):
-    return await view_store_helper(seed, category_name, Category.name, page, limit, db)
-
-
-async def view_stores_by_business_type(seed, business_type, page, limit, db):
-    return await view_store_helper(
-        seed, business_type, Store.business_type, page, limit, db
+async def search_stores(search, search_value, seed, page, limit, db):
+    if search not in ["category", "sub_category", "store_name", "product_name"]:
+        logger.warning(
+            "invalid field in search attempted at the search stores endpoint"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="invalid search, only 'category','sub_category','store_name' and 'product_name' are allowed",
+        )
+    offset = (page - 1) * limit
+    version = await cache_version("store_key")
+    cache_key = f"store_view:v{version}:{seed}:{search}:{search_value}:{page}:{limit}"
+    store_cache = await cache(cache_key)
+    if store_cache:
+        logger.info(f"cache hit for {search_value} at search stores endpoint")
+        return StandardResponse(**store_cache)
+    total = None
+    async with db as conn:
+        inner_stmt = (
+            select(Product)
+            .where(
+                Product.store_id == Store.id,
+                Product.product_name.ilike(f"%{search_value}%"),
+                ~Product.is_deleted,
+            )
+            .order_by(Product.id.desc())
+            .limit(1)
+            .correlate(Store)
+            .lateral("product")
+        )
+        product_aliase = aliased(Product, inner_stmt, name="product_aliase")
+        filter_column = {
+            "category": Store.category_name.ilike(f"%{search_value}%"),
+            "sub_category": cast(Store.sub_category, String).ilike(f"%{search_value}%"),
+            "store_name": Store.store_name.ilike(f"%{search_value}%"),
+            "product_name": product_aliase.product_name.ilike(f"%{search_value}%"),
+        }[search]
+        stmt = (
+            select(Store, product_aliase)
+            .outerjoin(product_aliase, Store.id == product_aliase.store_id)
+            .where(
+                filter_column,
+                Store.approved,
+                ~Store.is_deleted,
+            )
+            .order_by(func.md5(func.concat(cast(Store.id, String), str(seed))))
+        )
+        rows = (await conn.execute(stmt.offset(offset).limit(limit))).all()
+        if not rows:
+            logger.info(
+                "search for '%s' stores returned an empty list",
+                search_value,
+            )
+            return StandardResponse(
+                status="success",
+                message="no store available under this search",
+                data=None,
+            )
+        count_stmt = select(func.count(Store.id))
+        if search == "product_name":
+            count_stmt = count_stmt.outerjoin(
+                product_aliase, Store.id == product_aliase.store_id
+            )
+        total = (
+            await conn.execute(
+                count_stmt.where(
+                    filter_column,
+                    Store.approved,
+                    ~Store.is_deleted,
+                )
+            )
+        ).scalar() or 0
+        logger.info("total stores found is '%s'", total)
+    items = []
+    for s_type, prod in rows:
+        data = StoreResponse.model_validate(s_type)
+        data.business_logo = (
+            get_public_url(s_type.business_logo) if s_type.business_logo else None
+        )
+        data.store_photo = get_public_url(s_type.store_photo)  # type: ignore
+        if prod:
+            prod_data = ProductRes.model_validate(prod)
+            prod_data.primary_image = get_public_url(prod.primary_image)  # type: ignore
+            data.featured_product = [prod_data]
+        items.append(data)
+    data_obj = PaginatedMetadata[StoreResponse](
+        items=items,
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
-
-
-async def view_stores_by_product_name(seed, product_name, page, limit, db):
-    return await view_store_helper(
-        seed, product_name, Product.product_name, page, limit, db
+    response = StandardResponse(
+        status="success",
+        message=f"available '{search_value}' stores",
+        data=data_obj,
     )
-
-
-async def view_stores_by_store_name(seed, store_name, page, limit, db):
-    return await view_store_helper(seed, store_name, Store.store_name, page, limit, db)
+    await cached(cache_key, response, ttl=36000)
+    logger.info("search for stores returned data")
+    return response
 
 
 async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
