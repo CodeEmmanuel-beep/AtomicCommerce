@@ -140,9 +140,6 @@ async def create(
         await cart_global_invalidation()
         await order_global_invalidation()
         await product_invalidation()
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         if uploaded_file:
@@ -163,9 +160,9 @@ async def create(
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
-        logger.exception("error while saving product data")
         if isinstance(e, HTTPException):
             raise e
+        logger.exception("error while saving product data")
         raise HTTPException(status_code=500, detail="internal server error")
     return {"status": "success", "message": "product added to shelve"}
 
@@ -305,9 +302,6 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
                 context_2="successfully removed orphaned product images",
             )
         logger.info("successfully updated product data")
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         if uploaded_file:
@@ -330,7 +324,7 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
             )
         if isinstance(e, HTTPException):
             raise e
-        logger.error("error occured while updating product data")
+        logger.exception("error occured while updating product data")
         raise HTTPException(status_code=500, detail="internal server error")
     return {"status": "success", "message": "product updated successfully"}
 
@@ -493,9 +487,6 @@ async def delete_one(store_id, product_id, background_task, db, payload, get_sup
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
-    except HTTPException:
-        await db.rollback()
-        raise
     except Exception:
         await db.rollback()
         logger.exception(
