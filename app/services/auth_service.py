@@ -96,8 +96,7 @@ async def reg(
                     context_2="successfully removed orphaned profile photo",
                 )
                 if isinstance(e, HTTPException):
-                    await db.rollback()
-                    raise
+                    raise e
                 raise HTTPException(status_code=500, detail="error saving photo")
     password = hashed_password(password)
     logger.info("Starting registration for user: %s", username)
@@ -115,9 +114,6 @@ async def reg(
     try:
         db.add(new_user)
         await db.commit()
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         logger.error("could not register user %s", username)
         if filename:
@@ -128,7 +124,8 @@ async def reg(
                 context_2="successfully removed orphaned profile photo",
             )
         raise HTTPException(status_code=400, detail="database error")
-    except Exception:
+    except Exception as e:
+        await db.rollback()
         logger.exception("could not register user %s", username)
         if filename:
             await cleaned_up(
@@ -137,6 +134,8 @@ async def reg(
                 context_1="error removing orphaned profile photo",
                 context_2="successfully removed orphaned profile photo",
             )
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("user: %s, successfully registered", username)
     return {f"Registeration Successful {username}, login to continue"}
