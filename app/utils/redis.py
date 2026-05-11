@@ -73,10 +73,24 @@ async def store_reply_invalidation(store_id: int):
     return value
 
 
-async def store_invalidation():
+async def store_invalidation_global():
     value = await redis_client.incr("store_key")
     await redis_client.expire("store_key", 18000)
     return value
+
+
+async def store_invalidation(user_id: int):
+    cursor = 0
+    pattern = f"store_view:{user_id}:*"
+    delete = False
+    while True:
+        cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
+        if keys:
+            await redis_client.delete(*keys)
+            delete = True
+        if cursor == 0 or cursor == b"0":
+            break
+    return delete
 
 
 async def order_invalidation(user_id: int):
