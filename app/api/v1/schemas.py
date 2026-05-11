@@ -63,16 +63,6 @@ class NotificationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class StoreUpdate(BaseModel):
-    store_id: int
-    store_name: str | None
-    motto: str | None
-    business_type: List[str]
-    store_description: str | None
-    store_email: str | None = None
-    store_contact: str | None = None
-
-
 class StoreAccountDetails(BaseModel):
     account_name: str
     account_number: str
@@ -293,7 +283,7 @@ class StoreResponse(BaseModel):
     review_count: int = Field(default=0)
     motto: str | None = None
     featured_product: List[ProductRes] = Field(default_factory=list)
-    description: str | None = None
+    store_description: str | None = None
     approved: bool = Field(default=False)
     founded: datetime | None = None
 
