@@ -34,7 +34,6 @@ async def reply(reply, db, payload):
             selectinload(Review.store).selectinload(Store.user_staffs),
         )
         .where(Review.store_id == reply.store_id, Review.id == reply.review_id)
-        .with_for_update()
     )
     rep = (await db.execute(stmt)).scalar_one_or_none()
     if not rep:
