@@ -27,10 +27,12 @@ async def cleaned_up(get_supabase, file, context_1="str", context_2="str"):
     try:
         if isinstance(file, str):
             file = [file]
-        clean_up = await get_supabase.storage.from_(settings.BUCKET).remove(file)
-        if hasattr(clean_up, "error"):
-            logger.error("%s %s", context_1, clean_up)
-        else:
+        logger.info("attempting cleanup for files: %s", file)
+        response = await get_supabase.storage.from_(settings.BUCKET).remove(file)
+        logger.info("supabase delete response: %s", response)
+        if response:
             logger.info("%s %s", context_2, file)
+        else:
+            logger.error("%s %s", context_1, file)
     except Exception:
         logger.exception("CRITICAL STORAGE ERROR")
