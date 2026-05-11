@@ -23,11 +23,18 @@ from app.api.v1.schemas import (
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload, aliased
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func, select, text, and_, exists, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from app.utils.helper import upload_photo_helper
 from app.utils.supabase_url import cleaned_up, get_public_url
-from app.utils.redis import store_invalidation, cache, cached, cache_version
+from app.utils.redis import (
+    store_invalidation,
+    cache,
+    cached,
+    cache_version,
+    store_invalidation_global,
+)
 import re
 import regex
 
@@ -69,7 +76,13 @@ async def store_creation(
         if isinstance(owners, str):
             owners = [int(i.strip()) for i in owners.split(",")]
         elif isinstance(owners, list):
-            owners = [int(i.strip()) for i in owners[0].split(",")]
+            normalized = []
+            for item in owners:
+                if isinstance(item, str):
+                    normalized.extend(i.strip() for i in item.split(","))
+                else:
+                    normalized.append(str(item).strip())
+            owners = normalized
     except ValueError:
         raise HTTPException(
             status_code=400, detail="owners must be a comma-separated list of numbers"
@@ -78,9 +91,15 @@ async def store_creation(
         if isinstance(sub_category, str):
             sub_category = [str(i.strip()) for i in sub_category.split(",")]
         elif isinstance(sub_category, list):
-            sub_category = [str(i.strip()) for i in sub_category[0].split(",")]
+            normalized = []
+            for item in sub_category:
+                if isinstance(item, str):
+                    normalized.extend(i.strip() for i in item.split(","))
+                else:
+                    normalized.append(str(item).strip())
+            sub_category = normalized
     except ValueError:
-        raise HTTPException(status_code=400, detail="error inputing sub_category field")
+        raise HTTPException(status_code=400, detail="error parsing sub_category field")
     owners_input = list(set(owners))
     if user_id not in owners_input:
         logger.warning("user: %s, tried being a third party creator", user_id)
@@ -155,10 +174,6 @@ async def store_creation(
     try:
         db.add(new_store)
         await db.commit()
-        await store_invalidation()
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         await cleaned_up(
@@ -169,7 +184,7 @@ async def store_creation(
         )
         logger.error("database error while creating store for user '%s'", user_id)
         raise HTTPException(status_code=400, detail="database error")
-    except Exception:
+    except Exception as e:
         await db.rollback()
         await cleaned_up(
             get_supabase,
@@ -177,6 +192,8 @@ async def store_creation(
             context_1="error removing orphaned store photo",
             context_2="successfully removed orphaned store photo",
         )
+        if isinstance(e, HTTPException):
+            raise e
         logger.exception("error while creating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("store: %s, created successfully", new_store.id)
@@ -184,82 +201,170 @@ async def store_creation(
 
 
 async def store_update(
-    storeupdate, business_logo, store_photo, db, payload, get_supabase
+    update_type,
+    store_id,
+    store_name,
+    shipping_fee,
+    sub_category,
+    store_email,
+    store_contact,
+    store_photo,
+    business_logo,
+    motto,
+    description,
+    db,
+    payload,
+    get_supabase,
 ):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("unauthorized attempt at store_creation endpoint")
+        logger.warning("unauthorized attempt at store_update endpoint")
         raise HTTPException(
             status_code=401, detail="only registered users can own a store"
         )
-    if not store_name_pattern.fullmatch(storeupdate.store_name):
-        raise HTTPException(status_code=400, detail="store names should be in letters")
-    stmt = (
-        select(Store)
-        .where(
-            Store.id == storeupdate.store_id,
-            Store.approved,
-            Store.user_owners.any(User.id == user_id),
-        )
-        .with_for_update()
-    )
-    store_map = (await db.execute(stmt)).scalar_one_or_none()
-    if not store_map:
+    if update_type not in ["add", "replace"]:
         logger.warning(
-            "user: %s, tried to edit store with store_id: %s, when they are",
+            "user: %s, tried an invalid update type at store update endpoint, update_type: %s",
             user_id,
-            storeupdate.store_id,
-        )
-        raise HTTPException(status_code=403, detail="restricted access")
-    if store_map.edited_name and storeupdate.store_name:
-        logger.warning(
-            "user: %s, tried to edit store with store_id: %s, name more than once",
-            user_id,
-            storeupdate.store_id,
+            update_type,
         )
         raise HTTPException(
-            status_code=400, detail="Store name cannot be changed morethan once"
+            status_code=400,
+            detail="invalid update type, only 'add' and 'replace' are allowed",
         )
+    if store_name:
+        if not store_name_pattern.fullmatch(store_name):
+            raise HTTPException(
+                status_code=400, detail="store names should be in letters"
+            )
     old_photo = []
     filename_link = []
-    if store_photo:
-        old_photo.append(store_map.store_photo) if store_map.store_photo else None
-        filename = await upload_photo_helper(store_photo, db, payload, get_supabase)
-        store_map.store_photo = filename
-        filename_link.append(filename)
-    if business_logo:
-        old_photo.append(store_map.business_logo) if store_map.business_logo else None
-        filename = await upload_photo_helper(business_logo, db, payload, get_supabase)
-        store_map.business_logo = filename
-        filename_link.append(filename)
-    if storeupdate.store_name:
-        store_map.store_previous_name = store_map.store_name
-        store_map.store_name = storeupdate.store_name
-        store_map.edited_name = True
-    update_fields = [
-        "motto",
-        "store_description",
-        "store_contact",
-        "business_type",
-        "store_email",
-    ]
-    for field in update_fields:
-        value = getattr(storeupdate, field, None)
-        if value is not None:
-            setattr(store_map, field, value)
+    filename = None
+    file = None
+    has_changed = False
     try:
-        await db.commit()
-        if old_photo:
-            await cleaned_up(
-                get_supabase,
-                old_photo,
-                context_1="error removing orphaned store photo",
-                context_2="successfully removed orphaned store photo",
+        if store_photo:
+            filename = await upload_photo_helper(store_photo, db, payload, get_supabase)
+            filename_link.append(filename)
+            has_changed = True
+        if business_logo:
+            file = await upload_photo_helper(business_logo, db, payload, get_supabase)
+            filename_link.append(file)
+            has_changed = True
+        stmt = (
+            select(Store)
+            .options(selectinload(Store.user_owners))
+            .where(
+                Store.id == store_id,
+                ~Store.is_deleted,
             )
-        await store_invalidation()
-    except HTTPException:
-        await db.rollback()
-        raise
+            .with_for_update()
+        )
+        store_map = (await db.execute(stmt)).scalar_one_or_none()
+        if not store_map:
+            logger.warning(
+                "user: %s, tried to edit store that does not exist, store_id: %s",
+                user_id,
+                store_id,
+            )
+            raise HTTPException(status_code=404, detail="store not found")
+        if not any(owner.id == user_id for owner in store_map.user_owners):
+            logger.warning(
+                "user: %s, tried to edit store with store_id: %s, when they are are not owner",
+                user_id,
+                store_id,
+            )
+            raise HTTPException(status_code=403, detail="restricted access")
+        if store_photo:
+            old_photo.append(store_map.store_photo) if store_map.store_photo else None
+            store_map.store_photo = filename
+        if business_logo:
+            (
+                old_photo.append(store_map.business_logo)
+                if store_map.business_logo
+                else None
+            )
+            store_map.business_logo = file
+        if store_map.edited_name and store_name and store_name != store_map.store_name:
+            logger.warning(
+                "user: %s, tried to edit store_name of store: '%s', more than once",
+                user_id,
+                store_id,
+            )
+            raise HTTPException(
+                status_code=400, detail="Store name cannot be changed more than once"
+            )
+        if store_name and store_name != store_map.store_name:
+            store_map.store_previous_name = store_map.store_name
+            store_map.store_name = store_name
+            store_map.edited_name = True
+            has_changed = True
+        if sub_category:
+            try:
+                if isinstance(sub_category, str):
+                    sub_category = [str(i.strip()) for i in sub_category.split(",")]
+                elif isinstance(sub_category, list):
+                    normalized = []
+                    for item in sub_category:
+                        if isinstance(item, str):
+                            normalized.extend(i.strip() for i in item.split(","))
+                        else:
+                            normalized.append(str(item).strip())
+                    sub_category = normalized
+            except ValueError:
+                raise HTTPException(
+                    status_code=400, detail="error parsing sub_category field"
+                )
+            sub_count = (
+                await db.execute(
+                    select(func.count(SubCategory.id)).where(
+                        SubCategory.name.in_(sub_category),
+                        SubCategory.category_id == store_map.category_id,
+                    )
+                )
+            ).scalar() or 0
+            if sub_count != len(set(sub_category)):
+                logger.warning(
+                    "user %s, tried inputing a sub_category not found in the database",
+                    user_id,
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail="sub_category do not match the values available",
+                )
+            if update_type == "add":
+                current_sub_category = set(store_map.sub_category or [])
+                new_sub_category = set(sub_category)
+                store_map.sub_category = list(
+                    current_sub_category.union(new_sub_category)
+                )
+                flag_modified(store_map, "sub_category")
+            else:
+                store_map.sub_category = sub_category
+            has_changed = True
+        update_fields = {
+            "motto": motto,
+            "store_description": description,
+            "store_contact": store_contact,
+            "store_email": store_email,
+            "shipping_fee": shipping_fee,
+        }
+        for attr, field in update_fields.items():
+            if field:
+                setattr(store_map, attr, field)
+                has_changed = True
+        if has_changed:
+            await db.commit()
+            if old_photo:
+                await cleaned_up(
+                    get_supabase,
+                    old_photo,
+                    context_1="error removing orphaned store photo",
+                    context_2="successfully removed orphaned store photo",
+                )
+            await store_invalidation(user_id)
+            await store_invalidation_global()
+            return {"message": "store updated"}
     except IntegrityError:
         await db.rollback()
         if filename_link:
@@ -271,7 +376,7 @@ async def store_update(
             )
         logger.error("database error while updating store for user '%s'", user_id)
         raise HTTPException(status_code=400, detail="database error")
-    except Exception:
+    except Exception as e:
         await db.rollback()
         if filename_link:
             await cleaned_up(
@@ -280,10 +385,12 @@ async def store_update(
                 context_1="error removing orphaned store photo",
                 context_2="successfully removed orphaned store photo",
             )
+        if isinstance(e, HTTPException):
+            raise e
         logger.exception("error while updating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("store: %s, updated successfully", store_map.id)
-    return {"message": "store updated"}
+    return {"message": "no changes detected, store not updated"}
 
 
 async def approve_stores(slug, db, payload):
@@ -499,7 +606,7 @@ async def view_store_addresses(store_id, page, limit, db):
 
 async def view_store(position, db, payload):
     user_id = payload.get("user_id")
-    cache_key = f"store_view:{position}:{user_id}"
+    cache_key = f"store_view:{user_id}:{position}"
     store_cache = await cache(cache_key)
     if store_cache:
         logger.info(f"cache hit for user '{user_id}' at view store endpoint")
@@ -561,7 +668,9 @@ async def search_stores(search, search_value, seed, page, limit, db):
         )
     offset = (page - 1) * limit
     version = await cache_version("store_key")
-    cache_key = f"store_view:v{version}:{seed}:{search}:{search_value}:{page}:{limit}"
+    cache_key = (
+        f"store_global_view:v{version}:{seed}:{search}:{search_value}:{page}:{limit}"
+    )
     store_cache = await cache(cache_key)
     if store_cache:
         logger.info(f"cache hit for {search_value} at search stores endpoint")
@@ -980,7 +1089,7 @@ async def remove_store(store_id, db, payload):
     )
     try:
         await db.commit()
-        await store_invalidation()
+        await store_invalidation_global()
     except IntegrityError:
         await db.rollback()
         logger.error(
