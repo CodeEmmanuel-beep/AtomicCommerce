@@ -119,7 +119,7 @@ async def edit_profile(
                     context_2="successfully removed orphaned profile photo",
                 )
                 if isinstance(e, HTTPException):
-                    raise
+                    raise e
                 raise HTTPException(status_code=500, detail="error saving photo")
     logger.info("Starting update for user: %s", user_id)
     fields = {
@@ -143,9 +143,6 @@ async def edit_profile(
                 context_1="error removing old profile photo",
                 context_2="successfully old profile photo",
             )
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError as e:
         logger.error(f"could not edit profile for user, {user_id}: {str(e)}")
         if filename:
@@ -156,7 +153,7 @@ async def edit_profile(
                 context_2="successfully removed orphaned profile photo",
             )
         raise HTTPException(status_code=400, detail="database error")
-    except Exception:
+    except Exception as e:
         logger.exception("could not edit profile for user %s", user_id)
         if filename:
             await cleaned_up(
@@ -165,6 +162,8 @@ async def edit_profile(
                 context_1="error removing orphaned profile photo",
                 context_2="successfully removed orphaned profile photo",
             )
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("user: %s, successfully edited his profile", user_id)
     return {"status": "success", "message": "profile successfully edited"}
