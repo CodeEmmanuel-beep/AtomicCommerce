@@ -7,13 +7,13 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
     AddressDetails,
     StoreResponse,
-    StoreUpdate,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
 from app.utils.supabase_url import _supabase
 from typing import List
+from decimal import Decimal
 
 router = APIRouter(prefix="/store", tags=["store"])
 
@@ -49,19 +49,35 @@ async def create_store(
     )
 
 
-@router.put("/update")
+@router.put("/update/{store_id}")
 async def update_store(
-    storeupdate: StoreUpdate,
+    store_id: int,
+    update_type: str = Query("add", enum=["add", "replace"]),
+    store_photo: UploadFile = File(None),
+    business_logo: UploadFile = File(None),
+    store_name: str = Form(None),
+    sub_category: str = Form(None),
+    motto: str = Form(None),
+    description: str = Form(None),
+    store_contact: str = Form(None),
+    store_email: str = Form(None),
+    shipping_fee: Decimal = Form(None),
     get_supabase=Depends(_supabase),
-    store_photo: UploadFile = File(...),
-    business_logo: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await store_service.store_update(
+        store_id=store_id,
+        update_type=update_type,
         business_logo=business_logo,
         store_photo=store_photo,
-        storeupdate=storeupdate,
+        store_name=store_name,
+        sub_category=sub_category,
+        motto=motto,
+        description=description,
+        store_contact=store_contact,
+        store_email=store_email,
+        shipping_fee=shipping_fee,
         db=db,
         payload=payload,
         get_supabase=get_supabase,
