@@ -34,16 +34,12 @@ async def reply(reply, db, payload):
     if not user_id:
         logger.warning("unauthorized attempt at create reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = (
-        select(
-            Review,
-            exists()
-            .where(Reply.user_id == user_id, Reply.review_id == reply.review_id)
-            .label("already_replied"),
-        )
-        .where(Review.id == reply.review_id, Review.product_id == reply.product_id)
-        .with_for_update()
-    )
+    stmt = select(
+        Review,
+        exists()
+        .where(Reply.user_id == user_id, Reply.review_id == reply.review_id)
+        .label("already_replied"),
+    ).where(Review.id == reply.review_id, Review.product_id == reply.product_id)
     row = (await db.execute(stmt)).first()
     if not row:
         logger.warning("user %s, tried replying to a non-existent review", user_id)
@@ -202,7 +198,6 @@ async def delete_reply(reply, db, payload):
             Reply.product_id == reply.product_id,
             Reply.id == reply.id,
         )
-        .with_for_update()
     )
     db_reply = (await db.execute(stmt)).scalar_one_or_none()
     if not db_reply:
