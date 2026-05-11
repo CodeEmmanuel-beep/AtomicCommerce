@@ -22,16 +22,12 @@ async def product_review(review, db, payload):
     if not user_id:
         logger.warning("unauthorized attempt to access product_review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = (
-        select(
-            Product,
-            exists().where(
-                Review.user_id == user_id, Review.product_id == review.product_id
-            ),
-        )
-        .where(Product.id == review.product_id, ~Product.is_deleted)
-        .with_for_update()
-    )
+    stmt = select(
+        Product,
+        exists().where(
+            Review.user_id == user_id, Review.product_id == review.product_id
+        ),
+    ).where(Product.id == review.product_id, ~Product.is_deleted)
     row = (await db.execute(stmt)).first()
     if not row:
         logger.warning(
@@ -182,7 +178,6 @@ async def delete_review(product_id, db, payload):
             Review.user_id == user_id,
             Review.product_id == product_id,
         )
-        .with_for_update()
     )
     row = (await db.execute(stmt)).first()
     if not row:
