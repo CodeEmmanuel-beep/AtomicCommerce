@@ -129,10 +129,7 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
                     raise HTTPException(
                         status_code=500, detail="error uploading store photo"
                     )
-            except HTTPException:
-                await db.rollback()
-                raise
-            except Exception:
+            except Exception as e:
                 await db.rollback()
                 if filename:
                     await cleaned_up(
@@ -141,6 +138,8 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
                         context_1="error removing orphaned photo",
                         context_2="successfully removed orphaned photo",
                     )
+                    if isinstance(e, HTTPException):
+                        raise e
                     logger.exception("error saving photo")
                     raise HTTPException(status_code=500, detail="error saving photo")
     logger.info(f"User '{user_id}' is sending a message to 'customer support'.")
@@ -235,10 +234,7 @@ async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
                     raise HTTPException(
                         status_code=500, detail="error uploading store photo"
                     )
-            except HTTPException:
-                await db.rollback()
-                raise
-            except Exception:
+            except Exception as e:
                 await db.rollback()
                 if filename:
                     await cleaned_up(
@@ -247,6 +243,8 @@ async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
                         context_1="error removing orphaned photo",
                         context_2="successfully removed orphaned photo",
                     )
+                    if isinstance(e, HTTPException):
+                        raise e
                     logger.exception("error saving store photo")
                     raise HTTPException(status_code=500, detail="error saving photo")
     ticket = (
