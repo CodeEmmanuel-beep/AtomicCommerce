@@ -92,11 +92,10 @@ async def upload_photo_helper(photo, db, payload, get_supabase):
                 logger.error("error uploading photo %s", upload_photo)
                 raise HTTPException(status_code=500, detail="error uploading photo")
             return filename
-        except HTTPException:
+        except Exception as e:
             await db.rollback()
-            raise
-        except Exception:
-            await db.rollback()
+            if isinstance(e, HTTPException):
+                raise e
             if filename:
                 await cleaned_up(
                     get_supabase,
