@@ -193,17 +193,65 @@ class Address(Base):
     orders = relationship("Order", back_populates="address")
 
 
+class IdType(str, Enum):
+    voter_id = "voter_id"
+    national_id = "national_id"
+    driver_license = "driver_license"
+    other_id = "other_id"
+
+
+class AccountType(str, Enum):
+    savings = "savings"
+    current = "current"
+    business = "business"
+
+
+class AccountVerification(str, Enum):
+    pending = "pending"
+    verified = "verified"
+    rejected = "rejected"
+
+
 class StoreAccount(Base):
     __tablename__ = "store_accounts"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
-    account_name: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    account_number: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    tax_identification_number: Mapped[bytes] = mapped_column(
-        LargeBinary, nullable=False
+    bank_name: Mapped[str] = mapped_column(String, nullable=False)
+    account_holder_name: Mapped[str] = mapped_column(String, nullable=False)
+    account_type: Mapped[AccountType] = mapped_column(
+        SQLEnum(AccountType), default=AccountType.savings, nullable=False
     )
+    type_of_id: Mapped[IdType] = mapped_column(
+        SQLEnum(IdType), default=IdType.national_id, nullable=False
+    )
+    account_number: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    tax_identification_number: Mapped[bytes] = mapped_column(LargeBinary, nullable=True)
     identification_number: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    verification_status: Mapped[AccountVerification] = mapped_column(
+        SQLEnum(AccountVerification), default=AccountVerification.pending, index=True
+    )
+    verified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rejected_reason: Mapped[str] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), nullable=True
+    )
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
+    __table_args__ = (
+        UniqueConstraint("store_id", name="unique_store_account"),
+        CheckConstraint(
+            "(rejected_reason IS NULL) OR (verification_status = 'rejected')",
+            name="rejection_reason_check",
+        ),
+        CheckConstraint(
+            "(verification_status != 'verified') OR (verified_at IS NOT NULL)",
+            name="verified_account_timestamp_check",
+        ),
+    )
     store = relationship("Store", back_populates="account")
 
 
@@ -286,7 +334,7 @@ class Inventory(Base):
 
     __table_args__ = (
         UniqueConstraint("store_id", "product_id", name="store_product_inventory"),
-        CheckConstraint("quantity >= 0", name="positive_quantity"),
+        CheckConstraint("stock_quantity >= 0", name="positive_quantity"),
     )
     product = relationship("Product", back_populates="inventory")
     store = relationship("Store", back_populates="inventories")
