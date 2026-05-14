@@ -63,17 +63,10 @@ class NotificationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class StoreAccountDetails(BaseModel):
-    account_name: str
-    account_number: str
-    tax_identification_number: str
-    identification_number: str
-
-
 class StoreAccountResponse(BaseModel):
     account_name: str
     account_number: str
-    tax_identification_number: str
+    tax_identification_number: str | None
     identification_number: str
 
     @model_validator(mode="before")
