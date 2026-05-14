@@ -1,7 +1,6 @@
 from fastapi import UploadFile, File, APIRouter, Depends, Request, Query, Form
 from app.services import store_service
 from app.api.v1.schemas import (
-    StoreAccountDetails,
     StandardResponse,
     StoreAccountResponse,
     PaginatedMetadata,
@@ -94,14 +93,28 @@ async def store_approval(
 @router.post("/store_account")
 async def store_account_details(
     store_id: int,
-    financial_details: StoreAccountDetails,
+    bank_name: str = Form(...),
+    account_type: str = Query("business", enum=["savings", "current", "business"]),
+    account_holder_name: str = Form(...),
+    account_number: str = Form(...),
+    type_of_id: str = Query(
+        "national_id", enum=["voter_id", "national_id", "driver_license", "other_id"]
+    ),
+    identification_number: str = Form(...),
+    tax_identification_number: str = Form(None),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
     cipher=Depends(get_cipher),
 ):
     return await store_service.add_finance_details(
         store_id=store_id,
-        finance_details=financial_details,
+        account_holder_name=account_holder_name,
+        bank_name=bank_name,
+        account_type=account_type,
+        account_number=account_number,
+        type_of_id=type_of_id,
+        identification_number=identification_number,
+        tax_identification_number=tax_identification_number,
         db=db,
         payload=payload,
         cipher=cipher,
