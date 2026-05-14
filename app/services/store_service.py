@@ -423,45 +423,64 @@ async def approve_stores(slug, db, payload):
     return {"message": "store approved"}
 
 
-async def add_finance_details(store_id, finance_details, db, payload, cipher):
+async def add_finance_details(
+    store_id,
+    account_holder_name,
+    bank_name,
+    account_type,
+    account_number,
+    type_of_id,
+    identification_number,
+    tax_identification_number,
+    db,
+    payload,
+    cipher,
+):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at add_finance_details endpoint")
         raise HTTPException(
             status_code=401, detail="unauthorized, you must be a registered user"
         )
-    store_check = (
-        await db.execute(
-            select(Store)
-            .options(selectinload(Store.accounts))
-            .where(Store.id == store_id, Store.user_owners.any(User.id == user_id))
+    result = await db.execute(
+        select(
+            exists().where(Store.id == store_id),
+            exists().where(
+                store_owners.c.stores_id == store_id,
+                store_owners.c.users_id == user_id,
+            ),
+            exists().where(Store.id == store_id, ~Store.account.any()),
         )
-    ).scalar_one_or_none()
-    if not store_check:
-        logger.error(
-            "user: %s, tried to add finance details to a store not assigned, store: %s",
-            user_id,
-            store_id,
-        )
-        raise HTTPException(status_code=404, detail="store not assigned")
-    if store_check.account.id:
-        logger.warning(
-            "user: %s, tried to add finance details more than once to store: %s",
-            user_id,
-            store_id,
-        )
+    )
+    store_exists, is_owner, has_no_account = result.fetchone()
+    if not store_exists:
+        logger.error(f"Store {store_id} not found.")
+        raise HTTPException(status_code=404, detail="Store not found")
+    if not is_owner:
+        logger.error(f"User {user_id} unauthorized for store {store_id}")
+        raise HTTPException(status_code=403, detail="Not the store owner")
+    if not has_no_account:
+        logger.warning(f"Store {store_id} already has finance details.")
         raise HTTPException(
-            status_code=400, detail="finance details can only be added once"
+            status_code=400, detail="Finance details already exist for this store"
         )
-    acc_num = cipher.encrypt(finance_details.account_number.encode())
-    tax_num = cipher.encrypt(finance_details.tax_identification_number.encode())
-    id_num = cipher.encrypt(finance_details.identification_number.encode())
+    acc_num = cipher.encrypt(account_number.encode())
+    tax_num = (
+        cipher.encrypt(tax_identification_number.encode())
+        if tax_identification_number
+        else None
+    )
+
+    id_num = cipher.encrypt(identification_number.encode())
     account_detail = StoreAccount(
-        store_id=store_check.id,
-        account_name=finance_details.account_name,
+        store_id=store_id,
+        bank_name=bank_name,
+        account_type=account_type,
+        account_holder_name=account_holder_name,
         account_number=acc_num,
-        tax_identification_number=tax_num,
+        type_of_id=type_of_id,
         identification_number=id_num,
+        tax_identification_number=tax_num,
     )
     try:
         db.add(account_detail)
