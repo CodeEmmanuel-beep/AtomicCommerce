@@ -20,6 +20,7 @@ from app.api.v1.routes import (
     inventory,
     sub_category,
     profile,
+    store_account_and_address,
 )
 from app.utils.redis import run_router, add_commit_periodically, notification_queue
 import asyncio
@@ -103,6 +104,7 @@ app.include_router(product_reply.router)
 app.include_router(reactions.router)
 app.include_router(membership.router)
 app.include_router(store.router)
+app.include_router(store_account_and_address.router)
 app.include_router(store_analytics.router)
 app.include_router(payment.router)
 app.include_router(customer_support.router)
