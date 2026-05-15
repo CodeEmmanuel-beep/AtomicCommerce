@@ -121,6 +121,37 @@ async def store_account_details(
     )
 
 
+@router.put("/edit_store_account")
+async def edit_store_account_details(
+    store_id: int,
+    bank_name: str = Form(None),
+    account_type: str = Query("business", enum=["savings", "current", "business"]),
+    account_holder_name: str = Form(None),
+    account_number: str = Form(None),
+    type_of_id: str = Query(
+        "national_id", enum=["voter_id", "national_id", "driver_license", "other_id"]
+    ),
+    identification_number: str = Form(None),
+    tax_identification_number: str = Form(None),
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+    cipher=Depends(get_cipher),
+):
+    return await store_service.edit_finance_details(
+        store_id=store_id,
+        account_holder_name=account_holder_name,
+        bank_name=bank_name,
+        account_type=account_type,
+        account_number=account_number,
+        type_of_id=type_of_id,
+        identification_number=identification_number,
+        tax_identification_number=tax_identification_number,
+        db=db,
+        payload=payload,
+        cipher=cipher,
+    )
+
+
 @router.post("/store_address")
 async def store_address_details(
     store_id: int,
