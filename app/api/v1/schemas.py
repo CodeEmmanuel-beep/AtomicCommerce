@@ -113,8 +113,6 @@ class AddressDetails(BaseModel):
     state: str
     country: str
 
-    model_config = ConfigDict(from_attributes=True)
-
 
 class AddressResponse(AddressDetails):
     id: int
