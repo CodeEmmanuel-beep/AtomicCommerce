@@ -64,10 +64,13 @@ class NotificationResponse(BaseModel):
 
 
 class StoreAccountResponse(BaseModel):
-    account_name: str
+    bank_name: str
+    account_type: str
+    account_holder_name: str
     account_number: str
-    tax_identification_number: str | None
+    type_of_id: str
     identification_number: str
+    tax_identification_number: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -90,7 +93,7 @@ class StoreAccountResponse(BaseModel):
                 else getattr(data, field, None)
             )
             if value is None:
-                raise ValueError(f"{field} is missing in the data for decryption.")
+                continue
             try:
                 decrypted_field = cipher.decrypt(value).decode()
                 if isinstance(data, dict):
@@ -98,7 +101,7 @@ class StoreAccountResponse(BaseModel):
                 else:
                     setattr(data, field, decrypted_field)
             except Exception:
-                raise ValueError({"error decrypting sensitive fields"})
+                raise ValueError("error decrypting sensitive field: %s", field)
         return data
 
     model_config = ConfigDict(from_attributes=True)
