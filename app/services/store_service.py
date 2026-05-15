@@ -10,6 +10,7 @@ from app.models import (
     Product,
     Inventory,
     SubCategory,
+    AccountVerification,
 )
 from app.api.v1.schemas import (
     StoreAccountResponse,
@@ -497,6 +498,85 @@ async def add_finance_details(
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("finance details added to store: %s successfully", store_id)
     return {"message": "finance details added"}
+
+
+async def edit_finance_details(
+    store_id,
+    account_holder_name,
+    bank_name,
+    account_type,
+    account_number,
+    type_of_id,
+    identification_number,
+    tax_identification_number,
+    db,
+    payload,
+    cipher,
+):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at add_finance_details endpoint")
+        raise HTTPException(
+            status_code=401, detail="unauthorized, you must be a registered user"
+        )
+    result = await db.execute(
+        select(StoreAccount)
+        .join(store_owners, StoreAccount.store_id == store_owners.c.stores_id)
+        .where(StoreAccount.store_id == store_id, store_owners.c.users_id == user_id)
+    )
+    store_account = result.scalar_one_or_none()
+    if not store_account:
+        logger.error(f"Store account {store_id} not found.")
+        raise HTTPException(status_code=404, detail="Store account not found")
+    acc_num = cipher.encrypt(account_number.encode()) if account_number else None
+    tax_num = (
+        cipher.encrypt(tax_identification_number.encode())
+        if tax_identification_number
+        else None
+    )
+    id_num = (
+        cipher.encrypt(identification_number.encode())
+        if identification_number
+        else None
+    )
+    is_verified = store_account.verification_status == AccountVerification.verified
+    adding_missing_tax = (
+        not store_account.tax_identification_number and tax_identification_number
+    )
+    if is_verified and not adding_missing_tax:
+        logger.warning("user: %s, attempted to edit verified account details", user_id)
+        raise HTTPException(
+            status_code=400, detail="Cannot edit verified account details"
+        )
+    updated_fields = {
+        "store_id": store_id,
+        "bank_name": bank_name,
+        "account_type": account_type,
+        "account_holder_name": account_holder_name,
+        "account_number": acc_num,
+        "type_of_id": type_of_id,
+        "identification_number": id_num,
+        "tax_identification_number": tax_num,
+    }
+    for field, value in updated_fields.items():
+        if value:
+            setattr(store_account, field, value)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.error(
+            "database error while updating finance details for store '%s'", store_id
+        )
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "error while updating finance details for store '%s'", store_id
+        )
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("finance details updated for store: %s successfully", store_id)
+    return {"message": "finance details updated"}
 
 
 async def view_financial_details(store_id, db, payload, cipher):
