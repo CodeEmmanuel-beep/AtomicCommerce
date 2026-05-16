@@ -4,6 +4,7 @@ from app.api.v1.schemas import (
     StandardResponse,
     PaginatedMetadata,
     StoreResponse,
+    PersonnelResponse,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.verify_jwt import verify_token
@@ -87,13 +88,32 @@ async def store_approval(
 @router.put("/onboard_owner_staff")
 async def onboard_owner_staff(
     store_id: int,
-    owner_id: int,
-    staff_id: int,
+    owner_id: int | None = None,
+    staff_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await store_service.add_owner_staff(
         store_id=store_id, owner_id=owner_id, staff_id=staff_id, db=db, payload=payload
+    )
+
+
+@router.get(
+    "/view_store_personnel/{store_id}",
+    response_model=StandardResponse[PaginatedMetadata[PersonnelResponse]],
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
+async def store_personnel(
+    store_id: int,
+    position: str = Query("owners", enum=["staffs", "owners"]),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, le=100),
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await store_service.view_store_owners_staffs(
+        store_id=store_id, view=position, page=page, limit=limit, db=db, payload=payload
     )
 
 
