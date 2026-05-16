@@ -4,6 +4,7 @@ from pydantic import (
     Field,
     computed_field,
     model_validator,
+    field_validator,
     ValidationInfo,
 )
 from typing import Optional, List, TypeVar, Generic, Any
@@ -22,16 +23,37 @@ class LoginResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PersonnelResponse(BaseModel):
+    id: int
+    profile_picture: str | None = None
+    first_name: str
+    middle_name: str | None = None
+    surname: str
+    phone_number: str | None = None
+    email: str | None = None
+
+    @field_validator("profile_picture", mode="before")
+    @classmethod
+    def render_picture(cls, value) -> str | None:
+        if value:
+            return get_public_url(value)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProfileResponse(BaseModel):
     id: int
-    role: str = Field(default="user")
-    name: str
     profile_picture: str
+    role: str = Field(default="user")
+    first_name: str
+    middle_name: str | None = None
+    surname: str
 
-    @computed_field
-    def render_picture(self) -> str | None:
-        if self.profile_picture:
-            return get_public_url(self.profile_picture)
+    @field_validator("profile_picture", mode="before")
+    @classmethod
+    def render_picture(cls, value) -> str | None:
+        if value:
+            return get_public_url(value)
 
     model_config = ConfigDict(from_attributes=True)
 
