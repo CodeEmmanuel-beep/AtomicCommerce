@@ -16,12 +16,13 @@ from app.api.v1.schemas import (
     PaginatedResponse,
     StandardResponse,
     ProductRes,
+    PersonnelResponse,
 )
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload, aliased
 from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy import func, select, text, and_, exists, update, cast, String
+from sqlalchemy import func, select, text, and_, or_, exists, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from app.utils.helper import upload_photo_helper
 from app.utils.supabase_url import cleaned_up, get_public_url
@@ -735,6 +736,85 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
     return {"message": "personnel added"}
 
 
+async def view_store_owners_staffs(store_id, view, page, limit, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at view_store_owners_staffs endpoint")
+        raise HTTPException(
+            status_code=401, detail="only registered users can access this endpoint"
+        )
+    if view not in ["owners", "staffs"]:
+        logger.warning(
+            "user: %s, tried inputing an invalid view type at the view_store_owners_staffs endpoint, view: %s",
+            user_id,
+            view,
+        )
+        raise HTTPException(status_code=400, detail="invalid view type")
+    offset = (page - 1) * limit
+    cache_key = f"store_personnel_view:{user_id}:{store_id}:{view}:{page}:{limit}"
+    personnel_cache = await cache(cache_key)
+    if personnel_cache:
+        logger.info(f"cache hit for user '{user_id}' at view store personnel endpoint")
+        return StandardResponse(**personnel_cache)
+    is_owner = exists().where(
+        store_owners.c.users_id == user_id,
+        store_owners.c.stores_id == store_id,
+    )
+    is_staff = exists().where(
+        store_staffs.c.users_id == user_id,
+        store_staffs.c.stores_id == store_id,
+    )
+    auth_stmt = await db.execute(select(is_owner, is_staff))
+    owner, staff = auth_stmt.first() or (False, False)
+    if not owner and not staff:
+        logger.warning(
+            "user: %s, tried accessing a restricted endpoint 'view_store_owners_staffs endpoint'",
+            user_id,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    if view == "owners" and not owner:
+        logger.warning(
+            "user: %s, tried viewing owners of a store they do not own, store_id: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    base_filter = (
+        store_owners.c.stores_id == store_id
+        if view == "owners"
+        else store_staffs.c.stores_id == store_id
+    )
+    stmt = select(User)
+    if view == "owners":
+        stmt = stmt.join(store_owners, User.id == store_owners.c.users_id)
+    else:
+        stmt = stmt.join(store_staffs, User.id == store_staffs.c.users_id)
+    stmt = stmt.where(User.is_active, base_filter)
+    result = await db.execute(stmt.order_by(User.id.desc()).offset(offset).limit(limit))
+    personnel = result.scalars().all()
+    if not personnel:
+        logger.warning(
+            "failed attempt to fetch personnel records at store: %s", store_id
+        )
+        raise HTTPException(status_code=404, detail="personnel records unavailable")
+    total = (
+        await db.execute(select(func.count()).select_from(stmt.subquery()))
+    ).scalar() or 0
+    logger.info("total personnel count: %s", total)
+    data = PaginatedMetadata[PersonnelResponse](
+        items=[PersonnelResponse.model_validate(p) for p in personnel],
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+    )
+    message = "owners board" if view == "owners" else "staff board"
+    full_response = StandardResponse(status="success", message=message, data=data)
+    await cached(cache_key, full_response, ttl=300)
+    logger.info(
+        "search for personnel at view_store_owners_staffs function returned result for user: %s",
+        user_id,
+    )
+    return full_response
+
+
 async def remove_staff(store_id, staff_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
@@ -745,18 +825,21 @@ async def remove_staff(store_id, staff_id, db, payload):
     (await db.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": store_id}))
     check_stmt = (
         select(Store).where(
-            and_(Store.id == store_id, Store.approved),
-            exists().where(
-                and_(
-                    store_owners.c.users_id == user_id,
-                    store_owners.c.stores_id == store_id,
-                )
-            ),
-            exists().where(
-                and_(
-                    store_staffs.c.users_id == staff_id,
-                    store_staffs.c.stores_id == store_id,
-                )
+            Store.id == store_id,
+            Store.approved,
+            or_(
+                exists().where(
+                    and_(
+                        store_owners.c.users_id == user_id,
+                        store_owners.c.stores_id == store_id,
+                    )
+                ),
+                exists().where(
+                    and_(
+                        store_staffs.c.users_id == staff_id,
+                        store_staffs.c.stores_id == store_id,
+                    )
+                ),
             ),
         )
     ).cte("check_stmt")
@@ -779,7 +862,9 @@ async def remove_staff(store_id, staff_id, db, payload):
     staff_obj = next((s for s in store_check.user_staffs if s.id == staff_id), None)
     if not staff_obj:
         logger.error(
-            "an alien user id bypassed cte check,s alien_user_id: %s", staff_id
+            "user: %s, removing staff: %s, but staff do not belong to this store",
+            user_id,
+            staff_id,
         )
         raise HTTPException(status_code=404, detail="Staff member not found in store")
     store_check.user_staffs.remove(staff_obj)
