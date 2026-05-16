@@ -52,7 +52,7 @@ async def update_personal_profile(
 
 @router.delete("/delete_personal_profile")
 async def profile_deletion(
-    userId: int,
+    userId: int | None = None,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
