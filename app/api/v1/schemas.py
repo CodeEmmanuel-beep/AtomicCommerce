@@ -223,6 +223,40 @@ class InventoryObj(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProductImageResponse(BaseModel):
+    id: int
+    image_1: str
+    image_2: str | None = None
+    image_3: str | None = None
+    image_4: str | None = None
+    image_5: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def render_urls(cls, value: Any) -> Any:
+        files = ["image_1", "image_2", "image_3", "image_4", "image_5"]
+        for file in files:
+            if isinstance(value, dict):
+                v = value.get(file, None)
+            else:
+                v = getattr(value, file, None)
+            if v is None:
+                continue
+            try:
+                rendered = get_public_url(v)
+                if isinstance(value, dict):
+                    value[file] = rendered
+                else:
+                    setattr(value, file, rendered)
+            except Exception as e:
+                raise ValueError(
+                    f"could not render image url for field '{file}' with value '{v}': {e}"
+                )
+        return value
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProductRes(BaseModel):
     id: int
     product_name: str
