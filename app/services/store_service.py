@@ -157,7 +157,7 @@ async def store_creation(
         raise HTTPException(
             status_code=400, detail="all owners must be registered users"
         )
-    store_photo = await upload_photo_helper(store_photo, db, payload, get_supabase)
+    store_photo = await upload_photo_helper(store_photo, payload, get_supabase)
     new_store = Store(
         store_photo=store_photo,
         store_name=store_name,
@@ -242,11 +242,11 @@ async def store_update(
     has_changed = False
     try:
         if store_photo:
-            filename = await upload_photo_helper(store_photo, db, payload, get_supabase)
+            filename = await upload_photo_helper(store_photo, payload, get_supabase)
             filename_link.append(filename)
             has_changed = True
         if business_logo:
-            file = await upload_photo_helper(business_logo, db, payload, get_supabase)
+            file = await upload_photo_helper(business_logo, payload, get_supabase)
             filename_link.append(file)
             has_changed = True
         stmt = (
