@@ -217,18 +217,6 @@ class ProductSize(str, Enum):
     extra_large = "extra large"
 
 
-class ProductObj(BaseModel):
-    product_id: int
-    store_id: int
-    category_name: str
-    product_name: str
-    product_type: str
-    description: str
-    product_size: ProductSize
-    product_price: float
-    product_availability: str
-
-
 class InventoryObj(BaseModel):
     stock_quantity: int
 
@@ -238,15 +226,16 @@ class InventoryObj(BaseModel):
 class ProductRes(BaseModel):
     id: int
     product_name: str
-    primary_image: str = Field(exclude=True)
+    primary_image: str
     product_price: Decimal
     product_availability: str
     stock_quantity: InventoryObj
     avg_rating: Decimal
 
-    @computed_field
-    def full_url(self) -> str | None:
-        return get_public_url(self.primary_image)
+    @field_validator("primary_image", mode="before")
+    @classmethod
+    def full_url(cls, value) -> str | None:
+        return get_public_url(value)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -254,33 +243,20 @@ class ProductRes(BaseModel):
 class ProductResponse(BaseModel):
     id: int
     product_name: str
-    primary_image: str = Field(exclude=True)
-    image: str | None = Field(exclude=True)
+    primary_image: str
     product_type: str
     product_price: Decimal
-    avg_rating: Decimal
-    review_count: int
+    avg_rating: Decimal = Field(default=Decimal(0))
+    review_count: int = Field(default=0)
     product_size: str
-    description: str
+    product_description: str
     product_availability: str
-    stock_quantity: InventoryObj
+    stock_quantity: List[InventoryObj] = Field([])
 
-    @computed_field
-    def primary_image_url(self) -> str | None:
-        return get_public_url(self.primary_image)
-
-    @computed_field
-    def image_urls(self) -> list[str]:
-        if self.image and len(self.image) > 2:
-            try:
-                return [
-                    url
-                    for f in self.image
-                    if f and (url := get_public_url(f)) is not None
-                ]
-            except Exception:
-                return []
-        return []
+    @field_validator("primary_image", mode="before")
+    @classmethod
+    def full_url(cls, value) -> str | None:
+        return get_public_url(value)
 
     model_config = ConfigDict(from_attributes=True)
 
