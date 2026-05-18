@@ -177,6 +177,7 @@ class Store(Base):
     inventories = relationship("Inventory", back_populates="store")
     carts = relationship("Cart", back_populates="store")
     membership = relationship("Membership", back_populates="store")
+    product_images = relationship("ProductImage", back_populates="store")
 
 
 class Address(Base):
@@ -290,7 +291,6 @@ class Product(Base):
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
     product_name: Mapped[str] = mapped_column(String)
     primary_image: Mapped[str] = mapped_column(String, nullable=False)
-    image: Mapped[dict] = mapped_column(JSONB, nullable=True)
     product_price: Mapped[Decimal] = mapped_column(Numeric(precision=12, scale=2))
     product_type: Mapped[str] = mapped_column(String)
     avg_rating: Mapped[Decimal] = mapped_column(
@@ -317,6 +317,22 @@ class Product(Base):
     category = relationship("Category", back_populates="products")
     inventory = relationship("Inventory", back_populates="product")
     sub_category = relationship("SubCategory", back_populates="products")
+    product_images = relationship("ProductImage", back_populates="product")
+
+
+class ProductImage(Base):
+    __tablename__ = "product_images"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    store_id: Mapped[int] = mapped_column(Integer, index=True)
+    product_id: Mapped[int] = mapped_column(Integer, index=True)
+    image_1: Mapped[str] = mapped_column(String, nullable=False)
+    image_2: Mapped[str] = mapped_column(String, nullable=True)
+    image_3: Mapped[str] = mapped_column(String, nullable=True)
+    image_4: Mapped[str] = mapped_column(String, nullable=True)
+    image_5: Mapped[str] = mapped_column(String, nullable=True)
+
+    product = relationship("Product", back_populates="product_images")
+    store = relationship("Store", back_populates="product_images")
 
 
 class Inventory(Base):
