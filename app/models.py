@@ -282,7 +282,7 @@ class ProductSize(str, Enum):
     small = "small"
     medium = "medium"
     large = "large"
-    extra_large = "extra large"
+    extra_large = "extra_large"
 
 
 class Product(Base):
@@ -297,7 +297,7 @@ class Product(Base):
         Numeric(precision=3, scale=2), default=0
     )
     review_count: Mapped[int] = mapped_column(Integer, default=0)
-    description: Mapped[str] = mapped_column(String)
+    product_description: Mapped[str] = mapped_column(Text)
     product_size: Mapped[ProductSize] = mapped_column(
         SQLEnum(ProductSize), default=ProductSize.small, index=True
     )
@@ -323,8 +323,10 @@ class Product(Base):
 class ProductImage(Base):
     __tablename__ = "product_images"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    store_id: Mapped[int] = mapped_column(Integer, index=True)
-    product_id: Mapped[int] = mapped_column(Integer, index=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id"), index=True
+    )
     image_1: Mapped[str] = mapped_column(String, nullable=False)
     image_2: Mapped[str] = mapped_column(String, nullable=True)
     image_3: Mapped[str] = mapped_column(String, nullable=True)
