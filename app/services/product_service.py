@@ -7,6 +7,7 @@ from app.api.v1.schemas import (
     ProductResponse,
     StandardResponse,
     PaginatedResponse,
+    ProductImageResponse,
 )
 from app.database.config import settings
 from app.models import (
@@ -260,6 +261,24 @@ async def add_image(
         logger.exception("error occured while uploading product images")
         raise HTTPException(status_code=500, detail="internal server error")
     return {"message": "product images uploaded successfully"}
+
+
+async def view_product_pics(store_id, product_id, db):
+    stmt = select(ProductImage).where(
+        ProductImage.product_id == product_id, ProductImage.store_id == store_id
+    )
+    cache_key = f"product_image:{store_id}:{product_id}"
+    product_image_cache = await cache(cache_key)
+    if product_image_cache:
+        logger.info("Cache hit for product_images")
+        return StandardResponse(**product_image_cache)
+    p_image = (await db.execute(stmt)).scalar_one_or_none()
+    if not p_image:
+        raise HTTPException(status_code=404, detail="product images not found")
+    data = ProductImageResponse.model_validate(p_image)
+    response = StandardResponse(status="success", message="product_images", data=data)
+    await cached(cache_key, response, ttl=600)
+    return response
 
 
 async def product_change(prod, primary_image, image, db, payload, get_supabase):
