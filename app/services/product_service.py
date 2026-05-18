@@ -9,8 +9,18 @@ from app.api.v1.schemas import (
     PaginatedResponse,
 )
 from app.database.config import settings
-from app.models import Product, Store, Category, User, Inventory
-from sqlalchemy import select, func, text, update, or_
+from app.models import (
+    Product,
+    Store,
+    Category,
+    User,
+    Inventory,
+    store_owners,
+    store_staffs,
+    ProductImage,
+    SubCategory,
+)
+from sqlalchemy import select, func, cast, update, or_, String
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 import asyncio
@@ -23,16 +33,21 @@ from app.utils.redis import (
     cached,
     cache,
 )
-from app.utils.helper import file_generator
+from app.utils.helper import file_generator, upload_photo_helper
 from app.utils.supabase_url import cleaned_up
 
 logger = get_logger("products")
 
 
 async def create(
-    prod,
+    store_id,
+    sub_category_name,
+    product_name,
+    product_type,
+    product_size,
+    product_description,
+    product_price,
     primary_image,
-    image,
     get_supabase,
     db,
     payload,
@@ -40,19 +55,27 @@ async def create(
     user_id = payload.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="user not authenticated")
-    stmt = select(Store).where(
-        Store.id == prod.store_id,
-        or_(
-            Store.user_owners.any(User.id == user_id),
-            Store.user_staffs.any(User.id == user_id),
-        ),
+    stmt = (
+        select(Store)
+        .outerjoin(store_owners, Store.id == store_owners.c.stores_id)
+        .outerjoin(store_staffs, Store.id == store_staffs.c.stores_id)
+        .where(
+            Store.id == store_id,
+            or_(
+                store_owners.c.users_id == user_id,
+                store_staffs.c.users_id == user_id,
+            ),
+        )
     )
     eligible = (await db.execute(stmt)).scalar_one_or_none()
     if not eligible:
+        logger.warning(
+            "user: %s, tried creating a product for a store they do not own or staff, store id: %s",
+            user_id,
+            store_id,
+        )
         raise HTTPException(status_code=403, detail="not authorized")
-    uploaded_file = []
-    images = []
-    tasks = []
+    filename = None
     files_allowed = ["image/jpeg", "image/png", "image/webp"]
     try:
         if primary_image.content_type not in files_allowed:
@@ -71,46 +94,13 @@ async def create(
             raise HTTPException(
                 status_code=500, detail="error uploading product primary image"
             )
-        uploaded_file.append(filename)
         logger.info("saved product primary image")
-        if image is not None:
-            for img in image:
-                if img.content_type not in files_allowed:
-                    logger.warning(
-                        "user: %s, tried uploading  file with an unsupported format",
-                        user_id,
-                    )
-                    raise HTTPException(
-                        status_code=400, detail="file format not supported"
-                    )
-            max_image = 7
-            if len(image) > max_image:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"maximum number of images allowed is {max_image}",
-                )
-            file_list = await asyncio.gather(
-                *(file_generator(img, user_id) for img in image)
-            )
-            for file, file_byte in zip(image, file_list):
-                filenames = f"{uuid.uuid4()}_{secure_filename(file.filename)}"
-                tasks.append(
-                    get_supabase.storage.from_(settings.BUCKET).upload(
-                        filenames, file_byte, {"content-type": file.content_type}
-                    )
-                )
-                images.append(filenames)
-            await asyncio.gather(*tasks)
-            uploaded_file.extend(images)
-        else:
-            image = None
     except Exception as e:
         logger.exception("could not save product image")
-        await db.rollback()
-        if uploaded_file:
+        if filename:
             await cleaned_up(
                 get_supabase,
-                uploaded_file,
+                filename,
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
@@ -121,18 +111,33 @@ async def create(
         )
     logger.info("saved product images, uploaded by user: %s", user_id)
     primary_image = filename
-    category = (
-        await db.execute(select(Category).where(Category.name == prod.category_name))
+    if sub_category_name not in eligible.sub_category:
+        logger.warning("user: %s, entered an unvalid sub_category", user_id)
+        raise HTTPException(
+            status_code=409,
+            detail="your store is not registered under this sub_category",
+        )
+    sub_category = (
+        await db.execute(
+            select(SubCategory.id).where(
+                SubCategory.name == sub_category_name,
+                SubCategory.category_id == eligible.category_id,
+            )
+        )
     ).scalar_one_or_none()
+    if not sub_category:
+        logger.warning("user: %s, entered an unvalid sub_category", user_id)
+        raise HTTPException(status_code=404, detail="sub_category not found")
     new_product = Product(
         store_id=eligible.id,
-        product_name=prod.product_name,
+        product_name=product_name,
         primary_image=filename,
-        image=orjson.dumps(images).decode("utf-8"),
-        product_type=prod.product_type,
-        product_size=prod.product_size,
-        product_price=prod.product_price,
-        category_id=category.id,
+        product_type=product_type,
+        product_size=product_size,
+        product_description=product_description,
+        product_price=product_price,
+        category_id=eligible.category_id,
+        sub_category_id=sub_category,
     )
     try:
         db.add(new_product)
@@ -140,23 +145,23 @@ async def create(
         await cart_global_invalidation()
         await order_global_invalidation()
         await product_invalidation()
-    except IntegrityError:
+    except IntegrityError as e:
         await db.rollback()
-        if uploaded_file:
+        if filename:
             await cleaned_up(
                 get_supabase,
-                uploaded_file,
+                filename,
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
-        logger.error("database error while saving product data")
+        logger.error(f"database error while saving product data: {e}")
         raise HTTPException(status_code=400, detail="database error")
     except Exception as e:
         await db.rollback()
-        if uploaded_file:
+        if filename:
             await cleaned_up(
                 get_supabase,
-                uploaded_file,
+                filename,
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
@@ -165,6 +170,96 @@ async def create(
         logger.exception("error while saving product data")
         raise HTTPException(status_code=500, detail="internal server error")
     return {"status": "success", "message": "product added to shelve"}
+
+
+async def add_image(
+    product_id,
+    store_id,
+    image_1,
+    image_2,
+    image_3,
+    image_4,
+    image_5,
+    db,
+    payload,
+    get_supabase,
+):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthenticated user tried to add image to product")
+        raise HTTPException(status_code=401, detail="not authenticated")
+    stmt = (
+        select(Store)
+        .options(selectinload(Store.products))
+        .outerjoin(store_owners, Store.id == store_owners.c.stores_id)
+        .outerjoin(store_staffs, Store.id == store_staffs.c.stores_id)
+        .where(
+            Store.id == store_id,
+            or_(
+                store_owners.c.users_id == user_id,
+                store_staffs.c.users_id == user_id,
+            ),
+        )
+    )
+    eligible = (await db.execute(stmt)).scalar_one_or_none()
+    if not eligible:
+        logger.warning(
+            "user: %s, tried adding product image to store without authorization, store id: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=403, detail="not authorized")
+    product_ids_in_store = [p.id for p in eligible.products]
+    if product_id not in product_ids_in_store:
+        logger.warning(
+            "user: %s, tried adding image to a non-existent product, product id: %s",
+            user_id,
+            product_id,
+        )
+        raise HTTPException(status_code=404, detail="product not found")
+    potential_files = [image_1, image_2, image_3, image_4, image_5]
+    tasks = [
+        upload_photo_helper(img, payload, get_supabase)
+        for img in potential_files
+        if img
+    ]
+    uploaded_files = await asyncio.gather(*tasks)
+    shifted = [f for f in uploaded_files if f]
+    new_images = ProductImage(
+        store_id=store_id,
+        product_id=product_id,
+        image_1=shifted[0],
+        image_2=shifted[1] if len(shifted) > 1 else None,
+        image_3=shifted[2] if len(shifted) > 2 else None,
+        image_4=shifted[3] if len(shifted) > 3 else None,
+        image_5=shifted[4] if len(shifted) > 4 else None,
+    )
+    try:
+        db.add(new_images)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        if shifted:
+            await cleaned_up(
+                get_supabase,
+                shifted,
+                context_1="error removing orphaned product images",
+                context_2="successfully removed orphaned product images",
+            )
+        logger.error("database error occured while uploading product images")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        if shifted:
+            await cleaned_up(
+                get_supabase,
+                shifted,
+                context_1="error removing orphaned product images",
+                context_2="successfully removed orphaned product images",
+            )
+        logger.exception("error occured while uploading product images")
+        raise HTTPException(status_code=500, detail="internal server error")
+    return {"message": "product images uploaded successfully"}
 
 
 async def product_change(prod, primary_image, image, db, payload, get_supabase):
@@ -347,19 +442,18 @@ async def list_products(
         logger.info("Cache hit for products")
         return StandardResponse(**product_cache)
     total = None
-    products = None
     async with db as conn:
-        await conn.execute(text("SELECT setseed(:s)"), {"s": seed})
         stmt = (
             select(Product)
             .options(selectinload(Product.inventory))
             .where(~Product.is_deleted)
-            .order_by(func.random())
+            .order_by(func.md5(func.concat(cast(Product.id, String), str(seed))))
         )
         products = (
             (await conn.execute(stmt.offset(offset).limit(limit))).scalars().all()
         )
         total = (await conn.execute(select(func.count(Product.id)))).scalar() or 0
+        logger.info("total products inn the market: %s", total)
     if not products:
         logger.warning("all products queried, but none found")
         return StandardResponse(
@@ -369,9 +463,8 @@ async def list_products(
         items=[ProductResponse.model_validate(product) for product in products],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
-    response = {"product data": data}
     full_response = StandardResponse(
-        status="success", message="products data", data=response
+        status="success", message="products data", data=data
     )
     await cached(cache_key, full_response, ttl=600)
     logger.info("Product data cached")
