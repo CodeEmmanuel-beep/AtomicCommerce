@@ -52,7 +52,7 @@ async def react_summary(
     return result
 
 
-async def upload_photo_helper(photo, db, payload, get_supabase):
+async def upload_photo_helper(photo, payload, get_supabase):
     user_id = payload.get("user_id")
     filename = None
     max_size = 5 * 1024 * 1024
@@ -93,7 +93,6 @@ async def upload_photo_helper(photo, db, payload, get_supabase):
                 raise HTTPException(status_code=500, detail="error uploading photo")
             return filename
         except Exception as e:
-            await db.rollback()
             if isinstance(e, HTTPException):
                 raise e
             if filename:
