@@ -72,6 +72,22 @@ async def upload_product_images(
     )
 
 
+@router.get(
+    "/view_product_images/{store_id}/{product_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
+async def product_images_list(
+    store_id: int,
+    product_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    return await product_service.view_product_pics(
+        store_id=store_id, product_id=product_id, db=db
+    )
+
+
 @router.put("/edit_product")
 async def product_change(
     primary_image: UploadFile = File(...),
