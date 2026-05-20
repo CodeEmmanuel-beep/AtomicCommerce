@@ -176,11 +176,7 @@ async def create(
 async def add_image(
     product_id,
     store_id,
-    image_1,
-    image_2,
-    image_3,
-    image_4,
-    image_5,
+    image,
     db,
     payload,
     get_supabase,
@@ -218,32 +214,21 @@ async def add_image(
             product_id,
         )
         raise HTTPException(status_code=404, detail="product not found")
-    potential_files = [image_1, image_2, image_3, image_4, image_5]
-    tasks = [
-        upload_photo_helper(img, payload, get_supabase)
-        for img in potential_files
-        if img
-    ]
-    uploaded_files = await asyncio.gather(*tasks)
-    shifted = [f for f in uploaded_files if f]
+    filename=None
+    filename = await upload_photo_helper(image, payload, get_supabase)
     new_images = ProductImage(
         store_id=store_id,
         product_id=product_id,
-        image_1=shifted[0],
-        image_2=shifted[1] if len(shifted) > 1 else None,
-        image_3=shifted[2] if len(shifted) > 2 else None,
-        image_4=shifted[3] if len(shifted) > 3 else None,
-        image_5=shifted[4] if len(shifted) > 4 else None,
-    )
+        image=filename)
     try:
         db.add(new_images)
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        if shifted:
+        if filename:
             await cleaned_up(
                 get_supabase,
-                shifted,
+                filename,
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
@@ -251,10 +236,10 @@ async def add_image(
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
-        if shifted:
+        if filename:
             await cleaned_up(
                 get_supabase,
-                shifted,
+                filename,
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
@@ -280,6 +265,7 @@ async def view_product_pics(store_id, product_id, db):
     await cached(cache_key, response, ttl=600)
     return response
 
+async def delete_images()
 
 async def product_change(prod, primary_image, image, db, payload, get_supabase):
     user_id = payload.get("user_id")
