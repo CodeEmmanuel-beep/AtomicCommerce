@@ -34,7 +34,7 @@ from app.utils.redis import (
     cached,
     cache,
 )
-from app.utils.helper import file_generator, upload_photo_helper
+from app.utils.helper import file_generator, upload_photo_helper, store_auth
 from app.utils.supabase_url import cleaned_up
 
 logger = get_logger("products")
@@ -53,29 +53,7 @@ async def create(
     db,
     payload,
 ):
-    user_id = payload.get("user_id")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="user not authenticated")
-    stmt = (
-        select(Store)
-        .outerjoin(store_owners, Store.id == store_owners.c.stores_id)
-        .outerjoin(store_staffs, Store.id == store_staffs.c.stores_id)
-        .where(
-            Store.id == store_id,
-            or_(
-                store_owners.c.users_id == user_id,
-                store_staffs.c.users_id == user_id,
-            ),
-        )
-    )
-    eligible = (await db.execute(stmt)).scalar_one_or_none()
-    if not eligible:
-        logger.warning(
-            "user: %s, tried creating a product for a store they do not own or staff, store id: %s",
-            user_id,
-            store_id,
-        )
-        raise HTTPException(status_code=403, detail="not authorized")
+    user_id, eligible = await store_auth(store_id, db, payload)
     filename = None
     files_allowed = ["image/jpeg", "image/png", "image/webp"]
     try:
@@ -146,6 +124,15 @@ async def create(
         await cart_global_invalidation()
         await order_global_invalidation()
         await product_invalidation()
+    except HTTPException:
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                context_1="error removing orphaned product images",
+                context_2="successfully removed orphaned product images",
+            )
+        raise
     except IntegrityError as e:
         await db.rollback()
         if filename:
@@ -157,7 +144,7 @@ async def create(
             )
         logger.error(f"database error while saving product data: {e}")
         raise HTTPException(status_code=400, detail="database error")
-    except Exception as e:
+    except Exception:
         await db.rollback()
         if filename:
             await cleaned_up(
@@ -166,8 +153,6 @@ async def create(
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
-        if isinstance(e, HTTPException):
-            raise e
         logger.exception("error while saving product data")
         raise HTTPException(status_code=500, detail="internal server error")
     return {"status": "success", "message": "product added to shelve"}
@@ -181,31 +166,7 @@ async def add_image(
     payload,
     get_supabase,
 ):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthenticated user tried to add image to product")
-        raise HTTPException(status_code=401, detail="not authenticated")
-    stmt = (
-        select(Store)
-        .options(selectinload(Store.products))
-        .outerjoin(store_owners, Store.id == store_owners.c.stores_id)
-        .outerjoin(store_staffs, Store.id == store_staffs.c.stores_id)
-        .where(
-            Store.id == store_id,
-            or_(
-                store_owners.c.users_id == user_id,
-                store_staffs.c.users_id == user_id,
-            ),
-        )
-    )
-    eligible = (await db.execute(stmt)).scalar_one_or_none()
-    if not eligible:
-        logger.warning(
-            "user: %s, tried adding product image to store without authorization, store id: %s",
-            user_id,
-            store_id,
-        )
-        raise HTTPException(status_code=403, detail="not authorized")
+    user_id, eligible = await store_auth(store_id, db, payload)
     product_ids_in_store = [p.id for p in eligible.products]
     if product_id not in product_ids_in_store:
         logger.warning(
@@ -214,12 +175,23 @@ async def add_image(
             product_id,
         )
         raise HTTPException(status_code=404, detail="product not found")
-    filename=None
+    image_count = (
+        await db.execute(
+            select(func.count(ProductImage.id)).where(
+                ProductImage.product_id == product_id, ProductImage.store_id == store_id
+            )
+        )
+    ).scalar() or 0
+    if image_count >= 5:
+        logger.warning(
+            "user: %s, tried uploading more than 5 images for product: %s",
+            user_id,
+            product_id,
+        )
+        raise HTTPException(status_code=400, detail="maximum of 5 images allowed")
+    filename = None
     filename = await upload_photo_helper(image, payload, get_supabase)
-    new_images = ProductImage(
-        store_id=store_id,
-        product_id=product_id,
-        image=filename)
+    new_images = ProductImage(store_id=store_id, product_id=product_id, image=filename)
     try:
         db.add(new_images)
         await db.commit()
@@ -245,7 +217,7 @@ async def add_image(
             )
         logger.exception("error occured while uploading product images")
         raise HTTPException(status_code=500, detail="internal server error")
-    return {"message": "product images uploaded successfully"}
+    return {"message": "product image uploaded successfully"}
 
 
 async def view_product_pics(store_id, product_id, db):
@@ -257,15 +229,54 @@ async def view_product_pics(store_id, product_id, db):
     if product_image_cache:
         logger.info("Cache hit for product_images")
         return StandardResponse(**product_image_cache)
-    p_image = (await db.execute(stmt)).scalar_one_or_none()
+    p_image = (await db.execute(stmt)).scalars().all()
     if not p_image:
         raise HTTPException(status_code=404, detail="product images not found")
-    data = ProductImageResponse.model_validate(p_image)
+    data = [ProductImageResponse.model_validate(p) for p in p_image]
     response = StandardResponse(status="success", message="product_images", data=data)
     await cached(cache_key, response, ttl=600)
     return response
 
-async def delete_images()
+
+async def delete_images(store_id, product_id, image_id, db, payload, get_supabase):
+    user_id, eligible = await store_auth(store_id, db, payload)
+    delete_img = (
+        await db.execute(
+            select(ProductImage).where(
+                ProductImage.id == image_id,
+                ProductImage.store_id == store_id,
+                ProductImage.product_id == product_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not delete_img:
+        logger.warning(
+            "user: %s, tried deleting an image that does not exist for store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=404, detail="image not found")
+    filename = delete_img.image
+    try:
+        db.delete(delete_img)
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"database error while deleting product image: {e}")
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error while deleting product image")
+        raise HTTPException(status_code=500, detail="internal server error")
+    if filename:
+        await cleaned_up(
+            get_supabase,
+            filename,
+            context_1="error removing orphaned product images",
+            context_2="successfully removed orphaned product images",
+        )
+    return {"status": "success", "message": "product image deleted"}
+
 
 async def product_change(prod, primary_image, image, db, payload, get_supabase):
     user_id = payload.get("user_id")
@@ -402,6 +413,15 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
                 context_2="successfully removed orphaned product images",
             )
         logger.info("successfully updated product data")
+    except HTTPException:
+        if uploaded_file:
+            await cleaned_up(
+                get_supabase,
+                uploaded_file,
+                context_1="error removing orphaned product images",
+                context_2="successfully removed orphaned product images",
+            )
+        raise
     except IntegrityError:
         await db.rollback()
         if uploaded_file:
@@ -413,7 +433,7 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
             )
         logger.error("database error occured while updating product data")
         raise HTTPException(status_code=400, detail="database error")
-    except Exception as e:
+    except Exception:
         await db.rollback()
         if uploaded_file:
             await cleaned_up(
@@ -422,8 +442,6 @@ async def product_change(prod, primary_image, image, db, payload, get_supabase):
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
-        if isinstance(e, HTTPException):
-            raise e
         logger.exception("error occured while updating product data")
         raise HTTPException(status_code=500, detail="internal server error")
     return {"status": "success", "message": "product updated successfully"}
