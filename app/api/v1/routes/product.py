@@ -131,6 +131,25 @@ async def list_one(
     )
 
 
+@router.delete("/delete_product_image/{store_id}/{product_id}/{image_id}")
+async def delete_image(
+    store_id: int,
+    product_id: int,
+    image_id: int,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+    get_supabase=Depends(_supabase),
+):
+    return await product_service.delete_images(
+        store_id=store_id,
+        product_id=product_id,
+        image_id=image_id,
+        db=db,
+        payload=payload,
+        get_supabase=get_supabase,
+    )
+
+
 @router.delete("/delete/{store_id}/{product_id}", response_model=StandardResponse)
 async def delete_product(
     store_id: int,
