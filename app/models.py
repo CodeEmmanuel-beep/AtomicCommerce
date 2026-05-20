@@ -327,11 +327,7 @@ class ProductImage(Base):
     product_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("products.id"), index=True
     )
-    image_1: Mapped[str] = mapped_column(String, nullable=False)
-    image_2: Mapped[str] = mapped_column(String, nullable=True)
-    image_3: Mapped[str] = mapped_column(String, nullable=True)
-    image_4: Mapped[str] = mapped_column(String, nullable=True)
-    image_5: Mapped[str] = mapped_column(String, nullable=True)
+    image: Mapped[str] = mapped_column(String, nullable=False)
 
     product = relationship("Product", back_populates="product_images")
     store = relationship("Store", back_populates="product_images")
