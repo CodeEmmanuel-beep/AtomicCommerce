@@ -8,6 +8,7 @@ from app.api.v1.schemas import (
 )
 from fastapi import HTTPException
 import uuid
+from sqlalchemy.orm import selectinload
 from werkzeug.utils import secure_filename
 from app.logs.logger import get_logger
 from app.models import Store, Membership, store_owners, store_staffs
@@ -209,3 +210,32 @@ async def view_selected_members(
     await cached(cache_key, response, ttl=3600)
     logger.info(f"{context} members data cached successfully for admin: %s", user_id)
     return response
+
+
+async def store_auth(store_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at product module")
+        raise HTTPException(status_code=401, detail="user not authenticated")
+    stmt = (
+        select(Store)
+        .options(selectinload(Store.products))
+        .outerjoin(store_owners, Store.id == store_owners.c.stores_id)
+        .outerjoin(store_staffs, Store.id == store_staffs.c.stores_id)
+        .where(
+            Store.id == store_id,
+            or_(
+                store_owners.c.users_id == user_id,
+                store_staffs.c.users_id == user_id,
+            ),
+        )
+    )
+    eligible = (await db.execute(stmt)).scalar_one_or_none()
+    if not eligible:
+        logger.warning(
+            "user: %s, 'unauthorized attempt at product module' for store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=403, detail="not authorized")
+    return user_id, eligible
