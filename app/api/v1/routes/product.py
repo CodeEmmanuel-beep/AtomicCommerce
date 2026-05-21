@@ -130,15 +130,25 @@ async def list_products(
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def list_one(
+async def search(
+    seed: float = 0.5,
+    filters: str = Query(None, enum=["cheap", "quality", "latest"]),
     product_name: str | None = None,
     category: str | None = None,
+    sub_category: str | None = None,
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
     db: AsyncSession = Depends(get_db),
 ):
     return await product_service.search_product(
-        product_name=product_name, category=category, page=page, limit=limit, db=db
+        seed=seed,
+        filters=filters,
+        sub_category=sub_category,
+        product_name=product_name,
+        category=category,
+        page=page,
+        limit=limit,
+        db=db,
     )
 
 
