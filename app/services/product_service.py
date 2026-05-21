@@ -12,20 +12,17 @@ from app.api.v1.schemas import (
 from app.database.config import settings
 from app.models import (
     Product,
-    Store,
     Category,
-    User,
     Inventory,
     store_owners,
     store_staffs,
     ProductImage,
     SubCategory,
 )
-from sqlalchemy import select, func, cast, update, or_, String, exists
+from sqlalchemy import select, func, cast, update, String, exists
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 import asyncio
-import orjson
 from app.utils.redis import (
     cart_global_invalidation,
     order_global_invalidation,
@@ -206,7 +203,7 @@ async def add_image(
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
-        logger.error("database error occured while uploading product images")
+        logger.error("database error occurred while uploading product images")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
@@ -217,7 +214,7 @@ async def add_image(
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
-        logger.exception("error occured while uploading product images")
+        logger.exception("error occurred while uploading product images")
         raise HTTPException(status_code=500, detail="internal server error")
     return {"message": "product image uploaded successfully"}
 
@@ -417,7 +414,7 @@ async def product_change(
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
-        logger.error("database error occured while updating product data")
+        logger.error("database error occurred while updating product data")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
@@ -428,7 +425,7 @@ async def product_change(
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
-        logger.exception("error occured while updating product data")
+        logger.exception("error occurred while updating product data")
         raise HTTPException(status_code=500, detail="internal server error")
     return {"status": "success", "message": "product updated successfully"}
 
@@ -549,30 +546,45 @@ async def search_product(
 
 async def delete_one(store_id, product_id, background_task, db, payload, get_supabase):
     user_id = payload.get("user_id")
-    username = payload.get("sub")
     if not user_id:
-        raise HTTPException(status_code=403, detail="Unauthorized access.")
-    store_product = (
-        await db.execute(
-            select(Product)
-            .join(Store, Product.store_id == Store.id)
-            .where(
-                Product.id == product_id,
-                Store.id == store_id,
-                or_(
-                    Store.user_owners.any(User.id == user_id),
-                    Store.user_staffs.any(User.id == user_id),
-                ),
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if not store_product:
+        logger.warning("unauthorized attempt at product_change endpoint")
+        raise HTTPException(status_code=401, detail="not authenticated")
+    auth_stmt = select(
+        exists().where(
+            store_owners.c.stores_id == store_id, store_owners.c.users_id == user_id
+        ),
+        exists().where(
+            store_staffs.c.stores_id == store_id, store_staffs.c.users_id == user_id
+        ),
+    )
+    auth_result = (await db.execute(auth_stmt)).fetchone()
+    owner_exist, staff_exist = auth_result if auth_result else (False, False)
+    if not owner_exist and not staff_exist:
         logger.warning(
-            f"{username}, tried deleting a product with invalid credentials, product id: {product_id}"
+            "user: %s denied access to edit products for store: %s",
+            user_id,
+            store_id,
         )
-        raise HTTPException(status_code=403, detail="invalid credentials")
-    store_product.is_deleted = True
+        raise HTTPException(status_code=403, detail="restricted access")
+    stmt = (
+        select(Product)
+        .options(selectinload(Product.product_images))
+        .where(
+            Product.store_id == store_id,
+            Product.id == product_id,
+            ~Product.is_deleted,
+        )
+        .with_for_update()
+    )
+    product = (await db.execute(stmt)).scalar_one_or_none()
+    if not product:
+        logger.warning(
+            "user: %s, tried editing a non existent product, product_id: %s",
+            user_id,
+            product_id,
+        )
+        raise HTTPException(status_code=404, detail="product not found")
+    product.is_deleted = True
     (
         await db.execute(
             update(Inventory)
@@ -580,8 +592,8 @@ async def delete_one(store_id, product_id, background_task, db, payload, get_sup
             .values(is_deleted=True)
         )
     )
-    files_to_delete = orjson.loads(store_product.image) if store_product.image else []
-    data_id = store_product.id
+    files_to_delete = [p.image for p in product.product_images if p]
+    data_id = product.id
     try:
         await db.commit()
         background_task.add_task(
@@ -601,10 +613,17 @@ async def delete_one(store_id, product_id, background_task, db, payload, get_sup
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
+    except IntegrityError:
+        await db.rollback()
+        logger.exception(
+            "database error occurred while delete product with product_id %s",
+            product_id,
+        )
+        raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
         logger.exception(
-            "error occured while delete product with product_id %s", product_id
+            "error occurred while delete product with product_id %s", product_id
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("deleted product %s", product_id)
@@ -613,7 +632,7 @@ async def delete_one(store_id, product_id, background_task, db, payload, get_sup
         "message": "deleted product",
         "data": {
             "id": data_id,
-            "username": username,
-            "deleted": "Yes",
+            "user_id": user_id,
+            "deleted": True,
         },
     }
