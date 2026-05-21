@@ -9,7 +9,7 @@ from app.api.v1.schemas import (
 )
 from app.services import product_service
 from app.utils.supabase_url import _supabase
-from typing import List, Optional
+from decimal import Decimal
 
 router = APIRouter(prefix="/product", tags=["Products"])
 
@@ -24,7 +24,7 @@ async def create_product(
     product_size: str = Query(
         "small", enum=["small", "medium", "large", "extra_large"]
     ),
-    product_price: float = Form(...),
+    product_price: Decimal = Form(...),
     product_description: str = Form(...),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
@@ -82,16 +82,27 @@ async def product_images_list(
 
 @router.put("/edit_product")
 async def product_change(
-    primary_image: UploadFile = File(...),
-    image: UploadFile = File(...),
+    store_id: int,
+    product_id: int,
+    primary_image: UploadFile = File(None),
+    product_name: str = Form(None),
+    product_type: str = Form(None),
+    product_size: str = Query(None, enum=["small", "medium", "large", "extra_large"]),
+    product_price: Decimal = Form(None),
+    product_description: str = Form(None),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
     get_supabse=Depends(_supabase),
 ):
     return await product_service.product_change(
-        prod=prod,
+        store_id=store_id,
+        product_id=product_id,
         primary_image=primary_image,
-        image=image,
+        product_name=product_name,
+        product_type=product_type,
+        product_size=product_size,
+        product_price=product_price,
+        product_description=product_description,
         db=db,
         payload=payload,
         get_supabase=get_supabse,
