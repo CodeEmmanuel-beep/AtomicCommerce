@@ -16,6 +16,7 @@ from app.utils.supabase_url import cleaned_up
 from app.database.config import settings
 from io import BytesIO
 from app.models import React
+from typing import Optional
 from app.api.v1.schemas import ReactionsSummary
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -270,5 +271,11 @@ def store_inventory(store_id, inventory_id):
     base_filter = [Inventory.store_id == store_id, ~Inventory.is_deleted]
     if inventory_id:
         base_filter.append(Inventory.id == inventory_id)
-    stmt = select(Inventory).where(*base_filter)
+        stmt = select(Inventory).where(*base_filter)
+    else:
+        stmt = (
+            select(Inventory)
+            .options(selectinload(Inventory.product))
+            .where(*base_filter)
+        )
     return stmt
