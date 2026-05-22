@@ -250,6 +250,28 @@ class ProductImageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProductInventoryResponse(BaseModel):
+    id: int
+    primary_image: str
+    product_name: str
+
+    @field_validator("primary_image", mode="before")
+    @classmethod
+    def full_url(cls, value) -> str | None:
+        return get_public_url(value)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class InventoryResponse(BaseModel):
+    id: int
+    product: ProductInventoryResponse
+    stock_quantity: int
+    last_updated: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProductRes(BaseModel):
     id: int
     product_name: str
