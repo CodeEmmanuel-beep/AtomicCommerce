@@ -9,6 +9,7 @@ from app.models import (
     Product,
     Inventory,
     SubCategory,
+    ProductImage,
 )
 from app.api.v1.schemas import (
     StoreResponse,
@@ -22,7 +23,18 @@ from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload, aliased
 from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy import func, select, text, and_, or_, exists, update, cast, String
+from sqlalchemy import (
+    func,
+    select,
+    text,
+    and_,
+    or_,
+    exists,
+    update,
+    cast,
+    String,
+    delete,
+)
 from sqlalchemy.exc import IntegrityError
 from app.utils.helper import upload_photo_helper
 from app.utils.supabase_url import cleaned_up, get_public_url
@@ -888,7 +900,7 @@ async def remove_staff(store_id, staff_id, db, payload):
     return {"message": "personnel deleted"}
 
 
-async def remove_store(store_id, db, payload):
+async def remove_store(store_id, db, payload, get_supabase):
     user_id = payload.get("user_id")
     role = payload.get("role")
     if not user_id:
@@ -900,7 +912,11 @@ async def remove_store(store_id, db, payload):
     store_check = (
         await db.execute(
             select(Store)
-            .options(selectinload(Store.user_owners))
+            .options(
+                selectinload(Store.user_owners),
+                selectinload(Store.account),
+                selectinload(Store.products).selectinload(Product.product_images),
+            )
             .where(
                 Store.id == store_id,
                 ~Store.is_deleted,
@@ -914,14 +930,15 @@ async def remove_store(store_id, db, payload):
             user_id,
         )
         raise HTTPException(status_code=404, detail="store not found")
-    owner_id = [owner.id for owner in store_check.user_owners]
-    if user_id not in owner_id and role not in allowed_roles:
+    owner_id = any(owner.id == user_id for owner in store_check.user_owners)
+    if not owner_id and role not in allowed_roles:
         logger.warning(
             "user: %s attempted a restricted endpoint (deleted store)", user_id
         )
         raise HTTPException(status_code=403, detail="restricted access")
     store_check.is_deleted = True
     store_check.approved = False
+    store_check.account.is_deleted = True
     (
         await db.execute(
             update(Address).where(Address.store_id == store_id).values(is_deleted=True)
@@ -939,6 +956,11 @@ async def remove_store(store_id, db, payload):
             .values(is_deleted=True)
         )
     )
+    files_to_delete = []
+    for s_p in store_check.products:
+        if s_p.product_images:
+            files_to_delete.extend(p.image for p in s_p.product_images if p)
+    await db.execute(delete(ProductImage).where(ProductImage.store_id == store_id))
     try:
         await db.commit()
         await store_invalidation_global()
@@ -956,5 +978,12 @@ async def remove_store(store_id, db, payload):
             user_id,
         )
         raise HTTPException(status_code=500, detail="internal server error")
+    if files_to_delete:
+        await cleaned_up(
+            get_supabase,
+            files_to_delete,
+            context_1="error removing orphaned product images from storage",
+            context_2="successfully removed orphaned product images from storage",
+        )
     logger.info("store '%s', deleted", store_id)
     return {"message": "store deleted"}
