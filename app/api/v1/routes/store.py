@@ -174,5 +174,8 @@ async def delete_store_by_id(
     store_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
+    get_supabase=Depends(_supabase),
 ):
-    return await store_service.remove_store(store_id=store_id, db=db, payload=payload)
+    return await store_service.remove_store(
+        store_id=store_id, db=db, payload=payload, get_supabase=get_supabase
+    )
