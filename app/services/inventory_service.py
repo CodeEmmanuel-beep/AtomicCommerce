@@ -1,8 +1,9 @@
-from app.models import Inventory, Store, Product, User, store_owners, store_staffs
+from app.models import Inventory, Product, store_owners, store_staffs
 from sqlalchemy.exc import IntegrityError
-from fastapi import HTTPException
+from fastapi import HTTPException, Response, status
+from app.utils.helper import store_exist, store_inventory
 from app.logs.logger import get_logger
-from sqlalchemy import select, or_, exists
+from sqlalchemy import select, exists
 
 logger = get_logger("inventory")
 
@@ -66,41 +67,12 @@ async def create(store_id: int, product_id: int, stock_quantity: int, db, payloa
 
 
 async def read(store_id, inventory_id, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt at the read endpoint")
-        raise HTTPException(status_code=401, detail="not authenticated")
-    auth_stmt = select(
-        exists().where(
-            store_owners.c.stores_id == store_id, store_owners.c.users_id == user_id
-        ),
-        exists().where(
-            store_staffs.c.stores_id == store_id, store_staffs.c.users_id == user_id
-        ),
-    )
-    auth_result = (await db.execute(auth_stmt)).fetchone()
-    owner_exist, staff_exist = auth_result if auth_result else (False, False)
-
-    if not owner_exist and not staff_exist:
-        logger.warning(
-            "user: %s, made an ineligible attempt in read inventory endpoint for store: %s",
-            user_id,
-            store_id,
-        )
-        raise HTTPException(status_code=403, detail="ineligible credentials")
-    stmt = (
-        select(Inventory).where(
-            Inventory.id == inventory_id,
-            Inventory.store_id == store_id,
-            ~Inventory.is_deleted,
-        ),
-    )
+    user_id = await store_exist(store_id, db, payload)
+    stmt = store_inventory(store_id, inventory_id)
     result = (await db.execute(stmt)).scalar_one_or_none()
     if not result:
-        logger.warning(
-            "user: %s, made an ineligible attempt in read inventory endpoint"
-        )
-        raise HTTPException(status_code=403, detail="ineligible credentials")
+        logger.warning("user: %s, tried fetching a non existent inventory", user_id)
+        raise HTTPException(status_code=404, detail="inventory not found")
     logger.info("read inventory endpoint returned data for user %s", user_id)
     return {
         "stock_quantity": result.stock_quantity,
@@ -109,25 +81,15 @@ async def read(store_id, inventory_id, db, payload):
 
 
 async def update(store_id: int, inventory_id: int, stock_quantity: int, db, payload):
-    user_id = payload.get("user_id")
-    stmt = (
-        select(Inventory)
-        .join(Store, Store.id == Inventory.store_id)
-        .where(
-            Inventory.id == inventory_id,
-            Store.id == store_id,
-            or_(
-                Store.user_owners.any(User.id == user_id),
-                Store.user_staffs.any(User.id == user_id),
-            ),
-        )
-    )
+    user_id = await store_exist(store_id, db, payload)
+    stmt = store_inventory(store_id, inventory_id)
+    stmt = stmt.with_for_update()
     inventory = (await db.execute(stmt)).scalar_one_or_none()
     if not inventory:
-        logger.warning(
-            "user: %s, made an ineligible attempt in updating inventory endpoint"
-        )
-        raise HTTPException(status_code=403, detail="ineligible credentials")
+        logger.warning("user: %s, tried updating a non existent inventory", user_id)
+        raise HTTPException(status_code=404, detail="inventory not found")
+    if inventory.stock_quantity == stock_quantity:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     inventory.stock_quantity = stock_quantity
     try:
         await db.commit()
@@ -152,25 +114,16 @@ async def update(store_id: int, inventory_id: int, stock_quantity: int, db, payl
 
 
 async def delete(store_id: int, inventory_id: int, db, payload):
-    user_id = payload.get("user_id")
-    stmt = (
-        select(Inventory)
-        .join(Store, Store.id == Inventory.store_id)
-        .where(
-            Inventory.id == inventory_id,
-            Store.id == store_id,
-            or_(
-                Store.user_owners.any(User.id == user_id),
-                Store.user_staffs.any(User.id == user_id),
-            ),
-        )
-    )
+    user_id = await store_exist(store_id, db, payload)
+    stmt = store_inventory(store_id, inventory_id)
+    stmt = stmt.with_for_update()
     inventory = (await db.execute(stmt)).scalar_one_or_none()
     if not inventory:
         logger.warning(
-            "user: %s, made an ineligible attempt in deleting inventory endpoint"
+            "user: %s, tried deleting a non existent inventory",
+            user_id,
         )
-        raise HTTPException(status_code=403, detail="ineligible credentials")
+        raise HTTPException(status_code=404, detail="inventory not found")
     inventory.is_deleted = True
     try:
         await db.commit()
