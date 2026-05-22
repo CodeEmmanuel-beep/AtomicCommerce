@@ -539,7 +539,7 @@ async def search_product(
     full_response = StandardResponse(
         status="success", message="products data", data=data
     )
-    await cached(cache_key, full_response, ttl=60)
+    await cached(cache_key, full_response, ttl=600)
     logger.info("cached searched products")
     return full_response
 
