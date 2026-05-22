@@ -278,7 +278,7 @@ class ProductResponse(BaseModel):
     product_size: str
     product_description: str
     product_availability: str
-    stock_quantity: List[InventoryObj] = Field([])
+    stock_quantity: List[InventoryObj] = Field(default_factory=list, alias="inventory")
 
     @field_validator("primary_image", mode="before")
     @classmethod
