@@ -19,7 +19,7 @@ from app.models import (
     ProductImage,
     SubCategory,
 )
-from sqlalchemy import select, func, cast, update, String, exists
+from sqlalchemy import select, func, cast, update, String, exists, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 import asyncio
@@ -455,7 +455,7 @@ async def list_products(
             (await conn.execute(stmt.offset(offset).limit(limit))).scalars().all()
         )
         total = (await conn.execute(select(func.count(Product.id)))).scalar() or 0
-        logger.info("total products inn the market: %s", total)
+        logger.info("total products in the market: %s", total)
     if not products:
         logger.warning("all products queried, but none found")
         return StandardResponse(
@@ -594,6 +594,7 @@ async def delete_one(store_id, product_id, background_task, db, payload, get_sup
     )
     files_to_delete = [p.image for p in product.product_images if p]
     data_id = product.id
+    await db.execute(delete(ProductImage).where(ProductImage.product_id == product_id))
     try:
         await db.commit()
         background_task.add_task(
