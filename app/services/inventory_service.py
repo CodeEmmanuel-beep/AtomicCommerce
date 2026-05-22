@@ -1,9 +1,17 @@
 from app.models import Inventory, Product, store_owners, store_staffs
 from sqlalchemy.exc import IntegrityError
+from app.api.v1.schemas import (
+    StandardResponse,
+    PaginatedMetadata,
+    PaginatedResponse,
+    InventoryResponse,
+)
 from fastapi import HTTPException, Response, status
+from sqlalchemy.orm import selectinload
 from app.utils.helper import store_exist, store_inventory
 from app.logs.logger import get_logger
-from sqlalchemy import select, exists
+from sqlalchemy import select, exists, func
+from app.utils.redis import cache, cached
 
 logger = get_logger("inventory")
 
@@ -62,7 +70,7 @@ async def create(store_id: int, product_id: int, stock_quantity: int, db, payloa
             user_id,
         )
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info("inventory: %s, created successfully", stock.id)
+    logger.info("inventory created successfully for product: %s", product_id)
     return {"message": "inventory created"}
 
 
@@ -73,11 +81,54 @@ async def read(store_id, inventory_id, db, payload):
     if not result:
         logger.warning("user: %s, tried fetching a non existent inventory", user_id)
         raise HTTPException(status_code=404, detail="inventory not found")
-    logger.info("read inventory endpoint returned data for user %s", user_id)
+    logger.info("read function returned data for user %s", user_id)
     return {
         "stock_quantity": result.stock_quantity,
         "time_of_stock": result.last_updated,
     }
+
+
+async def read_all(store_id, page, limit, db, payload):
+    user_id = await store_exist(store_id, db, payload)
+    offset = (page - 1) * limit
+    cache_key = f"inventory:{user_id}:{store_id}:{page}:{limit}"
+    inventory_cache = await cache(cache_key)
+    if inventory_cache:
+        logger.info(
+            "inventory cache hit for user_id: %s, store_id: %s", user_id, store_id
+        )
+        return StandardResponse(**inventory_cache)
+    stmt = store_inventory(store_id, None)
+    results = (
+        (
+            await db.execute(
+                stmt.order_by(Inventory.last_updated.desc()).offset(offset).limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not results:
+        logger.warning("user: %s, tried fetching a non existent inventory", user_id)
+        raise HTTPException(status_code=404, detail="inventory not found")
+    total = (
+        await db.execute(
+            select(func.count(Inventory.id)).where(
+                Inventory.store_id == store_id, ~Inventory.is_deleted
+            )
+        )
+    ).scalar() or 0
+    logger.info("total inventories for store: %s, is: %s", store_id, total)
+    data = PaginatedMetadata[InventoryResponse](
+        items=[InventoryResponse.model_validate(r) for r in results],
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+    )
+    full_response = StandardResponse(
+        status="success", message="store inventory", data=data
+    )
+    await cached(cache_key, full_response, ttl=600)
+    logger.info("read_all function returned data for user %s", user_id)
+    return full_response
 
 
 async def update(store_id: int, inventory_id: int, stock_quantity: int, db, payload):
