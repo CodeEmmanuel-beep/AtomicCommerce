@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.get import get_db
 from app.services import inventory_service
@@ -33,6 +33,19 @@ async def read_inventory(
 ):
     return await inventory_service.read(
         store_id=store_id, inventory_id=inventory_id, db=db, payload=payload
+    )
+
+
+@router.get("/store_inventory_list")
+async def read_store_inventory(
+    store_id: int,
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, le=100),
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await inventory_service.read_all(
+        store_id=store_id, page=page, limit=limit, db=db, payload=payload
     )
 
 
