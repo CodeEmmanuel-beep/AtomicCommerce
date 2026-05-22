@@ -11,7 +11,7 @@ import uuid
 from sqlalchemy.orm import selectinload
 from werkzeug.utils import secure_filename
 from app.logs.logger import get_logger
-from app.models import Store, Membership, store_owners, store_staffs
+from app.models import Store, Membership, store_owners, store_staffs, Inventory
 from app.utils.supabase_url import cleaned_up
 from app.database.config import settings
 from io import BytesIO
@@ -57,7 +57,7 @@ async def upload_photo_helper(photo, payload, get_supabase):
     user_id = payload.get("user_id")
     filename = None
     max_size = 5 * 1024 * 1024
-    allowed_types = ["image/jpeg", "image/webp", "image/png"]
+    allowed_types = ("image/jpeg", "image/webp", "image/png")
     total_size = 0
     file_byte = b""
     with BytesIO() as buffer:
@@ -239,3 +239,36 @@ async def store_auth(store_id, db, payload):
         )
         raise HTTPException(status_code=403, detail="not authorized")
     return user_id, eligible
+
+
+async def store_exist(store_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt")
+        raise HTTPException(status_code=401, detail="not authenticated")
+    auth_stmt = select(
+        exists().where(
+            store_owners.c.stores_id == store_id, store_owners.c.users_id == user_id
+        ),
+        exists().where(
+            store_staffs.c.stores_id == store_id, store_staffs.c.users_id == user_id
+        ),
+    )
+    auth_result = (await db.execute(auth_stmt)).fetchone()
+    owner_exist, staff_exist = auth_result if auth_result else (False, False)
+    if not owner_exist and not staff_exist:
+        logger.warning(
+            "user: %s, made an ineligible attempt for store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=403, detail="ineligible credentials")
+    return user_id
+
+
+def store_inventory(store_id, inventory_id):
+    base_filter = [Inventory.store_id == store_id, ~Inventory.is_deleted]
+    if inventory_id:
+        base_filter.append(Inventory.id == inventory_id)
+    stmt = select(Inventory).where(*base_filter)
+    return stmt
