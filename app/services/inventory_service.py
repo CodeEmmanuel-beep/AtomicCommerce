@@ -1,4 +1,4 @@
-from app.models import Inventory, Store, Product, User
+from app.models import Inventory, Store, Product, User, store_owners, store_staffs
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from app.logs.logger import get_logger
@@ -9,22 +9,36 @@ logger = get_logger("inventory")
 
 async def create(store_id: int, product_id: int, stock_quantity: int, db, payload):
     user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt at the create endpoint")
+        raise HTTPException(status_code=401, detail="not authenticated")
     stmt = select(
         exists().where(
-            Store.id == store_id,
-            Product.id == product_id,
-            or_(
-                Store.user_owners.any(User.id == user_id),
-                Store.user_staffs.any(User.id == user_id),
-            ),
-        )
-    ).join(Product, Store.id == Product.store_id)
-    result = (await db.execute(stmt)).scalar()
-    if not result:
+            store_owners.c.stores_id == store_id,
+            store_owners.c.users_id == user_id,
+        ),
+        exists().where(
+            store_staffs.c.stores_id == store_id,
+            store_staffs.c.users_id == user_id,
+        ),
+        exists().where(
+            Product.id == product_id, Product.store_id == store_id, ~Product.is_deleted
+        ),
+    )
+    result = (await db.execute(stmt)).fetchone() or (False, False, False)
+    owner, staff, product_verified = result
+    if not owner and not staff:
         logger.warning(
-            "user: %s, made an ineligible attempt in create inventory endpoint"
+            "user: %s, made an ineligible attempt in create inventory endpoint", user_id
         )
         raise HTTPException(status_code=403, detail="ineligible credentials")
+    if not product_verified:
+        logger.warning(
+            "user: %s tried creating inventory for invalid or cross-tenant product_id: %s",
+            user_id,
+            product_id,
+        )
+        raise HTTPException(status_code=404, detail="product not found in this store")
     stock = Inventory(
         store_id=store_id, product_id=product_id, stock_quantity=stock_quantity
     )
@@ -53,17 +67,33 @@ async def create(store_id: int, product_id: int, stock_quantity: int, db, payloa
 
 async def read(store_id, inventory_id, db, payload):
     user_id = payload.get("user_id")
-    stmt = (
-        select(Inventory)
-        .join(Store, Store.id == Inventory.store_id)
-        .where(
-            Inventory.id == inventory_id,
-            Store.id == store_id,
-            or_(
-                Store.user_owners.any(User.id == user_id),
-                Store.user_staffs.any(User.id == user_id),
-            ),
+    if not user_id:
+        logger.warning("unauthorized attempt at the read endpoint")
+        raise HTTPException(status_code=401, detail="not authenticated")
+    auth_stmt = select(
+        exists().where(
+            store_owners.c.stores_id == store_id, store_owners.c.users_id == user_id
+        ),
+        exists().where(
+            store_staffs.c.stores_id == store_id, store_staffs.c.users_id == user_id
+        ),
+    )
+    auth_result = (await db.execute(auth_stmt)).fetchone()
+    owner_exist, staff_exist = auth_result if auth_result else (False, False)
+
+    if not owner_exist and not staff_exist:
+        logger.warning(
+            "user: %s, made an ineligible attempt in read inventory endpoint for store: %s",
+            user_id,
+            store_id,
         )
+        raise HTTPException(status_code=403, detail="ineligible credentials")
+    stmt = (
+        select(Inventory).where(
+            Inventory.id == inventory_id,
+            Inventory.store_id == store_id,
+            ~Inventory.is_deleted,
+        ),
     )
     result = (await db.execute(stmt)).scalar_one_or_none()
     if not result:
