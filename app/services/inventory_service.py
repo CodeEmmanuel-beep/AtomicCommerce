@@ -8,7 +8,7 @@ from app.api.v1.schemas import (
 )
 from fastapi import HTTPException, Response, status
 from sqlalchemy.orm import selectinload
-from app.utils.helper import store_exist, store_inventory
+from app.utils.helper import store_auth, store_inventory
 from app.logs.logger import get_logger
 from sqlalchemy import select, exists, func
 from app.utils.redis import cache, cached
@@ -75,7 +75,7 @@ async def create(store_id: int, product_id: int, stock_quantity: int, db, payloa
 
 
 async def read(store_id, inventory_id, db, payload):
-    user_id = await store_exist(store_id, db, payload)
+    user_id = await store_auth(store_id, db, payload)
     stmt = store_inventory(store_id, inventory_id)
     result = (await db.execute(stmt)).scalar_one_or_none()
     if not result:
@@ -89,7 +89,7 @@ async def read(store_id, inventory_id, db, payload):
 
 
 async def read_all(store_id, page, limit, db, payload):
-    user_id = await store_exist(store_id, db, payload)
+    user_id = await store_auth(store_id, db, payload)
     offset = (page - 1) * limit
     cache_key = f"inventory:{user_id}:{store_id}:{page}:{limit}"
     inventory_cache = await cache(cache_key)
@@ -132,7 +132,7 @@ async def read_all(store_id, page, limit, db, payload):
 
 
 async def update(store_id: int, inventory_id: int, stock_quantity: int, db, payload):
-    user_id = await store_exist(store_id, db, payload)
+    user_id = await store_auth(store_id, db, payload)
     stmt = store_inventory(store_id, inventory_id)
     stmt = stmt.with_for_update()
     inventory = (await db.execute(stmt)).scalar_one_or_none()
@@ -165,7 +165,7 @@ async def update(store_id: int, inventory_id: int, stock_quantity: int, db, payl
 
 
 async def delete(store_id: int, inventory_id: int, db, payload):
-    user_id = await store_exist(store_id, db, payload)
+    user_id = await store_auth(store_id, db, payload)
     stmt = store_inventory(store_id, inventory_id)
     stmt = stmt.with_for_update()
     inventory = (await db.execute(stmt)).scalar_one_or_none()
