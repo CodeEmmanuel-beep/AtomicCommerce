@@ -11,12 +11,11 @@ import uuid
 from sqlalchemy.orm import selectinload
 from werkzeug.utils import secure_filename
 from app.logs.logger import get_logger
-from app.models import Store, Membership, store_owners, store_staffs, Inventory
+from app.models import Store, Membership, store_owners, store_staffs, Inventory, Product
 from app.utils.supabase_url import cleaned_up
 from app.database.config import settings
 from io import BytesIO
 from app.models import React
-from typing import Optional
 from app.api.v1.schemas import ReactionsSummary
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -213,36 +212,24 @@ async def view_selected_members(
     return response
 
 
-async def store_auth(store_id, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt at product module")
-        raise HTTPException(status_code=401, detail="user not authenticated")
+async def store_query(store_id, db):
     stmt = (
         select(Store)
         .options(selectinload(Store.products))
-        .outerjoin(store_owners, Store.id == store_owners.c.stores_id)
-        .outerjoin(store_staffs, Store.id == store_staffs.c.stores_id)
-        .where(
-            Store.id == store_id,
-            or_(
-                store_owners.c.users_id == user_id,
-                store_staffs.c.users_id == user_id,
-            ),
-        )
+        .join(Product, Store.id == Product.store_id)
+        .where(Store.id == store_id, ~Product.is_deleted)
     )
     eligible = (await db.execute(stmt)).scalar_one_or_none()
     if not eligible:
         logger.warning(
-            "user: %s, 'unauthorized attempt at product module' for store: %s",
-            user_id,
+            "unauthorized attempt to query store: %s",
             store_id,
         )
         raise HTTPException(status_code=403, detail="not authorized")
-    return user_id, eligible
+    return eligible
 
 
-async def store_exist(store_id, db, payload):
+async def store_auth(store_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt")
