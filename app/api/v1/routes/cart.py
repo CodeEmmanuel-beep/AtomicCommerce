@@ -10,13 +10,12 @@ from app.services import cart_service
 from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
 
-
 router = APIRouter(prefix="/shopping", tags=["Cart"])
 
 
-@router.post("/cart")
-async def create_cart(
-    store_id,
+@router.post("/create_cart")
+async def cart(
+    store_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
