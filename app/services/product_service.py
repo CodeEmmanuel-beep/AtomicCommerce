@@ -31,7 +31,12 @@ from app.utils.redis import (
     cached,
     cache,
 )
-from app.utils.helper import file_generator, upload_photo_helper, store_auth
+from app.utils.helper import (
+    file_generator,
+    upload_photo_helper,
+    store_auth,
+    store_query,
+)
 from app.utils.supabase_url import cleaned_up
 
 logger = get_logger("products")
@@ -50,7 +55,8 @@ async def create(
     db,
     payload,
 ):
-    user_id, eligible = await store_auth(store_id, db, payload)
+    user_id = await store_auth(store_id, db, payload)
+    eligible = await store_query(store_id, db)
     filename = None
     files_allowed = ("image/jpeg", "image/png", "image/webp")
     try:
@@ -165,7 +171,8 @@ async def add_image(
     payload,
     get_supabase,
 ):
-    user_id, eligible = await store_auth(store_id, db, payload)
+    user_id = await store_auth(store_id, db, payload)
+    eligible = await store_query(store_id, db)
     product_ids_in_store = [p.id for p in eligible.products]
     if product_id not in product_ids_in_store:
         logger.warning(
@@ -238,7 +245,7 @@ async def view_product_pics(store_id, product_id, db):
 
 
 async def delete_images(store_id, product_id, image_id, db, payload, get_supabase):
-    user_id, eligible = await store_auth(store_id, db, payload)
+    user_id = await store_auth(store_id, db, payload)
     delete_img = (
         await db.execute(
             select(ProductImage).where(
@@ -290,27 +297,7 @@ async def product_change(
     payload,
     get_supabase,
 ):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt at product_change endpoint")
-        raise HTTPException(status_code=401, detail="not authenticated")
-    auth_stmt = select(
-        exists().where(
-            store_owners.c.stores_id == store_id, store_owners.c.users_id == user_id
-        ),
-        exists().where(
-            store_staffs.c.stores_id == store_id, store_staffs.c.users_id == user_id
-        ),
-    )
-    auth_result = (await db.execute(auth_stmt)).fetchone()
-    owner_exist, staff_exist = auth_result if auth_result else (False, False)
-    if not owner_exist and not staff_exist:
-        logger.warning(
-            "user: %s denied access to edit products for store: %s",
-            user_id,
-            store_id,
-        )
-        raise HTTPException(status_code=403, detail="restricted access")
+    user_id = await store_auth(store_id, db, payload)
     stmt = (
         select(Product)
         .where(
@@ -545,27 +532,7 @@ async def search_product(
 
 
 async def delete_one(store_id, product_id, background_task, db, payload, get_supabase):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt at product_change endpoint")
-        raise HTTPException(status_code=401, detail="not authenticated")
-    auth_stmt = select(
-        exists().where(
-            store_owners.c.stores_id == store_id, store_owners.c.users_id == user_id
-        ),
-        exists().where(
-            store_staffs.c.stores_id == store_id, store_staffs.c.users_id == user_id
-        ),
-    )
-    auth_result = (await db.execute(auth_stmt)).fetchone()
-    owner_exist, staff_exist = auth_result if auth_result else (False, False)
-    if not owner_exist and not staff_exist:
-        logger.warning(
-            "user: %s denied access to edit products for store: %s",
-            user_id,
-            store_id,
-        )
-        raise HTTPException(status_code=403, detail="restricted access")
+    user_id = await store_auth(store_id, db, payload)
     stmt = (
         select(Product)
         .options(selectinload(Product.product_images))
