@@ -278,8 +278,8 @@ class ProductRes(BaseModel):
     primary_image: str
     product_price: Decimal
     product_availability: str
-    stock_quantity: InventoryObj
     avg_rating: Decimal
+    inventory: List[InventoryObj] = Field(default_factory=list)
 
     @field_validator("primary_image", mode="before")
     @classmethod
