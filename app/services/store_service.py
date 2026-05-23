@@ -528,6 +528,7 @@ async def search_stores(search, search_value, seed, page, limit, db):
         stmt = (
             select(Store, product_aliase)
             .outerjoin(product_aliase, Store.id == product_aliase.store_id)
+            .options(selectinload(product_aliase.inventory))
             .where(
                 filter_column,
                 Store.approved,
