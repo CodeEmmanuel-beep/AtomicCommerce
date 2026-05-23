@@ -21,6 +21,7 @@ from app.api.v1.routes import (
     sub_category,
     profile,
     store_account_and_address,
+    notifications,
 )
 from app.utils.redis import run_router, add_commit_periodically, notification_queue
 import asyncio
@@ -91,6 +92,7 @@ def home():
 
 
 app.include_router(auth.router)
+app.include_router(notifications.router)
 app.include_router(profile.router)
 app.include_router(category.router)
 app.include_router(sub_category.router)
