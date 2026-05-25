@@ -28,19 +28,19 @@ Base = declarative_base()
 store_staffs = Table(
     "store_staffs",
     Base.metadata,
-    Column("users_id", ForeignKey("users.id"), primary_key=True, index=True),
-    Column("stores_id", ForeignKey("stores.id"), primary_key=True, index=True),
+    Column("users_id", ForeignKey("user.id"), primary_key=True, index=True),
+    Column("stores_id", ForeignKey("store.id"), primary_key=True, index=True),
 )
 store_owners = Table(
     "store_owners",
     Base.metadata,
-    Column("users_id", ForeignKey("users.id"), primary_key=True, index=True),
-    Column("stores_id", ForeignKey("stores.id"), primary_key=True, index=True),
+    Column("users_id", ForeignKey("user.id"), primary_key=True, index=True),
+    Column("stores_id", ForeignKey("store.id"), primary_key=True, index=True),
 )
 
 
 class User(Base):
-    __tablename__ = "users"
+    __tablename__ = "user"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     first_name: Mapped[str] = mapped_column(String, index=True)
     middle_name: Mapped[str] = mapped_column(String, nullable=True)
@@ -75,10 +75,10 @@ class User(Base):
 
 
 class Messaging(Base):
-    __tablename__ = "messages"
+    __tablename__ = "message"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), index=True)
-    ticket_id = Column(Integer, ForeignKey("tickets.id"), index=True)
+    user_id = Column(Integer, ForeignKey("user.id"), index=True)
+    ticket_id = Column(Integer, ForeignKey("ticket.id"), index=True)
     support_id = Column(Integer, index=True)
     customer_id = Column(Integer, index=True)
     message = Column(String, nullable=True)
@@ -100,19 +100,17 @@ class TicketStatus(str, Enum):
 
 
 class Ticket(Base):
-    __tablename__ = "tickets"
+    __tablename__ = "ticket"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("users.id"), nullable=False
-    )
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[TicketStatus] = mapped_column(
         SQLEnum(TicketStatus), default=TicketStatus.open.value, index=True
     )
     assigned_to: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("users.id"), nullable=True, index=True
+        Integer, ForeignKey("user.id"), nullable=True, index=True
     )
     updated_at = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -132,7 +130,7 @@ class Ticket(Base):
 
 
 class Store(Base):
-    __tablename__ = "stores"
+    __tablename__ = "store"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     business_logo: Mapped[str] = mapped_column(String, nullable=True)
     store_photo: Mapped[str] = mapped_column(String, nullable=False)
@@ -147,7 +145,7 @@ class Store(Base):
     category_name: Mapped[str] = mapped_column(String, index=True)
     sub_category: Mapped[list] = mapped_column(JSONB, index=True)
     category_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("categories.id"), index=True
+        Integer, ForeignKey("category.id"), index=True
     )
     avg_rating: Mapped[Decimal] = mapped_column(
         Numeric(precision=3, scale=2), default=0
@@ -181,9 +179,9 @@ class Store(Base):
 
 
 class Address(Base):
-    __tablename__ = "addresses"
+    __tablename__ = "address"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("store.id"), index=True)
     street: Mapped[str] = mapped_column(String, nullable=False)
     city: Mapped[str] = mapped_column(String, nullable=False)
     state: Mapped[str] = mapped_column(String, nullable=False)
@@ -214,9 +212,9 @@ class AccountVerification(str, Enum):
 
 
 class StoreAccount(Base):
-    __tablename__ = "store_accounts"
+    __tablename__ = "store_account"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
     bank_name: Mapped[str] = mapped_column(String, nullable=False)
     account_holder_name: Mapped[str] = mapped_column(String, nullable=False)
     account_type: Mapped[AccountType] = mapped_column(
@@ -238,6 +236,7 @@ class StoreAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), onupdate=func.now(), nullable=True
     )
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -257,15 +256,13 @@ class StoreAccount(Base):
 
 
 class Reply(Base):
-    __tablename__ = "replies"
+    __tablename__ = "reply"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    user_id = Column(Integer, ForeignKey("user.id"), index=True)
     edited = Column(Boolean, default=False)
-    review_id = Column(
-        Integer, ForeignKey("reviews.id", ondelete="CASCADE"), index=True
-    )
-    product_id = Column(Integer, ForeignKey("products.id"), index=True)
-    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
+    review_id = Column(Integer, ForeignKey("review.id", ondelete="CASCADE"), index=True)
+    product_id = Column(Integer, ForeignKey("product.id"), index=True)
+    store_id = Column(Integer, ForeignKey("store.id"), index=True)
     reply_text = Column(String)
     product_reply_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     store_reply_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -286,10 +283,10 @@ class ProductSize(str, Enum):
 
 
 class Product(Base):
-    __tablename__ = "products"
+    __tablename__ = "product"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
-    product_name: Mapped[str] = mapped_column(String)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
+    product_name: Mapped[str] = mapped_column(String, index=True)
     primary_image: Mapped[str] = mapped_column(String, nullable=False)
     product_price: Mapped[Decimal] = mapped_column(Numeric(precision=12, scale=2))
     product_type: Mapped[str] = mapped_column(String)
@@ -302,10 +299,10 @@ class Product(Base):
         SQLEnum(ProductSize), default=ProductSize.small, index=True
     )
     category_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("categories.id"), index=True
+        Integer, ForeignKey("category.id"), index=True
     )
     sub_category_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("subcategories.id"), index=True
+        Integer, ForeignKey("subcategory.id"), index=True
     )
     product_availability: Mapped[str] = mapped_column(String, default="available")
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -321,11 +318,11 @@ class Product(Base):
 
 
 class ProductImage(Base):
-    __tablename__ = "product_images"
+    __tablename__ = "product_image"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
     product_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("products.id"), index=True
+        Integer, ForeignKey("product.id"), index=True
     )
     image: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -334,12 +331,12 @@ class ProductImage(Base):
 
 
 class Inventory(Base):
-    __tablename__ = "inventories"
+    __tablename__ = "inventory"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     product_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("products.id"), index=True
+        Integer, ForeignKey("product.id"), index=True
     )
-    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
     stock_quantity: Mapped[int] = mapped_column(Integer, default=0)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     last_updated: Mapped[datetime] = mapped_column(
@@ -362,10 +359,10 @@ class PaymentStatus(str, Enum):
 
 
 class Payment(Base):
-    __tablename__ = "payments"
+    __tablename__ = "payment"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
-    order_id: Mapped[int] = mapped_column(Integer, ForeignKey("orders.id"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
+    order_id: Mapped[int] = mapped_column(Integer, ForeignKey("order.id"), index=True)
     payment_method: Mapped[str] = mapped_column(String)
     amount_paid: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     payment_status: Mapped[PaymentStatus] = mapped_column(
@@ -393,13 +390,13 @@ class Payment(Base):
 
 
 class Refund(Base):
-    __tablename__ = "refunds"
+    __tablename__ = "refund"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
     payment_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("payments.id"), index=True
+        Integer, ForeignKey("payment.id"), index=True
     )
-    order_id: Mapped[int] = mapped_column(Integer, ForeignKey("orders.id"), index=True)
+    order_id: Mapped[int] = mapped_column(Integer, ForeignKey("order.id"), index=True)
     refund_id: Mapped[str] = mapped_column(String, unique=True, index=True)
     refund_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
@@ -415,10 +412,10 @@ class Refund(Base):
 
 
 class Membership(Base):
-    __tablename__ = "memberships"
+    __tablename__ = "membership"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), index=True)
-    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
+    user_id = Column(Integer, ForeignKey("user.id"), index=True)
+    store_id = Column(Integer, ForeignKey("store.id"), index=True)
     membership_type = Column(String, index=True)
     is_active = Column(Boolean, default=False, index=True)
     is_deleted = Column(Boolean, default=False, index=True)
@@ -447,10 +444,10 @@ class SubscriptionPlan(str, Enum):
 
 
 class Subscription(Base):
-    __tablename__ = "subscriptions"
+    __tablename__ = "subscription"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     membership_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("memberships.id"), index=True
+        Integer, ForeignKey("membership.id"), index=True
     )
     plan_name: Mapped[SubscriptionPlan] = mapped_column(
         SQLEnum(SubscriptionPlan),
@@ -475,22 +472,24 @@ class Subscription(Base):
 
 
 class Notification(Base):
-    __tablename__ = "notifications"
+    __tablename__ = "notification"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     notification: Mapped[str] = mapped_column(String)
+    from_user: Mapped[int] = mapped_column(Integer, index=True)
     notified_user: Mapped[int] = mapped_column(Integer, index=True)
-    time_of_op: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    time_of_op: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
 
 class Review(Base):
-    __tablename__ = "reviews"
+    __tablename__ = "review"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), index=True)
-    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
+    user_id = Column(Integer, ForeignKey("user.id"), index=True)
+    product_id = Column(Integer, ForeignKey("product.id"), index=True)
+    store_id = Column(Integer, ForeignKey("store.id"), index=True)
     review_text = Column(String)
     ratings = Column(Integer)
     product_reply_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -525,18 +524,18 @@ class ReactionType(str, Enum):
 
 
 class React(Base):
-    __tablename__ = "reacts"
+    __tablename__ = "react"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     type: Mapped[ReactionType] = mapped_column(SQLEnum(ReactionType), nullable=False)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
     reply_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("replies.id", ondelete="CASCADE"),
+        ForeignKey("reply.id", ondelete="CASCADE"),
         index=True,
     )
     review_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("reviews.id", ondelete="CASCADE"),
+        ForeignKey("review.id", ondelete="CASCADE"),
         index=True,
     )
     time_of_reaction: Mapped[datetime] = mapped_column(
@@ -557,9 +556,9 @@ class React(Base):
 
 
 class Category(Base):
-    __tablename__ = "categories"
+    __tablename__ = "category"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String, unique=True)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     products = relationship("Product", back_populates="category")
@@ -568,12 +567,12 @@ class Category(Base):
 
 
 class SubCategory(Base):
-    __tablename__ = "subcategories"
+    __tablename__ = "subcategory"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     category_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("categories.id"), index=True
+        Integer, ForeignKey("category.id"), index=True
     )
-    name: Mapped[str] = mapped_column(String, unique=True)
+    name: Mapped[str] = mapped_column(String, unique=True, index=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     products = relationship("Product", back_populates="sub_category")
@@ -581,11 +580,11 @@ class SubCategory(Base):
 
 
 class CartItem(Base):
-    __tablename__ = "cartitems"
+    __tablename__ = "cartitem"
     id = Column(Integer, primary_key=True, index=True)
-    cart_id = Column(Integer, ForeignKey("carts.id", ondelete="CASCADE"), index=True)
+    cart_id = Column(Integer, ForeignKey("cart.id", ondelete="CASCADE"), index=True)
     quantity = Column(Float, default=1)
-    product_id = Column(Integer, ForeignKey("products.id"), index=True)
+    product_id = Column(Integer, ForeignKey("product.id"), index=True)
 
     product = relationship("Product", back_populates="cart_items")
     cart = relationship("Cart", back_populates="cartitems")
@@ -595,12 +594,12 @@ class CartItem(Base):
 
 
 class Cart(Base):
-    __tablename__ = "carts"
+    __tablename__ = "cart"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), index=True)
-    store_id = Column(Integer, ForeignKey("stores.id"), index=True)
+    user_id = Column(Integer, ForeignKey("user.id"), index=True)
+    store_id = Column(Integer, ForeignKey("store.id"), index=True)
     member_id = Column(
-        Integer, ForeignKey("memberships.id", ondelete="CASCADE"), index=True
+        Integer, ForeignKey("membership.id", ondelete="CASCADE"), index=True
     )
     check_out: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     total_quantity = Column(Float, default=0)
@@ -623,15 +622,15 @@ class OrderStatus(str, Enum):
 
 
 class Order(Base):
-    __tablename__ = "orders"
+    __tablename__ = "order"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
-    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
     delivery_address_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("addresses.id", ondelete="SET NULL"), index=True
+        Integer, ForeignKey("address.id", ondelete="SET NULL"), index=True
     )
     member_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("memberships.id"), index=True
+        Integer, ForeignKey("membership.id"), index=True
     )
     total_quantity: Mapped[float] = mapped_column(Float, default=0)
     delivery_address: Mapped[dict] = mapped_column(JSONB)
@@ -673,11 +672,11 @@ class Order(Base):
 
 
 class OrderItem(Base):
-    __tablename__ = "orderitems"
+    __tablename__ = "orderitem"
     id = Column(Integer, primary_key=True, index=True)
-    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    order_id = Column(Integer, ForeignKey("order.id", ondelete="CASCADE"), index=True)
     cartitem_id = Column(
-        Integer, ForeignKey("cartitems.id", ondelete="CASCADE"), index=True
+        Integer, ForeignKey("cartitem.id", ondelete="CASCADE"), index=True
     )
     quantity = Column(Float, default=1)
     price = Column(Numeric(precision=12, scale=2))
