@@ -257,6 +257,7 @@ async def run_router():
                                 payload = orjson.loads(notify.payload)
                                 notice = Notification(
                                     notification=payload.get("notification"),
+                                    from_user=payload.get("inserter"),
                                     notified_user=payload.get("user_id"),
                                     time_of_op=payload.get("time"),
                                 )
