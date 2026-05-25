@@ -27,14 +27,30 @@ async def create_cart(
             status_code=401, detail="you must be a registered user to shop"
         )
     logger.info(f"Creating cart for user {user_id}")
+    subq = select(
+        select(exists().where(Store.id == store_id, ~Store.is_deleted))
+        .scalar_subquery()
+        .label("store_check"),
+        select(Cart)
+        .where(Cart.user_id == user_id, ~Cart.check_out)
+        .scalar_subquery()
+        .label("cart_check"),
+    )
+    result = (await db.execute(subq)).first()
+    if not result["store_check"]:
+        logger.warning("user: %s, tried creating cart for a non existent store")
+        raise HTTPException(status_code=404, detail="store not found")
+    if result["cart_check"]:
+        logger.warning("user: %s, tried duplicating cart", user_id)
+        return {"message": "cart already created"}
     cart = Cart(user_id=user_id, store_id=store_id)
     try:
         db.add(cart)
         await db.commit()
         await cart_invalidation(user_id=user_id)
-    except IntegrityError:
+    except IntegrityError as e:
         await db.rollback()
-        logger.error("Database integrity error while creating cart")
+        logger.error("Database integrity error while creating cart %s", e)
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
