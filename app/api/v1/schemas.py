@@ -78,8 +78,8 @@ class UserResponse(BaseModel):
 class NotificationResponse(BaseModel):
     id: int
     notification: str
-    notified_user: str
-    time_of_op: datetime
+    is_read: bool = Field(default=False)
+    time_of_op: datetime | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
