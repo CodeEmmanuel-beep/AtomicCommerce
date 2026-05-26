@@ -82,6 +82,19 @@ async def edit_store_account_details(
     )
 
 
+@router.put("/store_account_verification")
+async def verify_account(
+    slug: str,
+    reason: str | None = None,
+    status: str = Query("verify", enum=["reject", "verify"]),
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await store_account_and_address_service.verify_store_account(
+        slug=slug, reason=reason, status=status, db=db, payload=payload
+    )
+
+
 @router.get(
     "/view_store_account_details/{store_id}",
     response_model=StoreAccountResponse,
