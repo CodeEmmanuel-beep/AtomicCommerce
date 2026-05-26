@@ -20,6 +20,8 @@ from app.utils.supabase_url import cleaned_up
 
 logger = get_logger("auth")
 
+FORBIDDEN_WORDS = {"user", "admin", "system", "root", "moderator"}
+
 
 async def reg(
     first_name,
@@ -36,7 +38,18 @@ async def reg(
 ):
     min_chars = 4
     if len(username) < min_chars:
-        raise HTTPException(status_code=400, detail="input atleast 4 characters")
+        raise HTTPException(
+            status_code=400, detail="username should be atleast 4 characters"
+        )
+    user_str = username.strip()
+    if "".join(user_str.split()).lower() in FORBIDDEN_WORDS:
+        raise HTTPException(
+            status_code=400, detail="your username is restricted, choose another"
+        )
+    if " " in user_str:
+        raise HTTPException(
+            status_code=400, detail="username should be only one word, no spaces"
+        )
     user_exists = (
         await db.execute(
             select(User).where(
