@@ -23,6 +23,7 @@ async def sub_category(category_id, name, db, payload):
     if not admin:
         logger.warning("Forbidden access: user_id=%s is not admin/owner", user_id)
         raise HTTPException(status_code=403, detail="restricted access")
+    normalized_name = "".join(name.split())
     category_exists = (
         await db.execute(
             select(Category).where(Category.id == category_id, ~Category.is_deleted)
@@ -34,7 +35,12 @@ async def sub_category(category_id, name, db, payload):
         )
         raise HTTPException(status_code=404, detail="category not found")
     sub_category_exists = (
-        await db.execute(select(SubCategory).where(SubCategory.name == name))
+        await db.execute(
+            select(SubCategory).where(
+                func.lower(func.regexp_replace(SubCategory.name, r"\s+", "", "g"))
+                == normalized_name.lower()
+            )
+        )
     ).scalar_one_or_none()
     if sub_category_exists:
         logger.warning(
