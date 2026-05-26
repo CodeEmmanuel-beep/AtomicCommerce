@@ -19,6 +19,7 @@ from app.api.v1.schemas import (
     ProductRes,
     PersonnelResponse,
 )
+from email_validator import validate_email, EmailNotValidError
 from datetime import datetime, timezone
 from app.logs.logger import get_logger
 from sqlalchemy.orm import selectinload, aliased
@@ -110,6 +111,11 @@ async def store_creation(
             sub_category = normalized
     except ValueError:
         raise HTTPException(status_code=400, detail="error parsing sub_category field")
+    if store_email is not None:
+        try:
+            validate_email(store_email)
+        except EmailNotValidError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     owners_input = list(set(owners))
     if user_id not in owners_input:
         logger.warning("user: %s, tried being a third party creator", user_id)
@@ -118,7 +124,7 @@ async def store_creation(
         )
     subq = select(
         select(exists().where(Store.slug == store_slug)).scalar_subquery(),
-        select(Category.id).where(Category.name == category).scalar_subquery(),
+        select(Category.id).where(Category.name == category.strip()).scalar_subquery(),
     )
     result = (await db.execute(subq)).first() or (False, None)
     existing_slug, category_id = result
@@ -132,10 +138,11 @@ async def store_creation(
         raise HTTPException(
             status_code=500, detail="Store category configuration error"
         )
+    subcategory = [s.strip() for s in sub_category]
     sub_count = (
         await db.execute(
             select(func.count(SubCategory.id)).where(
-                SubCategory.name.in_(sub_category),
+                SubCategory.name.in_(subcategory),
                 SubCategory.category_id == category_id,
             )
         )
@@ -247,6 +254,11 @@ async def store_update(
             raise HTTPException(
                 status_code=400, detail="store names should be in letters"
             )
+    if store_email is not None:
+        try:
+            validate_email(store_email)
+        except EmailNotValidError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     old_photo = []
     filename_link = []
     filename = None
@@ -325,10 +337,11 @@ async def store_update(
                 raise HTTPException(
                     status_code=400, detail="error parsing sub_category field"
                 )
+            subcategory = [s.strip() for s in sub_category]
             sub_count = (
                 await db.execute(
                     select(func.count(SubCategory.id)).where(
-                        SubCategory.name.in_(sub_category),
+                        SubCategory.name.in_(subcategory),
                         SubCategory.category_id == store_map.category_id,
                     )
                 )
@@ -407,7 +420,7 @@ async def approve_stores(slug, db, payload):
     user_id = payload.get("user_id")
     owner = payload.get("role")
     if not user_id or owner != "Owner":
-        logger.warning("unauthorized attempt at approve_storea endpoint")
+        logger.warning("unauthorized attempt at approve_stores endpoint")
         raise HTTPException(status_code=401, detail="restricted access")
     approved = (
         await db.execute(
