@@ -23,8 +23,16 @@ async def category(name, db, payload):
     if not admin:
         logger.warning("Forbidden access: user_id=%s is not admin/owner", user_id)
         raise HTTPException(status_code=403, detail="restricted access")
+    normalized_name = " ".join(name.split())
     category_exists = (
-        await db.execute(select(Category).where(Category.name == name))
+        await db.execute(
+            select(Category).where(
+                func.lower(
+                    func.trim(func.regexp_replace(Category.name, r"\s+", "", "g"))
+                )
+                == normalized_name.replace(" ", "").lower()
+            )
+        )
     ).scalar_one_or_none()
     if category_exists:
         logger.warning("user: %s, tried duplicating category name: %s", user_id, name)
