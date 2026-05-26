@@ -233,6 +233,7 @@ class StoreAccount(Base):
         DateTime(timezone=True), nullable=True
     )
     rejected_reason: Mapped[str] = mapped_column(String, nullable=True)
+    previous_rejected_reason: Mapped[str] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), onupdate=func.now(), nullable=True
     )
