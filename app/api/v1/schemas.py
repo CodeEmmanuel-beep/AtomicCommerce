@@ -93,6 +93,8 @@ class StoreAccountResponse(BaseModel):
     type_of_id: str
     identification_number: str
     tax_identification_number: str | None = None
+    verification_status: str = Field(default="pending")
+    rejected_reason: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -136,8 +138,12 @@ class AddressDetails(BaseModel):
     country: str
 
 
-class AddressResponse(AddressDetails):
+class AddressResponse(BaseModel):
     id: int
+    street: str
+    city: str
+    state: str
+    country: str
 
     model_config = ConfigDict(from_attributes=True)
 
