@@ -6,12 +6,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from app.api.v1.schemas import (
     StoreAccountResponse,
-    AddressDetails,
     AddressResponse,
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
 )
+from datetime import datetime, timezone
 from app.utils.redis import cache, cached
 
 logger = get_logger("store_account_and_address")
@@ -172,6 +172,69 @@ async def edit_finance_details(
     return {"message": "finance details updated"}
 
 
+async def verify_store_account(status, reason, slug, db, payload):
+    user_id = payload.get("user_id")
+    owner = payload.get("role")
+    if not user_id or owner != "Owner":
+        logger.warning("unauthorized attempt at verify_store_account endpoint")
+        raise HTTPException(status_code=401, detail="restricted access")
+    if status not in ("verify", "reject"):
+        logger.warning("Invalid status '%s' from user %s", status, user_id)
+        raise HTTPException(
+            status_code=400, detail="status must be either 'verify' or 'reject'."
+        )
+    if status == "reject" and (not reason or not reason.strip()):
+        raise HTTPException(
+            status_code=400,
+            detail="A reason must be provided when rejecting a store account.",
+        )
+    message = {
+        "verify": "Store account successfully verified",
+        "reject": "Store account successfully rejected",
+    }[status]
+    try:
+        verify = (
+            await db.execute(
+                select(StoreAccount)
+                .join(Store, StoreAccount.store_id == Store.id)
+                .where(Store.slug == slug, ~Store.is_deleted, Store.approved)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if not verify:
+            logger.error(
+                "owner tried approving a store account that is not eligible for approval"
+            )
+            raise HTTPException(
+                status_code=400, detail="store account not eligible for verification"
+            )
+        if status == "verify":
+            verify.verification_status = AccountVerification.verified
+            verify.verified_at = datetime.now(timezone.utc)
+            if verify.rejected_reason is not None:
+                verify.previous_rejected_reason = verify.rejected_reason
+                verify.rejected_reason = None
+        else:
+            verify.verification_status = AccountVerification.rejected
+            verify.rejected_reason = reason.strip()
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except IntegrityError:
+        await db.rollback()
+        logger.error("database error while verifying store account '%s'", slug)
+        raise HTTPException(status_code=400, detail="database error")
+    except Exception:
+        await db.rollback()
+        logger.exception("error while verifying store account '%s'", slug)
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info(
+        "Store account for slug '%s' updated to status '%s' successfully", slug, status
+    )
+    return {"status": "success", "message": message}
+
+
 async def view_financial_details(store_id, db, payload, cipher):
     user_id = payload.get("user_id")
     role = payload.get("role")
@@ -224,8 +287,8 @@ async def add_address(store_id, address_details, db, payload):
     store_check = (
         await db.execute(
             select(Store)
-            .join(store_owners, Store.id == store_owners.c.store_id)
-            .where(Store.id == store_id, store_owners.c.user_id == user_id)
+            .join(store_owners, Store.id == store_owners.c.stores_id)
+            .where(Store.id == store_id, store_owners.c.users_id == user_id)
         )
     ).scalar_one_or_none()
     if not store_check:
@@ -272,7 +335,7 @@ async def view_store_addresses(store_id, page, limit, db):
         select(Address, func.count(Address.id).over().label("total_count"))
         .join(Store, Address.store_id == Store.id)
         .where(
-            Store.id == store_id, Address.is_deleted, ~Store.is_deleted, Store.approved
+            Store.id == store_id, ~Address.is_deleted, ~Store.is_deleted, Store.approved
         )
         .offset(offset)
         .limit(limit)
