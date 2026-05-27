@@ -129,7 +129,7 @@ async def notifications_history(
     total = (
         await db.execute(
             select(func.count(Notification.id)).where(
-                Notification.notified_user == user_id, User.is_active
+                Notification.notified_user == user_id
             )
         )
     ).scalar() or 0
