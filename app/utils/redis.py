@@ -6,6 +6,7 @@ import asyncio
 from typing import Optional
 import aiopg
 import time
+from datetime import datetime
 from app.models import Notification
 from app.database.async_config import AsyncSessionLocal
 from app.logs.logger import get_logger
@@ -255,11 +256,14 @@ async def run_router():
                             try:
                                 notify = conn.notifies.get_nowait()
                                 payload = orjson.loads(notify.payload)
+                                time_op = payload.get("time")
                                 notice = Notification(
                                     notification=payload.get("notification"),
                                     from_user=payload.get("inserter"),
                                     notified_user=payload.get("user_id"),
-                                    time_of_op=payload.get("time"),
+                                    time_of_op=datetime.fromisoformat(
+                                        time_op.replace("Z", "+00:00")
+                                    ),
                                 )
                                 await notification_queue.put(notice)
                                 user_id = payload.get("user_id")
