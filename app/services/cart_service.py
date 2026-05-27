@@ -23,6 +23,7 @@ async def create_cart(
 ):
     user_id = payload.get("user_id")
     if not user_id:
+        logger.warning("unauthorized attempt at create_cart function")
         raise HTTPException(
             status_code=401, detail="you must be a registered user to shop"
         )
@@ -31,16 +32,16 @@ async def create_cart(
         select(exists().where(Store.id == store_id, ~Store.is_deleted))
         .scalar_subquery()
         .label("store_check"),
-        select(Cart)
+        select(func.count(Cart.id))
         .where(Cart.user_id == user_id, ~Cart.check_out)
         .scalar_subquery()
         .label("cart_check"),
     )
-    result = (await db.execute(subq)).first()
+    result = (await db.execute(subq)).mappings().first()
     if not result["store_check"]:
         logger.warning("user: %s, tried creating cart for a non existent store")
         raise HTTPException(status_code=404, detail="store not found")
-    if result["cart_check"]:
+    if result["cart_check"] >= 1:
         logger.warning("user: %s, tried duplicating cart", user_id)
         return {"message": "cart already created"}
     cart = Cart(user_id=user_id, store_id=store_id)
@@ -60,28 +61,23 @@ async def create_cart(
     return {"status": "success", "message": "cart successfully created"}
 
 
-async def shopping(cart, db, payload):
+async def shopping(store_id, cart_id, product_id, quantity, db, payload):
     user_id = payload.get("user_id")
-    inventory = (
-        await db.execute(
-            select(Inventory)
-            .where(Inventory.product_id == cart.product_id)
-            .with_for_update()
+    if not user_id:
+        logger.warning("unauthorized attempt at shopping function")
+        raise HTTPException(
+            status_code=401, detail="you must be a registered user to shop"
         )
-    ).scalar_one_or_none()
-    if not inventory:
-        logger.warning("product: %s, have no inventory", cart.product_id)
-        raise HTTPException(404, "inventory not found")
     available = (
         await db.execute(
             select(
                 exists().where(
                     and_(
-                        Store.id == cart.store_id,
-                        Product.id == cart.product_id,
+                        Store.id == store_id,
+                        Product.id == product_id,
                         Product.product_availability == "available",
                         ~Product.is_deleted,
-                        Inventory.stock_quantity >= cart.quantity,
+                        Inventory.stock_quantity >= quantity,
                         Product.id == Inventory.product_id,
                         Product.store_id == Store.id,
                     )
@@ -91,7 +87,7 @@ async def shopping(cart, db, payload):
     ).scalar()
     if not available:
         logger.warning(
-            f"User {user_id} attempted to add product {cart.product_id} to cart {cart.cart_id}, but the product is out of stock or the requested quantity is not available"
+            f"User {user_id} attempted to add product {product_id} to cart {cart_id}, but the product is out of stock or the requested quantity is not available"
         )
         raise HTTPException(
             status_code=400,
@@ -101,13 +97,13 @@ async def shopping(cart, db, payload):
         select(Cart)
         .options(selectinload(Cart.cartitems))
         .where(
-            Cart.id == cart.cart_id,
-            Cart.store_id == cart.store_id,
+            Cart.id == cart_id,
+            Cart.store_id == store_id,
             Cart.user_id == user_id,
         )
     ).with_for_update()
     logger.info(
-        f"User {user_id} is attempting to add product {cart.product_id} to cart {cart.cart_id}"
+        f"User {user_id} is attempting to add product {product_id} to cart {cart_id}"
     )
     carts = (await db.execute(stmt)).scalar_one_or_none()
     if not carts:
@@ -116,32 +112,25 @@ async def shopping(cart, db, payload):
             detail="pick a cart, if you already have a cart, verify the product availability before proceeding",
         )
     cartitem = next(
-        (item for item in carts.cartitems if item.product_id == cart.product_id), None
+        (item for item in carts.cartitems if item.product_id == product_id), None
     )
-    if cart.quantity <= 0:
-        raise HTTPException(
-            status_code=400, detail="quantity must be an integer higher than zero"
-        )
     if not cartitem and len(carts.cartitems) > 30:
         raise HTTPException(status_code=403, detail="cart full")
     try:
         difference = 0
         if cartitem:
-            difference = cart.quantity - cartitem.quantity
-            cartitem.quantity = cart.quantity
+            difference = quantity - cartitem.quantity
+            cartitem.quantity = quantity
         else:
-            difference = cart.quantity
+            difference = quantity
             items = CartItem(
-                cart_id=cart.cart_id,
-                store_id=cart.store_id,
-                product_id=cart.product_id,
-                quantity=cart.quantity,
+                cart_id=cart_id,
+                product_id=product_id,
+                quantity=quantity,
             )
             db.add(items)
         carts.total_quantity = Cart.total_quantity + difference
-        logger.info(
-            f"Adding product {cart.product_id} to cart {cart.cart_id} for user {user_id}"
-        )
+        logger.info(f"Adding product {product_id} to cart {cart_id} for user {user_id}")
         await db.commit()
         await cart_invalidation(user_id=user_id)
     except IntegrityError:
@@ -152,16 +141,14 @@ async def shopping(cart, db, payload):
         await db.rollback()
         logger.exception("error while adding product to cart")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(
-        f"Product {cart.product_id} added to cart {cart.cart_id} for user {user_id}"
-    )
+    logger.info(f"Product {product_id} added to cart {cart_id} for user {user_id}")
     return {"status": "success", "message": "product added to cart"}
 
 
-async def retrieve_all(store_id, page, limit, db, payload):
+async def retrieve_cart(store_id, page, limit, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.warning("unauthorized attempt at retrieve_all endpoint")
+        logger.warning("unauthorized attempt at the retrieve_cart function")
         raise HTTPException(status_code=401, detail="not a registered buyer")
     offset = (page - 1) * limit
     if page < 1 or limit < 1:
@@ -172,54 +159,7 @@ async def retrieve_all(store_id, page, limit, db, payload):
     cart_keys = f"carts:v{version}:{user_id}:{store_id}:{page}:{limit}"
     cached_data = await cache(cart_keys)
     if cached_data:
-        logger.info(f"Cache hit for all carts, for user {user_id}")
-        return StandardResponse(**cached_data)
-    stmt = (
-        select(Cart)
-        .options(
-            selectinload(Cart.cartitems)
-            .selectinload(CartItem.product)
-            .selectinload(Product.inventory)
-        )
-        .where(Cart.user_id == user_id, Cart.store_id == store_id, ~Cart.check_out)
-    )
-    total = (
-        await db.execute(
-            select(func.count())
-            .select_from(Cart)
-            .where(Cart.user_id == user_id, Cart.store_id == store_id)
-        )
-    ).scalar() or 0
-    logger.info(f"Total {total} carts found for user {user_id}")
-    carts = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
-    if not carts:
-        logger.error("search for carts returned an empty list for user %s", user_id)
-        return StandardResponse(status="success", message="no cart found", data=None)
-    data = PaginatedMetadata[CartResponse](
-        items=[CartResponse.model_validate(c) for c in carts],
-        pagination=PaginatedResponse(page=page, limit=limit, total=total),
-    )
-    full_data = StandardResponse(status="success", message="cart", data=data)
-    await cached(cart_keys, full_data, ttl=3600)
-    logger.info(f"All cart data cached for user {user_id}")
-    return full_data
-
-
-async def retrieve_cart(store_id, cart_id, page, limit, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning(f"Attempting to retrieve cart i {cart_id}")
-        raise HTTPException(status_code=401, detail="not a registered buyer")
-    offset = (page - 1) * limit
-    if page < 1 or limit < 1:
-        raise HTTPException(
-            status_code=400, detail="page number and limit must be greater than 0"
-        )
-    version = await cache_version("cart_key")
-    cart_keys = f"carts:v{version}:{user_id}:{store_id}:{cart_id}:{page}:{limit}"
-    cached_data = await cache(cart_keys)
-    if cached_data:
-        logger.info(f"Cache hit for cart {cart_id} for user {user_id}")
+        logger.info("Cache hit for cart, for user: %s", user_id)
         return StandardResponse(**cached_data)
     stmt = (
         select(Cart)
@@ -231,7 +171,6 @@ async def retrieve_cart(store_id, cart_id, page, limit, db, payload):
         .where(
             Cart.user_id == user_id,
             Cart.store_id == store_id,
-            Cart.id == cart_id,
             ~Cart.check_out,
         )
     )
@@ -239,12 +178,12 @@ async def retrieve_cart(store_id, cart_id, page, limit, db, payload):
     if not cart:
         logger.error("user %s, tried retrieving a non-existent cart", user_id)
         raise HTTPException(status_code=404, detail="no cart found")
-    logger.info(f"Cart {cart_id} found for user {user_id}, retrieving items")
+    logger.info(f"Cart found for user {user_id}, retrieving items")
     cart_model = CartResponse.model_validate(cart)
     total = len(cart.cartitems)
     logger.info("total number of cart items found in cart %s", total)
     items = cart.cartitems[offset : offset + limit]
-    logger.info(f"Total {total} items found in cart {cart_id} for user {user_id}")
+    logger.info("%s items found in cart for user: %s", total, user_id)
     cartitem_model = PaginatedMetadata[CartItemReponse](
         items=[CartItemReponse.model_validate(cartitem) for cartitem in items],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
@@ -252,7 +191,7 @@ async def retrieve_cart(store_id, cart_id, page, limit, db, payload):
     data = {"cart": cart_model, "cart_item": cartitem_model}
     full_data = StandardResponse(status="success", message="cart", data=data)
     await cached(cart_keys, full_data, ttl=3600)
-    logger.info(f"Cart {cart_id} data cached for user {user_id}")
+    logger.info("Cart data cached for user %s", user_id)
     return full_data
 
 
@@ -434,7 +373,7 @@ async def delete_all(
     )
     result = (await db.execute(stmt)).scalar_one_or_none()
     if not result:
-        raise HTTPException(status_code=404, detail="cart item not found")
+        raise HTTPException(status_code=404, detail="cart not found")
     logger.info(f"Cart {cart_id} found for user {user_id}, proceeding to delete")
     try:
         await db.delete(result)
