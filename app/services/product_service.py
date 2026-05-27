@@ -10,16 +10,8 @@ from app.api.v1.schemas import (
     ProductImageResponse,
 )
 from app.database.config import settings
-from app.models import (
-    Product,
-    Category,
-    Inventory,
-    store_owners,
-    store_staffs,
-    ProductImage,
-    SubCategory,
-)
-from sqlalchemy import select, func, cast, update, String, exists, delete
+from app.models import Product, Category, Inventory, ProductImage, SubCategory, Store
+from sqlalchemy import select, func, cast, update, String, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 import asyncio
@@ -31,12 +23,7 @@ from app.utils.redis import (
     cached,
     cache,
 )
-from app.utils.helper import (
-    file_generator,
-    upload_photo_helper,
-    store_auth,
-    store_query,
-)
+from app.utils.helper import file_generator, upload_photo_helper, store_auth
 from app.utils.supabase_url import cleaned_up
 
 logger = get_logger("products")
@@ -56,7 +43,14 @@ async def create(
     payload,
 ):
     user_id = await store_auth(store_id, db, payload)
-    eligible = await store_query(store_id, db)
+    stmt = select(Store).where(Store.id == store_id)
+    eligible = (await db.execute(stmt)).scalar_one_or_none()
+    if not eligible:
+        logger.warning(
+            "unauthorized attempt to query store: %s",
+            store_id,
+        )
+        raise HTTPException(status_code=403, detail="not authorized")
     filename = None
     files_allowed = ("image/jpeg", "image/png", "image/webp")
     try:
@@ -93,7 +87,7 @@ async def create(
         )
     logger.info("saved product images, uploaded by user: %s", user_id)
     primary_image = filename
-    if sub_category_name not in eligible.sub_category:
+    if sub_category_name.strip() not in [s.strip() for s in eligible.sub_category]:
         logger.warning("user: %s, entered an unvalid sub_category", user_id)
         raise HTTPException(
             status_code=409,
@@ -102,7 +96,7 @@ async def create(
     sub_category = (
         await db.execute(
             select(SubCategory.id).where(
-                SubCategory.name == sub_category_name,
+                func.trim(SubCategory.name) == sub_category_name.strip(),
                 SubCategory.category_id == eligible.category_id,
             )
         )
@@ -172,15 +166,24 @@ async def add_image(
     get_supabase,
 ):
     user_id = await store_auth(store_id, db, payload)
-    eligible = await store_query(store_id, db)
-    product_ids_in_store = [p.id for p in eligible.products]
-    if product_id not in product_ids_in_store:
-        logger.warning(
-            "user: %s, tried adding image to a non-existent product, product id: %s",
-            user_id,
-            product_id,
+    stmt = (
+        select(Store)
+        .options(selectinload(Store.products))
+        .join(Product, Store.id == Product.store_id)
+        .where(
+            Store.id == store_id,
+            ~Store.is_deleted,
+            ~Product.is_deleted,
+            Product.id == product_id,
         )
-        raise HTTPException(status_code=404, detail="product not found")
+    )
+    eligible = (await db.execute(stmt)).scalar_one_or_none()
+    if not eligible:
+        logger.warning(
+            "unauthorized attempt to query store: %s",
+            store_id,
+        )
+        raise HTTPException(status_code=404, detail="store or product not found")
     image_count = (
         await db.execute(
             select(func.count(ProductImage.id)).where(
@@ -281,6 +284,7 @@ async def delete_images(store_id, product_id, image_id, db, payload, get_supabas
             context_1="error removing orphaned product images",
             context_2="successfully removed orphaned product images",
         )
+    logger.info("successfully deleted image: %s", image_id)
     return {"status": "success", "message": "product image deleted"}
 
 
