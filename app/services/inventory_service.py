@@ -7,7 +7,6 @@ from app.api.v1.schemas import (
     InventoryResponse,
 )
 from fastapi import HTTPException, Response, status
-from sqlalchemy.orm import selectinload
 from app.utils.helper import store_auth, store_inventory
 from app.logs.logger import get_logger
 from sqlalchemy import select, exists, func
@@ -98,7 +97,7 @@ async def read_all(store_id, page, limit, db, payload):
             "inventory cache hit for user_id: %s, store_id: %s", user_id, store_id
         )
         return StandardResponse(**inventory_cache)
-    stmt = store_inventory(store_id, None)
+    stmt = store_inventory(store_id)
     results = (
         (
             await db.execute(
@@ -131,7 +130,7 @@ async def read_all(store_id, page, limit, db, payload):
     return full_response
 
 
-async def update(store_id: int, inventory_id: int, stock_quantity: int, db, payload):
+async def update(store_id, inventory_id, stock_quantity, db, payload):
     user_id = await store_auth(store_id, db, payload)
     stmt = store_inventory(store_id, inventory_id)
     stmt = stmt.with_for_update()
