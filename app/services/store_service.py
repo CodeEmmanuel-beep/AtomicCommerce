@@ -176,7 +176,7 @@ async def store_creation(
         raise HTTPException(
             status_code=400, detail="all owners must be registered users"
         )
-    store_photo = await upload_photo_helper(store_photo, payload, get_supabase)
+    filename = await upload_photo_helper(store_photo, payload, get_supabase)
     new_store = Store(
         store_photo=store_photo,
         store_name=store_name,
@@ -191,26 +191,35 @@ async def store_creation(
     try:
         db.add(new_store)
         await db.commit()
+    except HTTPException:
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                context_1="error removing orphaned store photo",
+                context_2="successfully removed orphaned store photo",
+            )
+            raise
     except IntegrityError:
         await db.rollback()
-        await cleaned_up(
-            get_supabase,
-            store_photo,
-            context_1="error removing orphaned store photo",
-            context_2="successfully removed orphaned store photo",
-        )
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                context_1="error removing orphaned store photo",
+                context_2="successfully removed orphaned store photo",
+            )
         logger.error("database error while creating store for user '%s'", user_id)
         raise HTTPException(status_code=400, detail="database error")
-    except Exception as e:
+    except Exception:
         await db.rollback()
-        await cleaned_up(
-            get_supabase,
-            store_photo,
-            context_1="error removing orphaned store photo",
-            context_2="successfully removed orphaned store photo",
-        )
-        if isinstance(e, HTTPException):
-            raise e
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                context_1="error removing orphaned store photo",
+                context_2="successfully removed orphaned store photo",
+            )
         logger.exception("error while creating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("store: %s, created successfully", new_store.id)
@@ -239,7 +248,7 @@ async def store_update(
         raise HTTPException(
             status_code=401, detail="only registered users can own a store"
         )
-    if update_type not in ["add", "replace"]:
+    if update_type not in ("add", "replace"):
         logger.warning(
             "user: %s, tried an invalid update type at store update endpoint, update_type: %s",
             user_id,
@@ -388,6 +397,15 @@ async def store_update(
             await store_invalidation(user_id)
             await store_invalidation_global()
             return {"message": "store updated"}
+    except HTTPException:
+        if filename_link:
+            await cleaned_up(
+                get_supabase,
+                filename_link,
+                context_1="error removing orphaned store photo",
+                context_2="successfully removed orphaned store photo",
+            )
+        raise
     except IntegrityError:
         await db.rollback()
         if filename_link:
