@@ -212,23 +212,6 @@ async def view_selected_members(
     return response
 
 
-async def store_query(store_id, db):
-    stmt = (
-        select(Store)
-        .options(selectinload(Store.products))
-        .join(Product, Store.id == Product.store_id)
-        .where(Store.id == store_id, ~Product.is_deleted)
-    )
-    eligible = (await db.execute(stmt)).scalar_one_or_none()
-    if not eligible:
-        logger.warning(
-            "unauthorized attempt to query store: %s",
-            store_id,
-        )
-        raise HTTPException(status_code=403, detail="not authorized")
-    return eligible
-
-
 async def store_auth(store_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
@@ -254,7 +237,7 @@ async def store_auth(store_id, db, payload):
     return user_id
 
 
-def store_inventory(store_id, inventory_id):
+def store_inventory(store_id, inventory_id: int | None = None):
     base_filter = [Inventory.store_id == store_id, ~Inventory.is_deleted]
     if inventory_id:
         base_filter.append(Inventory.id == inventory_id)
