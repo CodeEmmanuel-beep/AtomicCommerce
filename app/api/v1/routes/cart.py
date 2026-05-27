@@ -1,7 +1,4 @@
 from app.api.v1.schemas import (
-    CartItems,
-    CartResponse,
-    PaginatedMetadata,
     StandardResponse,
 )
 from fastapi import APIRouter, Depends, Query
@@ -24,39 +21,30 @@ async def cart(
 
 @router.post("/cart_items")
 async def shopping(
-    cart: CartItems,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await cart_service.shopping(cart=cart, db=db, payload=payload)
-
-
-@router.get(
-    "/get_carts",
-    response_model=StandardResponse[PaginatedMetadata[CartResponse]],
-    response_model_exclude_none=True,
-    response_model_exclude_defaults=True,
-)
-async def retrieve_all(
     store_id: int,
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
+    cart_id: int,
+    product_id: int,
+    quantity: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await cart_service.retrieve_all(
-        store_id=store_id, db=db, payload=payload, page=page, limit=limit
+    return await cart_service.shopping(
+        store_id=store_id,
+        cart_id=cart_id,
+        product_id=product_id,
+        quantity=quantity,
+        db=db,
+        payload=payload,
     )
 
 
 @router.get(
-    "/get_cart",
+    "/fetch_cart",
     response_model=StandardResponse,
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def retrieve(
-    cart_id: int,
+async def get_cart(
     store_id: int,
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
@@ -64,7 +52,6 @@ async def retrieve(
     payload: dict = Depends(verify_token),
 ):
     return await cart_service.retrieve_cart(
-        cart_id=cart_id,
         store_id=store_id,
         db=db,
         payload=payload,
@@ -75,8 +62,8 @@ async def retrieve(
 
 @router.put("/edit_quantity")
 async def change_quanity(
-    cart_id: int,
     store_id: int,
+    cart_id: int,
     cartitem_id: int,
     new_quntity: int,
     db: AsyncSession = Depends(get_db),
@@ -92,10 +79,10 @@ async def change_quanity(
     )
 
 
-@router.put("/update_cart")
+@router.put("/update_cart/{store_id}/{cart_id}")
 async def update__cart(
-    cart_id: int,
     store_id: int,
+    cart_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
@@ -121,10 +108,10 @@ async def delete_one(
     )
 
 
-@router.delete("/delete_cart")
+@router.delete("/delete_cart/{store_id}/{cart_id}")
 async def delete_cart(
-    cart_id: int,
     store_id: int,
+    cart_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
