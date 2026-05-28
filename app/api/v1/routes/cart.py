@@ -7,7 +7,7 @@ from app.services import cart_service
 from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
 
-router = APIRouter(prefix="/shopping", tags=["Cart"])
+router = APIRouter(prefix="/cart", tags=["Cart"])
 
 
 @router.post("/create_cart")
@@ -65,7 +65,7 @@ async def change_quanity(
     store_id: int,
     cart_id: int,
     cartitem_id: int,
-    new_quntity: int,
+    new_quntity: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
@@ -93,8 +93,8 @@ async def update__cart(
 
 @router.delete("/delete_cartitem")
 async def delete_one(
-    cart_id: int,
     store_id: int,
+    cart_id: int,
     cartitem_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
