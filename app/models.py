@@ -308,12 +308,13 @@ class Product(Base):
     product_availability: Mapped[str] = mapped_column(String, default="available")
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    orderitem = relationship("OrderItem", back_populates="product", uselist=False)
     store = relationship("Store", back_populates="products")
     review = relationship("Review", back_populates="product")
     replies = relationship("Reply", back_populates="product")
-    cart_items = relationship("CartItem", back_populates="product")
+    cartitems = relationship("CartItem", back_populates="product", uselist=False)
     category = relationship("Category", back_populates="products")
-    inventory = relationship("Inventory", back_populates="product")
+    inventory = relationship("Inventory", back_populates="product", uselist=False)
     sub_category = relationship("SubCategory", back_populates="products")
     product_images = relationship("ProductImage", back_populates="product")
 
@@ -587,11 +588,9 @@ class CartItem(Base):
     quantity = Column(Float, default=1)
     product_id = Column(Integer, ForeignKey("product.id"), index=True)
 
-    product = relationship("Product", back_populates="cart_items")
+    product = relationship("Product", back_populates="cartitems")
     cart = relationship("Cart", back_populates="cartitems")
-    orderitems = relationship(
-        "OrderItem", back_populates="cartitems", cascade="all, delete-orphan"
-    )
+    orderitem = relationship("OrderItem", back_populates="cartitem", uselist=False)
 
 
 class Cart(Base):
@@ -628,13 +627,16 @@ class Order(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
     delivery_address_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("address.id", ondelete="SET NULL"), index=True
+        Integer,
+        ForeignKey("address.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
     )
     member_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("membership.id"), index=True
+        Integer, ForeignKey("membership.id"), index=True, nullable=True
     )
     total_quantity: Mapped[float] = mapped_column(Float, default=0)
-    delivery_address: Mapped[dict] = mapped_column(JSONB)
+    delivery_address: Mapped[dict] = mapped_column(JSONB, nullable=True)
     order_delete: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[OrderStatus] = mapped_column(
         SQLEnum(OrderStatus),
@@ -655,18 +657,20 @@ class Order(Base):
     discount_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=12, scale=2), default=0
     )
-    reference_id: Mapped[str] = mapped_column(String, unique=True, index=True)
-    check_out_time: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), index=True
+    reference_id: Mapped[str] = mapped_column(
+        String, unique=True, index=True, nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    check_out_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True, nullable=True
+    )
 
     payment = relationship("Payment", back_populates="order", uselist=False)
     refunds = relationship("Refund", back_populates="order")
     user = relationship("User", back_populates="orders")
-    orderitems = relationship(
-        "OrderItem", back_populates="order", cascade="all, delete-orphan"
-    )
+    orderitems = relationship("OrderItem", back_populates="order")
     membership = relationship("Membership", back_populates="orders")
     store = relationship("Store", back_populates="order", uselist=False)
     address = relationship("Address", back_populates="orders")
@@ -675,12 +679,14 @@ class Order(Base):
 class OrderItem(Base):
     __tablename__ = "orderitem"
     id = Column(Integer, primary_key=True, index=True)
-    order_id = Column(Integer, ForeignKey("order.id", ondelete="CASCADE"), index=True)
-    cartitem_id = Column(
-        Integer, ForeignKey("cartitem.id", ondelete="CASCADE"), index=True
+    order_id = Column(Integer, ForeignKey("order.id"), index=True)
+    cartitem_id = Column(Integer, ForeignKey("cartitem.id"), index=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("product.id"), index=True
     )
     quantity = Column(Float, default=1)
     price = Column(Numeric(precision=12, scale=2))
 
+    product = relationship("Product", back_populates="orderitem")
     order = relationship("Order", back_populates="orderitems")
-    cartitems = relationship("CartItem", back_populates="orderitems")
+    cartitem = relationship("CartItem", back_populates="orderitem")
