@@ -30,8 +30,8 @@ from app.utils.redis import (
     cart_invalidation,
     cache_version,
 )
+from decimal import Decimal
 import asyncio
-
 
 logger = get_logger("order")
 
@@ -60,158 +60,134 @@ async def product_availability(product_ids: list[int]):
             logger.exception("failed to update product availability")
 
 
-async def create_orders(store_id, db, payload):
+async def create_orders(store_id, cart_id, db, payload, background_task):
     user_id = payload.get("user_id")
     if not user_id:
-        logger.error("Unauthorized attempt to create order")
+        logger.warning("Unauthorized attempt to create order")
         raise HTTPException(
             status_code=401, detail="you must be a registered user to make orders"
         )
-    logger.info(f"Creating order for user_id: {user_id}")
-    order = Order(
-        user_id=user_id,
-        store_id=store_id,
-        created_at=datetime.now(timezone.utc),
-    )
     try:
-        db.add(order)
-        await db.commit()
-        await order_invalidation(user_id=user_id)
-    except IntegrityError:
-        await db.rollback()
-        logger.error("Database integrity error while creating order")
-        raise HTTPException(status_code=400, detail="database error")
-    except Exception:
-        await db.rollback()
-        logger.exception("error while creating order")
-        raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Order created successfully with order_id: {order.id}")
-    return {"status": "success", "message": "order successfully created"}
-
-
-async def create_order_items(
-    store_id, cart_id, order_id, background_tasks, db, payload
-):
-    user_id = payload.get("user_id")
-    stmt = (
-        select(Order)
-        .where(
-            Order.id == order_id, Order.store_id == store_id, Order.user_id == user_id
-        )
-        .with_for_update()
-    )
-    order = (await db.execute(stmt)).scalar_one_or_none()
-    if not order:
-        logger.error("No order created")
-        raise HTTPException(status_code=404, detail="no order created")
-    stmt = (
-        select(Cart)
-        .options(
-            selectinload(Cart.cartitems)
-            .selectinload(CartItem.product)
-            .selectinload(Product.inventory)
-        )
-        .where(
-            Cart.id == cart_id,
-            ~Cart.check_out,
-            Cart.user_id == user_id,
-            Cart.store_id == store_id,
-        )
-        .with_for_update()
-    )
-    result = await db.execute(stmt)
-    carts = result.scalar_one_or_none()
-    logger.info(f"Fetched cart items for cart_id: {cart_id}")
-    if not carts:
-        raise HTTPException(status_code=404, detail="no cart found")
-    if not carts.cartitems:
-        raise HTTPException(status_code=404, detail="no cart items found")
-    product_ids = [items.product_id for items in carts.cartitems]
-    inventory = (
-        await db.execute(
-            select(Inventory)
-            .where(Inventory.product_id.in_(product_ids))
-            .with_for_update()
-        )
-    ).all()
-    cart_product_ids = {i.product_id for i in carts.cartitems}
-    inventory_product_ids = {inv.product_id for inv in inventory}
-
-    if cart_product_ids != inventory_product_ids:
-        logger.warning(
-            "inventory mismatch at create_order_items endpoint",
-        )
-        raise HTTPException(404, "inventory mismatch")
-    inventory_map = {inv.product_id: inv for inv in inventory}
-    items = [
-        i
-        for i in carts.cartitems
-        if i.product.is_deleted
-        or i.product.product_availability != "available"
-        or i.quantity > inventory_map[i.product_id].stock_quantity
-    ]
-    if items:
-        return {
-            "message": "there is an update on your cart, please update cart before check out"
-        }
-    new_orders = [
-        OrderItem(
-            order_id=order_id,
-            quantity=cartitem.quantity,
-            price=cartitem.product.product_price * cartitem.quantity,
-        )
-        for cartitem in carts.cartitems
-    ]
-    total_quantity = sum(new_order.quantity for new_order in new_orders)
-    total_amount = sum(new_order.price for new_order in new_orders)
-    try:
-        order.total_quantity = total_quantity
-        order.total_amount = total_amount
-        db.add_all(new_orders)
-        update_result = await db.execute(
-            update(Cart)
+        stmt = (
+            select(Cart)
+            .options(
+                selectinload(Cart.cartitems)
+                .selectinload(CartItem.product)
+                .selectinload(Product.inventory)
+            )
             .where(
                 Cart.id == cart_id,
                 ~Cart.check_out,
                 Cart.user_id == user_id,
+                Cart.store_id == store_id,
             )
-            .values(check_out=True)
+            .with_for_update()
         )
-        if update_result.rowcount == 0:
-            raise HTTPException(status_code=409, detail="cart already checked out")
-        subq = (
-            select(CartItem.product_id, func.sum(CartItem.quantity))
-            .label("quantity")
-            .where(CartItem.cart_id == cart_id)
-            .group_by(CartItem.product_id)
-            .subquery()
+        result = await db.execute(stmt)
+        cart = result.scalar_one_or_none()
+        logger.info(f"Fetched cart items for cart_id: {cart_id}")
+        if not cart:
+            logger.warning(
+                "user: %s, tried making an order with a non existent cart", user_id
+            )
+            raise HTTPException(status_code=404, detail="cart not found")
+        if not cart.cartitems:
+            raise HTTPException(status_code=404, detail="no cart items found")
+        logger.info("Creating order for user_id: %s", user_id)
+        order = Order(
+            user_id=user_id,
+            store_id=store_id,
         )
-        await db.execute(
-            update(Inventory)
-            .where(Inventory.product_id.in_(select(subq.c.product_id)))
-            .values(
-                stock_quantity=func.greatest(
-                    Inventory.stock_quantity - subq.c.quantity, 0
+        db.add(order)
+        await db.flush()
+        if not order.id:
+            logger.warning("No order created")
+            raise HTTPException(status_code=404, detail="no order created")
+        product_ids = [items.product_id for items in cart.cartitems]
+        inventory = (
+            (
+                await db.execute(
+                    select(Inventory)
+                    .where(Inventory.product_id.in_(product_ids), ~Inventory.is_deleted)
+                    .with_for_update(),
                 )
             )
+            .scalars()
+            .all()
         )
-        background_tasks.add_task(
-            product_availability, [item.product_id for item in carts.cartitems]
-        )
-        order.created_at = func.now()
+        cart_product_ids = {i.product_id for i in cart.cartitems}
+        inventory_product_ids = {inv.product_id for inv in inventory}
+        if cart_product_ids != inventory_product_ids:
+            logger.warning(
+                "inventory mismatch at create_order_items endpoint",
+            )
+            raise HTTPException(404, "inventory mismatch")
+        inventory_map = {inv.product_id: inv for inv in inventory}
+        items = [
+            i
+            for i in cart.cartitems
+            if i.product.is_deleted
+            or i.product.product_availability != "available"
+            or i.quantity > inventory_map[i.product_id].stock_quantity
+        ]
+        if items:
+            raise HTTPException(
+                status_code=400,
+                detail="there is an update on your cart, please update cart before check out",
+            )
+        new_orders = []
+        total_quantity = 0
+        total_amount = Decimal(0)
+        for cartitem in cart.cartitems:
+            price = cartitem.product.product_price * Decimal(str(cartitem.quantity))
+            new_orders.append(
+                OrderItem(
+                    order_id=order.id,
+                    product_id=cartitem.product_id,
+                    quantity=cartitem.quantity,
+                    price=price,
+                )
+            )
+            inventory_map[cartitem.product_id].stock_quantity = max(
+                inventory_map[cartitem.product_id].stock_quantity - cartitem.quantity, 0
+            )
+            total_quantity += cartitem.quantity
+            total_amount += price
+        order.total_quantity = total_quantity
+        order.total_amount = total_amount
+        db.add_all(new_orders)
+        update_result = (
+            await db.execute(
+                update(Cart)
+                .where(
+                    Cart.id == cart_id,
+                    ~Cart.check_out,
+                    Cart.user_id == user_id,
+                )
+                .values(check_out=True)
+                .returning(Cart.id)
+            )
+        ).scalar()
+        if update_result is None:
+            raise HTTPException(status_code=409, detail="cart already checked out")
+        background_task.add_task(product_availability, product_ids)
         await db.commit()
         await asyncio.gather(order_invalidation(user_id), cart_invalidation(user_id))
-    except IntegrityError:
+    except HTTPException:
         await db.rollback()
-        logger.error("Database integrity error while creating order items")
+        raise
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Database integrity error while creating order items {e}")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
         logger.exception("error while creating order items")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Order items created successfully for order_id: {order_id}")
+    logger.info(f"Order items created successfully for order_id: {order.id}")
     return {
         "status": "success",
+        "order_id": order.id,
         "message": "order item successfully created",
         "additional_message": "you have 5 hours to check out the order",
     }
