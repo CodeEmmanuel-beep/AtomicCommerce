@@ -93,30 +93,30 @@ async def shopping(store_id, cart_id, product_id, quantity, db, payload):
             status_code=400,
             detail="required quantity not available or product out of stock",
         )
-    stmt = (
-        select(Cart)
-        .options(selectinload(Cart.cartitems))
-        .where(
-            Cart.id == cart_id,
-            Cart.store_id == store_id,
-            Cart.user_id == user_id,
-        )
-    ).with_for_update()
-    logger.info(
-        f"User {user_id} is attempting to add product {product_id} to cart {cart_id}"
-    )
-    carts = (await db.execute(stmt)).scalar_one_or_none()
-    if not carts:
-        raise HTTPException(
-            status_code=400,
-            detail="pick a cart, if you already have a cart, verify the product availability before proceeding",
-        )
-    cartitem = next(
-        (item for item in carts.cartitems if item.product_id == product_id), None
-    )
-    if not cartitem and len(carts.cartitems) > 30:
-        raise HTTPException(status_code=403, detail="cart full")
     try:
+        stmt = (
+            select(Cart)
+            .options(selectinload(Cart.cartitems))
+            .where(
+                Cart.id == cart_id,
+                Cart.store_id == store_id,
+                Cart.user_id == user_id,
+            )
+        ).with_for_update()
+        logger.info(
+            f"User {user_id} is attempting to add product {product_id} to cart {cart_id}"
+        )
+        carts = (await db.execute(stmt)).scalar_one_or_none()
+        if not carts:
+            raise HTTPException(
+                status_code=400,
+                detail="pick a cart, if you already have a cart, verify the product availability before proceeding",
+            )
+        cartitem = next(
+            (item for item in carts.cartitems if item.product_id == product_id), None
+        )
+        if len(carts.cartitems) >= 30:
+            raise HTTPException(status_code=403, detail="cart full")
         difference = 0
         if cartitem:
             difference = quantity - cartitem.quantity
@@ -133,6 +133,9 @@ async def shopping(store_id, cart_id, product_id, quantity, db, payload):
         logger.info(f"Adding product {product_id} to cart {cart_id} for user {user_id}")
         await db.commit()
         await cart_invalidation(user_id=user_id)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while adding product to cart")
@@ -199,48 +202,46 @@ async def edit_quantity(store_id, cart_id, cartitem_id, new_quantity, db, payloa
     user_id = payload.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="register and continue")
-    logger.warning(
+    logger.info(
         f"Attempting to edit quantity of cart item {cartitem_id} in cart {cart_id}"
     )
-    stmt = (
-        select(CartItem)
-        .join(Cart.cartitems)
-        .where(
-            Cart.id == cart_id,
-            Cart.store_id == store_id,
-            Cart.user_id == user_id,
-            CartItem.id == cartitem_id,
-        )
-        .with_for_update()
-    )
-    result = (await db.execute(stmt)).scalar_one_or_none()
-    if new_quantity <= 0:
-        raise HTTPException(
-            status_code=400, detail="quantity must be greater than zero"
-        )
-    if not result:
-        logger.error("user %s, tried editing a non-existent cart_item")
-        raise HTTPException(status_code=404, detail="cart item not found")
-    old_quantity = result.quantity
-    difference = new_quantity - old_quantity
-    result.quantity = new_quantity
-    cart = (
-        await db.execute(
-            select(Cart)
-            .where(Cart.user_id == user_id, Cart.id == cart_id)
+    try:
+        stmt = (
+            select(Cart, CartItem)
+            .join(CartItem, Cart.id == CartItem.cart_id)
+            .where(
+                Cart.id == cart_id,
+                Cart.store_id == store_id,
+                Cart.user_id == user_id,
+                CartItem.id == cartitem_id,
+            )
             .with_for_update()
         )
-    ).scalar_one_or_none()
-    logger.info(
-        f"Cart item {cartitem_id} found in cart {cart_id} for user {user_id}, updating quantity from {old_quantity} to {new_quantity}"
-    )
-    try:
+        row = (await db.execute(stmt)).fetchone()
+        if not row:
+            logger.warning(
+                "user %s, queried a non existent cart or cart item in edit_quantity function",
+                user_id,
+            )
+            raise HTTPException(status_code=404, detail="cart or cart item not found")
+        cart, target_item = row
+        if target_item.quantity == new_quantity:
+            return {"status": "success"}
+        old_quantity = target_item.quantity
+        difference = new_quantity - old_quantity
+        target_item.quantity = new_quantity
+        logger.info(
+            f"Cart item {cartitem_id} found in cart {cart_id} for user {user_id}, updating quantity from {old_quantity} to {new_quantity}"
+        )
         cart.total_quantity += difference
         await db.commit()
         await cart_invalidation(user_id=user_id)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
-        logger.exception("Failed to commit")
+        logger.exception("database error at edit_quantity function")
         raise HTTPException(status_code=400, detail="database error")
     except Exception as e:
         await db.rollback()
@@ -257,45 +258,46 @@ async def update_cart(cart_id, store_id, db, payload):
     if not user_id:
         logger.warning("unauthorized attempt to access update_cart endpoint")
         raise HTTPException(status_code=401, detail="not authorized")
-    stmt = (
-        select(Cart)
-        .options(
-            selectinload(Cart.cartitems)
-            .selectinload(CartItem.product)
-            .selectinload(Product.inventory)
-        )
-        .where(Cart.user_id == user_id, Cart.store_id == store_id, Cart.id == cart_id)
-    ).with_for_update()
-    result = (await db.execute(stmt)).scalar_one_or_none()
-    if not result:
-        logger.error("user %s, tried updating a non-existent cart", user_id)
-        raise HTTPException(status_code=404, detail="invalid cart_id")
-    remove_items = {}
-    for item in result.cartitems:
-        if item.product.is_deleted:
-            remove_items[item.id] = item
-        if item.product.inventory.stock_quantity < item.quantity:
-            remove_items[item.id] = item
-    if not remove_items:
-        return {"message": "cart up to date"}
-    to_be_deleted_id = list(remove_items.keys())
-    total_deducted = sum(i.quantity for i in remove_items.values())
-    (await db.execute(delete(CartItem).where(CartItem.id.in_(to_be_deleted_id))))
     try:
+        stmt = (
+            select(Cart)
+            .options(
+                selectinload(Cart.cartitems)
+                .selectinload(CartItem.product)
+                .selectinload(Product.inventory)
+            )
+            .where(
+                Cart.user_id == user_id, Cart.store_id == store_id, Cart.id == cart_id
+            )
+        ).with_for_update()
+        result = (await db.execute(stmt)).scalar_one_or_none()
+        if not result:
+            logger.error("user %s, tried updating a non-existent cart", user_id)
+            raise HTTPException(status_code=404, detail="cart not found")
+        remove_items = {}
+        for item in result.cartitems:
+            if item.product.is_deleted:
+                remove_items[item.id] = item
+            if item.product.inventory.stock_quantity < item.quantity:
+                remove_items[item.id] = item
+        if not remove_items:
+            return {"message": "cart is up to date"}
+        to_be_deleted_id = list(remove_items.keys())
+        total_deducted = sum(i.quantity for i in remove_items.values())
+        (await db.execute(delete(CartItem).where(CartItem.id.in_(to_be_deleted_id))))
         result.total_quantity = Cart.total_quantity - total_deducted
         await db.commit()
         await cart_invalidation(user_id=user_id)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
-        logger.error(
-            f"Database integrity error while updating cart with id: {cart_id} for user {user_id}"
-        )
+        logger.error("Database integrity error while updating cart")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
-        logger.exception(
-            f"error while updating cart with id: {cart_id} for user {user_id}"
-        )
+        logger.exception("error while updating cart")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Cart with id: {cart_id} for user {user_id} successfully updated")
     return {"message": "cart successfully updated"}
@@ -312,34 +314,34 @@ async def delete_one(
     if not user_id:
         raise HTTPException(status_code=401, detail="not authorized")
     logger.warning(f"Attempting to delete cart item {cartitem_id} from cart {cart_id}")
-    stmt = (
-        select(Cart)
-        .options(selectinload(Cart.cartitems))
-        .where(
-            Cart.id == cart_id,
-            Cart.store_id == store_id,
-            Cart.user_id == user_id,
-        )
-        .with_for_update()
-    )
-    result = (await db.execute(stmt)).scalar_one_or_none()
-    if not result:
-        logger.error("user %s, tried deleting from a cart that does not exist", user_id)
-        raise HTTPException(status_code=404, detail="cart not found")
-    delete_obj = next(
-        (item for item in result.cartitems if item.id == cartitem_id), None
-    )
-    if not delete_obj:
-        logger.warning(
-            "user: %s, tried deleting a cartitem that does not exists", user_id
-        )
-        raise HTTPException(status_code=404, detail="cartitem not found")
-    reduced_quantity = delete_obj.quantity
     try:
+        stmt = (
+            select(Cart, CartItem)
+            .join(CartItem, Cart.id == CartItem.cart_id)
+            .where(
+                Cart.id == cart_id,
+                CartItem.id == cartitem_id,
+                Cart.store_id == store_id,
+                Cart.user_id == user_id,
+            )
+            .with_for_update()
+        )
+        result = (await db.execute(stmt)).fetchone()
+        if not result:
+            logger.error(
+                "user %s, queried a non existent cart or cartitem in delete_one function",
+                user_id,
+            )
+            raise HTTPException(status_code=404, detail="cart or cart item not found")
+        cart, delete_obj = result
+        reduced_quantity = delete_obj.quantity
         await db.delete(delete_obj)
-        result.total_quantity = Cart.total_quantity - reduced_quantity
+        cart.total_quantity -= reduced_quantity
         await db.commit()
         await cart_invalidation(user_id=user_id)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
