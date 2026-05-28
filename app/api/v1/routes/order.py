@@ -11,33 +11,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
 
-
-router = APIRouter(prefix="/shopping", tags=["Order"])
-
-
-@router.post("/orders")
-async def create_orders(
-    store_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await order_service.create_orders(store_id=store_id, db=db, payload=payload)
+router = APIRouter(prefix="/order", tags=["Order"])
 
 
-@router.post("/order_items")
-async def create_orderitems(
+@router.post("/order")
+async def create_order(
     store_id: int,
     cart_id: int,
-    order_id: int,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await order_service.create_order_items(
+    return await order_service.create_orders(
         store_id=store_id,
         cart_id=cart_id,
-        order_id=order_id,
-        background_tasks=background_tasks,
+        background_task=background_tasks,
         db=db,
         payload=payload,
     )
