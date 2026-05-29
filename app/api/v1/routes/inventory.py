@@ -49,7 +49,7 @@ async def read_store_inventory(
     )
 
 
-@router.post("/update_inventory")
+@router.put("/update_inventory")
 async def edit_inventory(
     store_id: int,
     inventory_id: int,
