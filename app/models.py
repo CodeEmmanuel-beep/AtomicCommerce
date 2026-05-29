@@ -664,7 +664,7 @@ class Order(Base):
         DateTime(timezone=True), index=True, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True, nullable=True
+        DateTime(timezone=True), server_default=func.now(), index=True, nullable=False
     )
 
     payment = relationship("Payment", back_populates="order", uselist=False)
