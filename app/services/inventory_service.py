@@ -10,6 +10,7 @@ from fastapi import HTTPException, Response, status
 from app.utils.helper import store_auth, store_inventory
 from app.logs.logger import get_logger
 from sqlalchemy import select, exists, func
+from sqlalchemy.orm import selectinload
 from app.utils.redis import cache, cached
 
 logger = get_logger("inventory")
@@ -133,7 +134,7 @@ async def read_all(store_id, page, limit, db, payload):
 async def update(store_id, inventory_id, stock_quantity, db, payload):
     user_id = await store_auth(store_id, db, payload)
     stmt = store_inventory(store_id, inventory_id)
-    stmt = stmt.with_for_update()
+    stmt = stmt.options(selectinload(Inventory.product)).with_for_update()
     inventory = (await db.execute(stmt)).scalar_one_or_none()
     if not inventory:
         logger.warning("user: %s, tried updating a non existent inventory", user_id)
@@ -141,6 +142,8 @@ async def update(store_id, inventory_id, stock_quantity, db, payload):
     if inventory.stock_quantity == stock_quantity:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     inventory.stock_quantity = stock_quantity
+    if inventory.product.product_availability == "out_of_stock":
+        inventory.product.product_availability = "available"
     try:
         await db.commit()
     except IntegrityError:
