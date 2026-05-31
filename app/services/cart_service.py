@@ -16,8 +16,10 @@ from app.utils.redis import cache, cached, cart_invalidation, cache_version
 logger = get_logger("cart")
 
 
-async def create_cart(
+async def add_item_to_cart(
     store_id,
+    product_id,
+    quantity,
     db,
     payload,
 ):
@@ -41,33 +43,64 @@ async def create_cart(
     if not result["store_check"]:
         logger.warning("user: %s, tried creating cart for a non existent store")
         raise HTTPException(status_code=404, detail="store not found")
-    if result["cart_check"] >= 1:
-        logger.warning("user: %s, tried duplicating cart", user_id)
-        return {"message": "cart already created"}
-    cart = Cart(user_id=user_id, store_id=store_id)
-    try:
-        db.add(cart)
-        await db.commit()
-        await cart_invalidation(user_id=user_id)
-    except IntegrityError as e:
-        await db.rollback()
-        logger.error("Database integrity error while creating cart %s", e)
-        raise HTTPException(status_code=400, detail="database error")
-    except Exception:
-        await db.rollback()
-        logger.exception("error while creating cart")
-        raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Cart created successfully for user {user_id}")
-    return {"status": "success", "message": "cart successfully created"}
-
-
-async def shopping(store_id, cart_id, product_id, quantity, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt at shopping function")
-        raise HTTPException(
-            status_code=401, detail="you must be a registered user to shop"
-        )
+    if not result["cart_check"] >= 1:
+        cart = Cart(user_id=user_id, store_id=store_id)
+        try:
+            db.add(cart)
+            await db.flush()
+            await cart_invalidation(user_id=user_id)
+        except IntegrityError as e:
+            await db.rollback()
+            logger.error("Database integrity error while creating cart %s", e)
+            raise HTTPException(status_code=400, detail="database error")
+        except Exception:
+            await db.rollback()
+            logger.exception("error while creating cart")
+            raise HTTPException(status_code=500, detail="internal server error")
+        logger.info(f"Cart created successfully for user {user_id}")
+        try:
+            cart_stmt = (
+                select(Cart)
+                .options(selectinload(Cart.cartitems))
+                .where(Cart.user_id == user_id, ~Cart.check_out)
+                .with_for_update()
+            )
+            result = await db.execute(cart_stmt)
+            cart = result.scalar_one_or_none()
+            if not cart:
+                logger.warning("user: '%s' tried adding to cart that does not exist")
+                raise HTTPException(
+                    status_code=400,
+                    detail="pick a cart, if you already have a cart, verify the product availability before proceeding",
+                )
+        except HTTPException:
+            await db.rollback()
+            raise
+    else:
+        try:
+            cart_stmt = (
+                select(Cart)
+                .options(selectinload(Cart.cartitems))
+                .where(Cart.user_id == user_id, ~Cart.check_out)
+                .with_for_update()
+            )
+            result = await db.execute(cart_stmt)
+            cart = result.scalar_one_or_none()
+            if not cart:
+                logger.warning("user: '%s' tried adding to cart that does not exist")
+                raise HTTPException(
+                    status_code=400,
+                    detail="pick a cart, if you already have a cart, verify the product availability before proceeding",
+                )
+        except HTTPException:
+            await db.rollback()
+            raise
+    logger.info(
+        "user: '%s' is attempting to add product: '%s' to cart: %s",
+        user_id,
+        product_id,
+        cart.id,
+    )
     available = (
         await db.execute(
             select(
@@ -87,55 +120,38 @@ async def shopping(store_id, cart_id, product_id, quantity, db, payload):
     ).scalar()
     if not available:
         logger.warning(
-            f"User {user_id} attempted to add product {product_id} to cart {cart_id}, but the product is out of stock or the requested quantity is not available"
+            "User: '%s' attempted to add product: '%s' to cart: '%s', but the product is out of stock or the requested quantity is not available",
+            user_id,
+            product_id,
+            cart.id,
         )
         raise HTTPException(
             status_code=400,
             detail="required quantity not available or product out of stock",
         )
+    cartitem = next(
+        (item for item in cart.cartitems if item.product_id == product_id), None
+    )
+    if not cartitem and len(cart.cartitems) >= 30:
+        raise HTTPException(status_code=403, detail="cart full")
+    difference = 0
+    if cartitem:
+        difference = quantity - cartitem.quantity
+        cartitem.quantity = quantity
+    else:
+        difference = quantity
+        items = CartItem(
+            cart_id=cart.id,
+            product_id=product_id,
+            quantity=quantity,
+        )
+        db.add(items)
+    cart.total_quantity = Cart.total_quantity + difference
+    logger.info(
+        "adding product: '%s' to cart: '%s' for user: %s", product_id, cart.id, user_id
+    )
     try:
-        stmt = (
-            select(Cart)
-            .options(selectinload(Cart.cartitems))
-            .where(
-                Cart.id == cart_id,
-                Cart.store_id == store_id,
-                Cart.user_id == user_id,
-            )
-        ).with_for_update()
-        logger.info(
-            f"User {user_id} is attempting to add product {product_id} to cart {cart_id}"
-        )
-        carts = (await db.execute(stmt)).scalar_one_or_none()
-        if not carts:
-            raise HTTPException(
-                status_code=400,
-                detail="pick a cart, if you already have a cart, verify the product availability before proceeding",
-            )
-        cartitem = next(
-            (item for item in carts.cartitems if item.product_id == product_id), None
-        )
-        if len(carts.cartitems) >= 30:
-            raise HTTPException(status_code=403, detail="cart full")
-        difference = 0
-        if cartitem:
-            difference = quantity - cartitem.quantity
-            cartitem.quantity = quantity
-        else:
-            difference = quantity
-            items = CartItem(
-                cart_id=cart_id,
-                product_id=product_id,
-                quantity=quantity,
-            )
-            db.add(items)
-        carts.total_quantity = Cart.total_quantity + difference
-        logger.info(f"Adding product {product_id} to cart {cart_id} for user {user_id}")
         await db.commit()
-        await cart_invalidation(user_id=user_id)
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while adding product to cart")
@@ -144,7 +160,10 @@ async def shopping(store_id, cart_id, product_id, quantity, db, payload):
         await db.rollback()
         logger.exception("error while adding product to cart")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Product {product_id} added to cart {cart_id} for user {user_id}")
+    logger.info(
+        "product: %s added to cart: %s for user: %s", product_id, cart.id, user_id
+    )
+    await cart_invalidation(user_id=user_id)
     return {"status": "success", "message": "product added to cart"}
 
 
