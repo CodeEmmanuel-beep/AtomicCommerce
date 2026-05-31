@@ -1,12 +1,12 @@
 from app.models import Order, Product, OrderItem, OrderStatus
-from app.database.async_config import AsyncSessionLocal
+from app.database.async_config import AsyncSessionLocal, engine
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from datetime import timedelta, datetime, timezone
 from app.logs.logger import get_logger
-from functools import wraps
 import asyncio
-from app.utils.celery_app import celery_app
+from celery.signals import worker_process_init
+from celery import shared_task
 
 logger = get_logger("celery")
 
@@ -35,7 +35,7 @@ async def invalidate_order():
             logger.info("preparing to invalidate order")
             CHUNK_SIZE = 100
             for i in range(0, len(row), CHUNK_SIZE):
-                chunk = all_expired_orders[i : i + CHUNK_SIZE]
+                chunk = row[i : i + CHUNK_SIZE]
                 for order in chunk:
                     order.status = OrderStatus.cancelled
                     if order.orderitems:
@@ -50,10 +50,10 @@ async def invalidate_order():
                                     orderitems.product.product_availability = (
                                         "available"
                                     )
-                    logger.info(
-                        "Order %s has been successfully cancelled and stock returned.",
-                        order.id,
-                    )
+                        logger.info(
+                            "Order %s has been successfully cancelled and stock returned.",
+                            order.id,
+                        )
             await session.commit()
             logger.info("Batch order invalidated successfully")
         except Exception:
@@ -61,22 +61,23 @@ async def invalidate_order():
             logger.exception(
                 "fatal processing exception occurred during batch order invalidation"
             )
-
-
-def async_wrapper(coro):
-    @wraps(coro)
-    def wrapper(*args, **kwargs):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(coro(*args, **kwargs))
         finally:
-            loop.close()
+            logger.debug("Disposing database connection pool streams...")
+            await engine.dispose()
 
-    return wrapper
+
+@worker_process_init.connect
+def set_up_worker_process(**kwargs):
+    asyncio.run(engine.dispose())
+    logger.info("worker process database engine reset complete.")
 
 
-@celery_app.task
-@async_wrapper
-async def cancel_order():
-    await invalidate_order()
+@shared_task(name="app.utils.scheduled_task.cancel_order")
+def cancel_order():
+    try:
+        asyncio.run(invalidate_order())
+    except Exception as e:
+        logger.exception(
+            "fatal processing exception occurred during batch order invalidation"
+        )
+        raise e
