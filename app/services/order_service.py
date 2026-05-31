@@ -95,8 +95,7 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
             raise HTTPException(status_code=404, detail="no cart items found")
         logger.info("Creating order for user_id: %s", user_id)
         order = Order(
-            user_id=user_id,
-            store_id=store_id,
+            user_id=user_id, store_id=store_id, created_at=datetime.now(timezone.utc)
         )
         db.add(order)
         await db.flush()
@@ -212,8 +211,7 @@ async def view_orders(store_id, page, limit, db, payload):
         select(Order)
         .options(
             selectinload(Order.orderitems)
-            .selectinload(OrderItem.cartitems)
-            .selectinload(CartItem.product)
+            .selectinload(OrderItem.product)
             .selectinload(Product.inventory),
             selectinload(Order.membership),
             selectinload(Order.user),
@@ -224,20 +222,18 @@ async def view_orders(store_id, page, limit, db, payload):
     )
     total = (
         await db.execute(
-            select(func.count())
-            .select_from(Order)
-            .where(
+            select(func.count(Order.id)).where(
                 Order.user_id == user_id,
                 Order.store_id == store_id,
                 ~Order.order_delete,
             )
         )
     ).scalar() or 0
-    logger.info(f"Total orders found: {total} for user_id: {user_id}")
+    logger.info("total orders found: '%s' for user: %s", total, user_id)
     order = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not order:
         return StandardResponse(status="success", message="no orders found", data=None)
-    logger.info(f"Preparing paginated response for orders of user_id: {user_id}")
+    logger.info("preparing paginated response for orders of user: %s", user_id)
     data = PaginatedMetadata[OrderResponse](
         items=[OrderResponse.model_validate(od) for od in order],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
