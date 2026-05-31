@@ -41,3 +41,6 @@ desktop.ini
 #logs
 .logs
 *.logss
+
+#celery
+celerybeat-schedule
