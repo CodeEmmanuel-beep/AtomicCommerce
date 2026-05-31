@@ -13,7 +13,7 @@ logger = get_logger("celery")
 
 async def invalidate_order():
     async with AsyncSessionLocal() as session:
-        time_limit = datetime.now(timezone.utc) - timedelta(hours=5)
+        time_limit = datetime.now(timezone.utc) - timedelta(hours=1)
         try:
             stmt = (
                 select(Order)
@@ -72,7 +72,12 @@ def set_up_worker_process(**kwargs):
     logger.info("worker process database engine reset complete.")
 
 
-@shared_task(name="app.utils.scheduled_task.cancel_order")
+@shared_task(
+    name="app.utils.scheduled_task.cancel_order",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 5, "countdown": 10},
+)
 def cancel_order():
     try:
         asyncio.run(invalidate_order())
