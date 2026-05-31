@@ -10,27 +10,16 @@ from app.database.get import get_db
 router = APIRouter(prefix="/cart", tags=["Cart"])
 
 
-@router.post("/create_cart")
-async def cart(
+@router.post("/add_to_cart")
+async def add_cartitem(
     store_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await cart_service.create_cart(store_id=store_id, db=db, payload=payload)
-
-
-@router.post("/cart_items")
-async def shopping(
-    store_id: int,
-    cart_id: int,
     product_id: int,
     quantity: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await cart_service.shopping(
+    return await cart_service.add_item_to_cart(
         store_id=store_id,
-        cart_id=cart_id,
         product_id=product_id,
         quantity=quantity,
         db=db,
