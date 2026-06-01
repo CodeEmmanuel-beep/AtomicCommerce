@@ -25,7 +25,7 @@ async def invalidate_order():
                 .where(
                     Order.created_at <= time_limit, Order.status == OrderStatus.pending
                 )
-                .with_for_update(of=Order)
+                .with_for_update()
             )
             result = await session.execute(stmt)
             row = result.scalars().all()
@@ -38,6 +38,14 @@ async def invalidate_order():
                 chunk = row[i : i + CHUNK_SIZE]
                 for order in chunk:
                     order.status = OrderStatus.cancelled
+                    if order.re_order_time <= datetime.now(timezone.utc) - timedelta(
+                        minutes=30
+                    ):
+                        order.order_delete = True
+                        logger.info(
+                            "Order %s has been successfully cancelled and stock returned.",
+                            order.id,
+                        )
                     if order.orderitems:
                         for orderitems in order.orderitems:
                             if orderitems.product and orderitems.product.inventory:
@@ -50,10 +58,7 @@ async def invalidate_order():
                                     orderitems.product.product_availability = (
                                         "available"
                                     )
-                        logger.info(
-                            "Order %s has been successfully cancelled and stock returned.",
-                            order.id,
-                        )
+
             await session.commit()
             logger.info("Batch order invalidated successfully")
         except Exception:
@@ -61,14 +66,16 @@ async def invalidate_order():
             logger.exception(
                 "fatal processing exception occurred during batch order invalidation"
             )
-        finally:
-            logger.debug("Disposing database connection pool streams...")
-            await engine.dispose()
 
 
 @worker_process_init.connect
 def set_up_worker_process(**kwargs):
-    asyncio.run(engine.dispose())
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    loop.run_until_complete(engine.dispose())
     logger.info("worker process database engine reset complete.")
 
 
