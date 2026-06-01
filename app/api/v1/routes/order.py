@@ -1,7 +1,5 @@
 from app.api.v1.schemas import (
     OrderResponse,
-    AddressDetails,
-    AddressResponse,
     PaginatedMetadata,
     StandardResponse,
 )
@@ -25,81 +23,6 @@ async def create_order(
     return await order_service.create_orders(
         store_id=store_id,
         cart_id=cart_id,
-        background_task=background_tasks,
-        db=db,
-        payload=payload,
-    )
-
-
-@router.post("/delivery_address")
-async def add_delivery_address(
-    store_id: int,
-    order_id: int,
-    delivery_address: AddressDetails,
-    background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await order_service.delivery_address(
-        store_id=store_id,
-        order_id=order_id,
-        delivery_address=delivery_address,
-        background_task=background_task,
-        db=db,
-        payload=payload,
-    )
-
-
-@router.get(
-    "/view_delivery_address",
-    response_model=StandardResponse[AddressResponse],
-    response_model_exclude_none=True,
-    response_model_exclude_defaults=True,
-)
-async def get_delivery_address(
-    store_id: int,
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await order_service.view_delivery_address(
-        store_id=store_id,
-        page=page,
-        limit=limit,
-        db=db,
-        payload=payload,
-    )
-
-
-@router.put("/pick_delivery_address")
-async def update_delivery_address(
-    store_id: int,
-    order_id: int,
-    address_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await order_service.choose_order_address(
-        store_id=store_id,
-        order_id=order_id,
-        address_id=address_id,
-        db=db,
-        payload=payload,
-    )
-
-
-@router.delete("/delete_delivery_address")
-async def delete_address(
-    store_id: int,
-    address_id: int,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await order_service.delete_delivery_address(
-        store_id=store_id,
-        address_id=address_id,
         background_task=background_tasks,
         db=db,
         payload=payload,
@@ -145,6 +68,30 @@ async def view_order(
         payload=payload,
         page=page,
         limit=limit,
+    )
+
+
+@router.put("/re-order/{store_id}/{order_id}")
+async def re_order(
+    store_id: int,
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await order_service.reactivate_order(
+        store_id=store_id, order_id=order_id, db=db, payload=payload
+    )
+
+
+@router.post("/order_payment")
+async def proceed_to_payment(
+    store_id: int,
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await order_service.proceed_to_payment_portal(
+        store_id=store_id, order_id=order_id, db=db, payload=payload
     )
 
 
