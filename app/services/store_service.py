@@ -617,7 +617,7 @@ async def search_stores(search, search_value, seed, page, limit, db):
         message=f"available '{search_value}' stores",
         data=data_obj,
     )
-    await cached(cache_key, response, ttl=30)
+    await cached(cache_key, response, ttl=36000)
     logger.info("search for stores returned data")
     return response
 
