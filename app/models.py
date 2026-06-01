@@ -155,9 +155,7 @@ class Store(Base):
     shipping_fee: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
     )
-    tax_amount: Mapped[Decimal] = mapped_column(
-        Numeric(precision=10, scale=2), default=0
-    )
+    tax_rate: Mapped[float] = mapped_column(Float, default=0)
     store_contact: Mapped[str] = mapped_column(String, nullable=True)
     approved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
@@ -378,8 +376,9 @@ class Payment(Base):
     shipping_fee: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
     )
+    tax_rate: Mapped[float] = mapped_column(Float, default=0)
     tax_amount: Mapped[Decimal] = mapped_column(
-        Numeric(precision=10, scale=2), default=0
+        Numeric(precision=12, scale=2), default=0
     )
     payment_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -645,9 +644,11 @@ class Order(Base):
         index=True,
     )
     check_out: Mapped[bool] = mapped_column(Boolean, default=False)
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(precision=12, scale=2), default=0)
     total_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=12, scale=2), default=0
     )
+    tax_rate: Mapped[float] = mapped_column(Float, default=0)
     tax_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=12, scale=2), default=0
     )
@@ -660,7 +661,7 @@ class Order(Base):
     reference_id: Mapped[str] = mapped_column(
         String, unique=True, index=True, nullable=True
     )
-    check_out_time: Mapped[datetime] = mapped_column(
+    re_order_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), index=True, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
