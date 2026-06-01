@@ -5,7 +5,6 @@ from app.api.v1.schemas import (
     StandardResponse,
     OrderItemRes,
 )
-from app.database.async_config import AsyncSessionLocal
 from app.models import (
     Cart,
     Order,
@@ -14,14 +13,14 @@ from app.models import (
     Payment,
     Product,
     Inventory,
-    Store,
     OrderStatus,
+    Membership,
 )
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from sqlalchemy import select, func, update, and_
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, func, update
+from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy.exc import IntegrityError
 from app.utils.redis import (
     cache,
@@ -35,29 +34,17 @@ import asyncio
 
 logger = get_logger("order")
 
+DISCOUNT_MAP = {
+    "Standard": Decimal("0.01"),
+    "Regular": Decimal("0.02"),
+    "Premium": Decimal("0.03"),
+}
 
-async def product_availability(product_ids: list[int]):
-    async with AsyncSessionLocal() as conn:
-        try:
-            async with conn.begin():
-                out_of_stock_ids = select(Inventory.product_id).where(
-                    Inventory.stock_quantity == 0
-                )
-                await conn.execute(
-                    update(Product)
-                    .where(
-                        and_(
-                            Product.id.in_(out_of_stock_ids),
-                            Product.id.in_(product_ids),
-                        ),
-                        Product.product_availability != "out_of_stock",
-                    )
-                    .values(product_availability="out_of_stock")
-                    .execution_options(synchronize_session="fetch")
-                )
-                logger.info("Background availability sync complete.")
-        except Exception:
-            logger.exception("failed to update product availability")
+TWO_PLACES = Decimal("0.01")
+
+
+async def invalidate_cache(user_id):
+    return await asyncio.gather(order_invalidation(user_id), cart_invalidation(user_id))
 
 
 async def create_orders(store_id, cart_id, db, payload, background_task):
@@ -71,9 +58,10 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
         stmt = (
             select(Cart)
             .options(
+                joinedload(Cart.store),
                 selectinload(Cart.cartitems)
                 .selectinload(CartItem.product)
-                .selectinload(Product.inventory)
+                .selectinload(Product.inventory),
             )
             .where(
                 Cart.id == cart_id,
@@ -94,8 +82,21 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
         if not cart.cartitems:
             raise HTTPException(status_code=404, detail="no cart items found")
         logger.info("Creating order for user_id: %s", user_id)
+        membership = (
+            await db.execute(
+                select(Membership).where(
+                    Membership.user_id == user_id,
+                    Membership.store_id == store_id,
+                    Membership.is_active,
+                )
+            )
+        ).scalar_one_or_none()
+        membership_id = membership.id if membership else None
         order = Order(
-            user_id=user_id, store_id=store_id, created_at=datetime.now(timezone.utc)
+            user_id=user_id,
+            store_id=store_id,
+            membership_id=membership_id,
+            created_at=datetime.now(timezone.utc),
         )
         db.add(order)
         await db.flush()
@@ -134,12 +135,15 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
                 status_code=400,
                 detail="there is an update on your cart, please update cart before check out",
             )
-        new_orders = []
+        new_orderitems = []
         total_quantity = 0
-        total_amount = Decimal(0)
+        subtotal = Decimal("0.00")
         for cartitem in cart.cartitems:
-            price = cartitem.product.product_price * Decimal(str(cartitem.quantity))
-            new_orders.append(
+            product = cartitem.product
+            price = (
+                cartitem.product.product_price * Decimal(str(cartitem.quantity))
+            ).quantize(TWO_PLACES)
+            new_orderitems.append(
                 OrderItem(
                     order_id=order.id,
                     product_id=cartitem.product_id,
@@ -147,14 +151,32 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
                     price=price,
                 )
             )
-            inventory_map[cartitem.product_id].stock_quantity = max(
-                inventory_map[cartitem.product_id].stock_quantity - cartitem.quantity, 0
+            target_inventory = inventory_map[cartitem.product_id]
+            target_inventory.stock_quantity = max(
+                target_inventory.stock_quantity - cartitem.quantity, 0
             )
             total_quantity += cartitem.quantity
-            total_amount += price
+            subtotal += price
+            if target_inventory.stock_quantity == 0:
+                product.product_availability = "out_of_stock"
         order.total_quantity = total_quantity
-        order.total_amount = total_amount
-        db.add_all(new_orders)
+        order.subtotal = subtotal.quantize(TWO_PLACES)
+        order.discount_amount = Decimal("0.00")
+        has_premium = membership and membership.membership_type == "Premium"
+        if membership:
+            order.discount_amount = (
+                subtotal * Decimal(str(DISCOUNT_MAP[membership.membership_type]))
+            ).quantize(TWO_PLACES)
+        order.shipping_fee = Decimal("0.00") if has_premium else cart.store.shipping_fee
+        tax_amount = (
+            (subtotal * Decimal(str(cart.store.tax_rate))) / Decimal("100")
+        ).quantize(TWO_PLACES)
+        order.tax_rate = cart.store.tax_rate
+        order.tax_amount = tax_amount
+        order.total_amount = (
+            (subtotal + order.shipping_fee + tax_amount) - order.discount_amount
+        ).quantize(TWO_PLACES)
+        db.add_all(new_orderitems)
         update_result = (
             await db.execute(
                 update(Cart)
@@ -169,9 +191,8 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
         ).scalar()
         if update_result is None:
             raise HTTPException(status_code=409, detail="cart already checked out")
-        background_task.add_task(product_availability, product_ids)
+        order_id = order.id
         await db.commit()
-        await asyncio.gather(order_invalidation(user_id), cart_invalidation(user_id))
     except HTTPException:
         await db.rollback()
         raise
@@ -183,12 +204,13 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
         await db.rollback()
         logger.exception("error while creating order items")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Order items created successfully for order_id: {order.id}")
+    background_task.add_task(invalidate_cache, user_id)
+    logger.info("order items created successfully for order_id: %s", order_id)
     return {
         "status": "success",
-        "order_id": order.id,
+        "order_id": order_id,
         "message": "order item successfully created",
-        "additional_message": "you have 5 hours to check out the order",
+        "additional_message": "you have one hour to check out the order",
     }
 
 
@@ -298,96 +320,114 @@ async def view_order(store_id, order_id, page, limit, db, payload):
     return StandardResponse(status="success", message="order_flow", data=response)
 
 
-async def check_out(store_id, order_id, db, payload):
+async def reactivate_order(store_id, order_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at checkout endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
-    row = (
-        await db.execute(
-            select(Order, Store)
-            .join(Store, Order.store_id == Store.id)
-            .options(selectinload(Order.membership))
+    try:
+        stmt = (
+            select(Order)
+            .options(
+                selectinload(Order.orderitems)
+                .selectinload(OrderItem.product)
+                .selectinload(Product.inventory)
+            )
             .where(
                 Order.user_id == user_id,
                 Order.store_id == store_id,
                 Order.id == order_id,
-                Order.status == "pending",
+                Order.status == OrderStatus.cancelled,
             )
             .with_for_update()
         )
-    ).first()
-    if not row:
-        logger.warning(
-            f"user: {user_id}, tried checking out an order they did not create"
-        )
-        raise HTTPException(status_code=404, detail="no pending orders")
-    order_check_out, store = row
-    if order_check_out.created_at < datetime.now(timezone.utc) - timedelta(hours=5):
-        logger.warning(
-            f"user: {user_id}, tried checking out an order created 5 hours prior"
-        )
-        order_check_out.status = OrderStatus.cancelled
-        subq = (
-            select(CartItem.product_id, func.sum(CartItem.quantity).label("quantity"))
-            .join(OrderItem, CartItem.id == OrderItem.cartitem_id)
-            .where(OrderItem.order_id == order_check_out.id)
-            .group_by(CartItem.product_id)
-        ).subquery()
-        (
-            await db.execute(
-                select(Inventory)
-                .where(Inventory.product_id.in_(select(subq.c.product_id)))
-                .with_for_update()
+        res = await db.execute(stmt)
+        order = res.scalar_one_or_none()
+        if not order:
+            logger.warning(
+                "user: '%s', tried to re-order a non existent order", user_id
             )
-        ).all()
-        await db.execute(
-            update(Inventory)
-            .where(Inventory.product_id.in_(select(subq.c.product_id)))
-            .values(stock_quantity=Inventory.stock_quantity + subq.c.quantity)
+            raise HTTPException(status_code=404, detail="order not found")
+        if not order.orderitems:
+            logger.warning("order: '%s' was created without orderitems", order_id)
+            raise HTTPException(status_code=400, detail="order contains no items")
+        product_ids = [item.product_id for item in order.orderitems]
+        inventory = (
+            (
+                await db.execute(
+                    select(Inventory)
+                    .where(Inventory.product_id.in_(product_ids), ~Inventory.is_deleted)
+                    .with_for_update(),
+                )
+            )
+            .scalars()
+            .all()
         )
+        order_product_ids = {item.product_id for item in order.orderitems}
+        inventory_product_ids = {inv.product_id for inv in inventory}
+        if order_product_ids != inventory_product_ids:
+            logger.warning(
+                "user: '%s', reactivation failed. Some products are no longer available in catalog",
+                user_id,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail="Cannot reactivate order. Some items in this order are no longer available.",
+            )
+        inventory_map = {inv.product_id: inv for inv in inventory}
+        failed_item = None
+        for item in order.orderitems:
+            if (
+                inventory_map[item.product_id].stock_quantity < item.quantity
+                or item.product.is_deleted
+                or item.product.product_availability != "available"
+            ):
+                failed_item = item
+                break
+        if failed_item:
+            product = failed_item.product
+            available_inventory = inventory_map[failed_item.product_id].stock_quantity
+            reason = None
+            if available_inventory < failed_item.quantity:
+                reason = "insufficient stock"
+            elif product.is_deleted:
+                reason = "product deleted"
+            elif product.product_availability != "available":
+                reason = "product unavailable"
+            logger.warning("user '%s' reactivation failed, reason: %s", user_id, reason)
+            raise HTTPException(status_code=400, detail=reason)
+        new_subtotal = Decimal(0)
+        order.status = OrderStatus.pending
+        order.re_order_time = func.now()
+        for orderitems in order.orderitems:
+            product = orderitems.product
+            current_item_price = product.product_price * Decimal(
+                str(orderitems.quantity)
+            )
+            orderitems.price = current_item_price
+            new_subtotal += current_item_price
+            target_inventory = inventory_map[orderitems.product_id]
+            target_inventory.stock_quantity -= orderitems.quantity
+            if target_inventory.stock_quantity == 0:
+                product.product_availability = "out_of_stock"
+        order.subtotal = new_subtotal
         await db.commit()
-        return {
-            "status": "time_elapse",
-            "message": "recreate a new order, can be from the same cart",
-        }
-    order_check_out.discount_amount = 0.00
-    base_amount = order_check_out.total_amount
-    has_premium = (
-        order_check_out.membership
-        and order_check_out.membership.is_active
-        and order_check_out.membership.membership_type == "Premium"
-    )
-    if order_check_out.membership and order_check_out.membership.is_active:
-        discount_map = {"Standard": 0.01, "Regular": 0.02, "Premium": 0.03}
-        order_check_out.discount_amount = (
-            base_amount * discount_map[order_check_out.membership.membership_type]
-        )
-    order_check_out.shipping_fee = 0.00 if has_premium else store.shipping_fee
-    order_check_out.tax_amount = (base_amount * store.tax_amount) / 100
-    order_check_out.total_amount = (
-        base_amount + order_check_out.shipping_fee + order_check_out.tax_amount
-    ) - order_check_out.discount_amount
-    try:
-        order_check_out.check_out = True
-        order_check_out.check_out_time = func.now()
-        await db.commit()
-        await db.refresh(order_check_out)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
-        logger.error("Database integrity error while checking out order")
+        logger.error("database integrity error at re-order endpoint")
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
-        logger.exception("error while checking out order")
+        logger.exception("error at re-order endpoint")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Order checkout process completed for order_id: {order_id}")
+    logger.info("Order: '%s' successfully re-ordered", order_id)
     return {
         "status": "success",
-        "message": "order checked out proceed to make payment",
-        "order_quantity": order_check_out.total_quantity,
-        "order_price": order_check_out.total_amount,
-        "additional_information": "you have 5 hours to complete the payment for the order, after that your order will be automatically cancelled",
+        "message": "re-order successful",
+        "detail": "you have 30 minutes to check out this order, if this order is not checked out after 30 minutes, it will be automatically deleted",
     }
 
 
@@ -416,7 +456,7 @@ async def proceed_to_payment_portal(store_id, order_id, db, payload):
             status_code=404,
             detail="order not found, if you think this is a mistake try again shortly",
         )
-    if checkout.check_out_time < datetime.now(timezone.utc) - timedelta(hours=5):
+    if checkout.check_out_time < datetime.now(timezone.utc) - timedelta(hours=1):
         checkout.status = OrderStatus.cancelled
         subq = (
             select(CartItem.product_id, func.sum(CartItem.quantity).label("quantity"))
