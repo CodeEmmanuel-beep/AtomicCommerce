@@ -18,6 +18,7 @@ from app.api.v1.schemas import (
     StandardResponse,
     ProductRes,
     PersonnelResponse,
+    PersonalStoreResponse,
 )
 from email_validator import validate_email, EmailNotValidError
 from datetime import datetime, timezone
@@ -238,6 +239,7 @@ async def store_update(
     business_logo,
     motto,
     description,
+    tax_rate,
     db,
     payload,
     get_supabase,
@@ -379,6 +381,7 @@ async def store_update(
             "store_description": description,
             "store_contact": store_contact,
             "store_email": store_email,
+            "tax_rate": tax_rate,
             "shipping_fee": shipping_fee,
         }
         for attr, field in update_fields.items():
@@ -503,12 +506,12 @@ async def view_store(position, db, payload):
             data=None,
         )
     items = []
-    datas = [StoreResponse.model_validate(s_t) for s_t in store_type]
-    for data, s_type in zip(datas, store_type):
+    for s_t in store_type:
+        data = PersonalStoreResponse.model_validate(s_t)
         data.business_logo = (
-            get_public_url(s_type.business_logo) if s_type.business_logo else None
+            get_public_url(s_t.business_logo) if s_t.business_logo else None
         )
-        data.store_photo = get_public_url(s_type.store_photo)  # type: ignore
+        data.store_photo = get_public_url(s_t.store_photo)  # type: ignore
         items.append(data)
     message = "stores you own" if position == "owner" else "stores you work in"
     response = StandardResponse(status="success", message=message, data=items)
@@ -603,7 +606,7 @@ async def search_stores(search, search_value, seed, page, limit, db):
         if prod:
             prod_data = ProductRes.model_validate(prod)
             prod_data.primary_image = get_public_url(prod.primary_image)  # type: ignore
-            data.featured_product = [prod_data]
+            data.featured_product = prod_data
         items.append(data)
     data_obj = PaginatedMetadata[StoreResponse](
         items=items,
@@ -614,7 +617,7 @@ async def search_stores(search, search_value, seed, page, limit, db):
         message=f"available '{search_value}' stores",
         data=data_obj,
     )
-    await cached(cache_key, response, ttl=36000)
+    await cached(cache_key, response, ttl=30)
     logger.info("search for stores returned data")
     return response
 
