@@ -5,6 +5,7 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
     StoreResponse,
     PersonnelResponse,
+    PersonalStoreResponse,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.verify_jwt import verify_token
@@ -55,6 +56,7 @@ async def update_store(
     description: str = Form(None),
     store_contact: str = Form(None),
     store_email: str = Form(None),
+    tax_rate: Decimal = Form(None),
     shipping_fee: Decimal = Form(None),
     get_supabase=Depends(_supabase),
     db: AsyncSession = Depends(get_db),
@@ -71,6 +73,7 @@ async def update_store(
         description=description,
         store_contact=store_contact,
         store_email=store_email,
+        tax_rate=tax_rate,
         shipping_fee=shipping_fee,
         db=db,
         payload=payload,
@@ -119,7 +122,7 @@ async def store_personnel(
 
 @router.get(
     "/view_personal_stores",
-    response_model=StandardResponse[List[StoreResponse]],
+    response_model=StandardResponse[List[PersonalStoreResponse]],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
