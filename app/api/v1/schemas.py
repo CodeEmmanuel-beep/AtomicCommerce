@@ -43,7 +43,7 @@ class PersonnelResponse(BaseModel):
 
 class ProfileResponse(BaseModel):
     id: int
-    profile_picture: str
+    profile_picture: str | None = None
     role: str = Field(default="user")
     first_name: str
     middle_name: str | None = None
@@ -298,8 +298,8 @@ class ProductRes(BaseModel):
     primary_image: str
     product_price: Decimal
     product_availability: str
-    avg_rating: Decimal
-    inventory: List[InventoryObj] = Field(default_factory=list)
+    avg_rating: Decimal = Field(default=Decimal(str("0.00")))
+    inventory: InventoryObj
 
     @field_validator("primary_image", mode="before")
     @classmethod
@@ -315,17 +315,39 @@ class ProductResponse(BaseModel):
     primary_image: str
     product_type: str
     product_price: Decimal
-    avg_rating: Decimal = Field(default=Decimal(0))
+    avg_rating: Decimal = Field(default=Decimal(str("0.00")))
     review_count: int = Field(default=0)
     product_size: str
     product_description: str
     product_availability: str
-    stock_quantity: List[InventoryObj] = Field(default_factory=list, alias="inventory")
+    inventory: InventoryObj
 
     @field_validator("primary_image", mode="before")
     @classmethod
     def full_url(cls, value) -> str | None:
         return get_public_url(value)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PersonalStoreResponse(BaseModel):
+    id: int
+    business_logo: str | None = None
+    store_photo: str | None = None
+    store_name: str
+    category_name: str
+    sub_category: List[str]
+    store_previous_name: str | None = None
+    store_contact: str | None = None
+    store_email: str | None = None
+    avg_rating: Decimal = Field(default=Decimal(0))
+    review_count: int = Field(default=0)
+    motto: str | None = None
+    tax_rate: float = Field(default=0)
+    shipping_fee: Decimal
+    store_description: str | None = None
+    approved: bool = Field(default=False)
+    founded: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -340,10 +362,11 @@ class StoreResponse(BaseModel):
     store_previous_name: str | None = None
     store_contact: str | None = None
     store_email: str | None = None
-    avg_rating: Decimal = Field(default=Decimal(0))
+    avg_rating: Decimal = Field(default=Decimal(str(("0.00"))))
     review_count: int = Field(default=0)
     motto: str | None = None
-    featured_product: List[ProductRes] = Field(default_factory=list)
+    featured_product: List[ProductRes] | ProductRes = Field(default_factory=list)
+    shipping_fee: Decimal
     store_description: str | None = None
     approved: bool = Field(default=False)
     founded: datetime | None = None
@@ -473,11 +496,16 @@ class OrderItemRes(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class OrderResponse(BaseModel, Generic[T]):
-    profile: ProfileResponse
+class OrderResponse(BaseModel):
+    user: ProfileResponse
+    id: int
     membership_type: List[MemRes] = Field(default_factory=list)
+    tax_rate: float
+    tax_amount: Decimal
+    shipping_fee: Decimal
     total_quantity: float
-    total_amount: float
+    subtotal: Decimal
+    total_amount: Decimal
     status: str = Field(default="pending")
     created_at: Optional[datetime]
 
