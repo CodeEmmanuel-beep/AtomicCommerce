@@ -155,7 +155,7 @@ class Store(Base):
     shipping_fee: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
     )
-    tax_rate: Mapped[float] = mapped_column(Float, default=0)
+    tax_rate: Mapped[float] = mapped_column(Float, default=0, nullable=False)
     store_contact: Mapped[str] = mapped_column(String, nullable=True)
     approved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
