@@ -38,14 +38,11 @@ async def invalidate_order():
                 chunk = row[i : i + CHUNK_SIZE]
                 for order in chunk:
                     order.status = OrderStatus.cancelled
-                    if order.re_order_time <= datetime.now(timezone.utc) - timedelta(
-                        minutes=30
-                    ):
-                        order.order_delete = True
-                        logger.info(
-                            "Order %s has been successfully cancelled and stock returned.",
-                            order.id,
-                        )
+                    if order.re_order_time:
+                        if order.re_order_time <= datetime.now(
+                            timezone.utc
+                        ) - timedelta(minutes=30):
+                            order.order_delete = True
                     if order.orderitems:
                         for orderitems in order.orderitems:
                             if orderitems.product and orderitems.product.inventory:
@@ -58,7 +55,10 @@ async def invalidate_order():
                                     orderitems.product.product_availability = (
                                         "available"
                                     )
-
+                                logger.info(
+                                    "Order %s has been successfully cancelled and stock returned.",
+                                    order.id,
+                                )
             await session.commit()
             logger.info("Batch order invalidated successfully")
         except Exception:
@@ -66,6 +66,15 @@ async def invalidate_order():
             logger.exception(
                 "fatal processing exception occurred during batch order invalidation"
             )
+
+
+def get_worker_loop():
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
 
 
 @worker_process_init.connect
@@ -87,7 +96,8 @@ def set_up_worker_process(**kwargs):
 )
 def cancel_order():
     try:
-        asyncio.run(invalidate_order())
+        loop = get_worker_loop()
+        loop.run_until_complete(invalidate_order())
     except Exception as e:
         logger.exception(
             "fatal processing exception occurred during batch order invalidation"
