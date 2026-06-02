@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 from datetime import timedelta, datetime, timezone
 from app.logs.logger import get_logger
 import asyncio
+from app.utils.helper import restore_inventory
 from celery.signals import worker_process_init
 from celery import shared_task
 
@@ -29,46 +30,47 @@ async def invalidate_order():
                         Order.created_at <= time_limit,
                         Order.re_order_time <= retry_limit,
                     ),
+                    ~Order.order_delete,
                     Order.status == OrderStatus.pending,
                 )
-                .with_for_update()
+                .limit(1000)
+                .with_for_update(skip_locked=True)
             )
             result = await session.execute(stmt)
             row = result.scalars().all()
             if not row:
                 logger.info("No expired orders found for invalidation.")
                 return
-            logger.info("preparing to invalidate order")
-            CHUNK_SIZE = 100
-            for i in range(0, len(row), CHUNK_SIZE):
-                chunk = row[i : i + CHUNK_SIZE]
-                for order in chunk:
+            processed_orders = []
+            for order in row:
+                if order.re_order_time and order.re_order_time <= retry_limit:
+                    logger.info("preparing to invalidate order")
                     order.status = OrderStatus.cancelled
-                    if order.re_order_time and order.re_order_time <= retry_limit:
-                        order.order_delete = True
+                    order.order_delete = True
                     if order.orderitems:
-                        for orderitems in order.orderitems:
-                            if orderitems.product and orderitems.product.inventory:
-                                stock = orderitems.product.inventory
-                                stock.stock_quantity += orderitems.quantity
-                                if (
-                                    orderitems.product.product_availability
-                                    == "out_of_stock"
-                                ):
-                                    orderitems.product.product_availability = (
-                                        "available"
-                                    )
-                        logger.info(
-                            "Order %s has been successfully cancelled and stock returned.",
-                            order.id,
-                        )
+                        restore_inventory(order)
+                        processed_orders.append(order.id)
+                elif not order.re_order_time:
+                    logger.info("preparing to invalidate order")
+                    order.status = OrderStatus.cancelled
+                    if order.orderitems:
+                        restore_inventory(order)
+                        processed_orders.append(order.id)
+                else:
+                    continue
+            if not processed_orders:
+                logger.info("No expired orders found for invalidation.")
+                return
             await session.commit()
+            for order_id in processed_orders:
+                logger.info("Order with id: %s invalidated successfully", order_id)
             logger.info("Batch order invalidated successfully")
         except Exception:
             await session.rollback()
             logger.exception(
                 "fatal processing exception occurred during batch order invalidation"
             )
+            raise
 
 
 def get_worker_loop():
@@ -101,8 +103,7 @@ def cancel_order():
     try:
         loop = get_worker_loop()
         loop.run_until_complete(invalidate_order())
-    except Exception as e:
+    except Exception:
         logger.exception(
             "fatal processing exception occurred during batch order invalidation"
         )
-        raise e
