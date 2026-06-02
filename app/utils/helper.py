@@ -11,7 +11,7 @@ import uuid
 from sqlalchemy.orm import selectinload
 from werkzeug.utils import secure_filename
 from app.logs.logger import get_logger
-from app.models import Store, Membership, store_owners, store_staffs, Inventory, Product
+from app.models import Store, Membership, store_owners, store_staffs, Inventory
 from app.utils.supabase_url import cleaned_up
 from app.database.config import settings
 from io import BytesIO
@@ -249,3 +249,12 @@ def store_inventory(store_id, inventory_id: int | None = None):
             .where(*base_filter)
         )
     return stmt
+
+
+def restore_inventory(order):
+    for orderitems in order.orderitems:
+        if orderitems.product and orderitems.product.inventory:
+            stock = orderitems.product.inventory
+            stock.stock_quantity += orderitems.quantity
+            if orderitems.product.product_availability == "out_of_stock":
+                orderitems.product.product_availability = "available"
