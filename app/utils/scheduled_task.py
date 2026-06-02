@@ -1,6 +1,6 @@
 from app.models import Order, Product, OrderItem, OrderStatus
 from app.database.async_config import AsyncSessionLocal, engine
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
 from datetime import timedelta, datetime, timezone
 from app.logs.logger import get_logger
@@ -13,7 +13,9 @@ logger = get_logger("celery")
 
 async def invalidate_order():
     async with AsyncSessionLocal() as session:
-        time_limit = datetime.now(timezone.utc) - timedelta(hours=1)
+        now = datetime.now(timezone.utc)
+        time_limit = now - timedelta(hours=1)
+        retry_limit = now - timedelta(minutes=30)
         try:
             stmt = (
                 select(Order)
@@ -23,7 +25,11 @@ async def invalidate_order():
                     .selectinload(Product.inventory)
                 )
                 .where(
-                    Order.created_at <= time_limit, Order.status == OrderStatus.pending
+                    or_(
+                        Order.created_at <= time_limit,
+                        Order.re_order_time <= retry_limit,
+                    ),
+                    Order.status == OrderStatus.pending,
                 )
                 .with_for_update()
             )
@@ -38,11 +44,8 @@ async def invalidate_order():
                 chunk = row[i : i + CHUNK_SIZE]
                 for order in chunk:
                     order.status = OrderStatus.cancelled
-                    if order.re_order_time:
-                        if order.re_order_time <= datetime.now(
-                            timezone.utc
-                        ) - timedelta(minutes=30):
-                            order.order_delete = True
+                    if order.re_order_time and order.re_order_time <= retry_limit:
+                        order.order_delete = True
                     if order.orderitems:
                         for orderitems in order.orderitems:
                             if orderitems.product and orderitems.product.inventory:
@@ -55,10 +58,10 @@ async def invalidate_order():
                                     orderitems.product.product_availability = (
                                         "available"
                                     )
-                                logger.info(
-                                    "Order %s has been successfully cancelled and stock returned.",
-                                    order.id,
-                                )
+                        logger.info(
+                            "Order %s has been successfully cancelled and stock returned.",
+                            order.id,
+                        )
             await session.commit()
             logger.info("Batch order invalidated successfully")
         except Exception:
