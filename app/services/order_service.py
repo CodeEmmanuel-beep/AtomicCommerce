@@ -29,6 +29,7 @@ from app.utils.redis import (
     cart_invalidation,
     cache_version,
 )
+from app.utils.helper import restore_inventory
 from decimal import Decimal
 import asyncio
 
@@ -479,26 +480,15 @@ async def proceed_to_payment_portal(store_id, order_id, db, payload):
             status_code=404,
             detail="order not found, if you think this is a mistake try again shortly",
         )
-    if checkout.check_out_time < datetime.now(timezone.utc) - timedelta(hours=1):
+    retry_limit = datetime.now(timezone.utc) - timedelta(minutes=30)
+    if (checkout.re_order_time and checkout.re_order_time <= retry_limit) or (
+        checkout.created_at <= datetime.now(timezone.utc) - timedelta(hours=1)
+    ):
         checkout.status = OrderStatus.cancelled
-        subq = (
-            select(CartItem.product_id, func.sum(CartItem.quantity).label("quantity"))
-            .join(OrderItem, CartItem.id == OrderItem.cartitem_id)
-            .where(OrderItem.order_id == checkout.id)
-            .group_by(CartItem.product_id)
-        ).subquery()
-        (
-            await db.execute(
-                select(Inventory)
-                .where(Inventory.product_id.in_(select(subq.c.product_id)))
-                .with_for_update()
-            )
-        ).all()
-        await db.execute(
-            update(Inventory)
-            .where(Inventory.product_id.in_(select(subq.c.product_id)))
-            .values(stock_quantity=Inventory.stock_quantity + subq.c.quantity)
-        )
+        if checkout.re_order_time and checkout.re_order_time <= retry_limit:
+            checkout.order_delete = True
+        if checkout.orderitems:
+            restore_inventory(checkout)
         try:
             await db.commit()
         except IntegrityError:
@@ -524,28 +514,37 @@ async def cancel_order(
         raise HTTPException(status_code=401, detail="not authorized")
     stmt = (
         select(Order)
-        .join(Payment, Order.id == Payment.order_id, isouter=True)
-        .options(selectinload(Order.payment))
+        .outerjoin(Payment, Order.id == Payment.order_id)
+        .options(
+            selectinload(Order.payment),
+            selectinload(Order.orderitems)
+            .selectinload(OrderItem.product)
+            .selectinload(Product.inventory),
+        )
         .where(
             Order.user_id == user_id,
             Order.store_id == store_id,
             Order.id == order_id,
-            Order.status == "pending",
+            Order.status.in_([OrderStatus.pending, OrderStatus.cancelled]),
         )
-        .with_for_update()
+        .with_for_update(of=Order)
     )
-    logger.info(f"Fetching order to cancel for order_id: {order_id}")
+    logger.info("fetching order to cancel for order_id: %s", order_id)
     result = (await db.execute(stmt)).scalar_one_or_none()
     if not result:
-        logger.error(f"Order with order_id: {order_id} not found for cancellation")
-        raise HTTPException(status_code=404, detail="order item not found")
-    payment_status = result.payment.status if result.payment else "pending"
+        logger.error("Order with order_id: '%s' not found for cancellation", order_id)
+        raise HTTPException(status_code=404, detail="order not found")
+    payment_status = result.payment.payment_status if result.payment else "pending"
     if payment_status == "pending":
+        if result.status == OrderStatus.cancelled:
+            return {"message": "order already cancelled"}
         result.status = OrderStatus.cancelled
-        logger.info(f"Order with order_id: {order_id} cancelled successfully")
+        if result.orderitems:
+            restore_inventory(result)
+        logger.info("Order with order_id: '%s' cancelled successfully", order_id)
     else:
         logger.error(
-            f"Order with order_id: {order_id} cannot be cancelled, payment triggered"
+            "Order with order_id: '%s' cannot be cancelled, payment triggered", order_id
         )
         raise HTTPException(
             status_code=400, detail="payment is triggered, cannot cancel order"
@@ -561,7 +560,7 @@ async def cancel_order(
         await db.rollback()
         logger.exception("error while cancelling order")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"Order cancellation process completed for order_id: {order_id}")
+    logger.info("Order cancellation process completed for order_id: %s", order_id)
     return {"message": "order cancelled"}
 
 
