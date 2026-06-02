@@ -69,7 +69,7 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
                 Cart.user_id == user_id,
                 Cart.store_id == store_id,
             )
-            .with_for_update()
+            .with_for_update(of=Cart)
         )
         result = await db.execute(stmt)
         cart = result.scalar_one_or_none()
@@ -95,7 +95,7 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
         order = Order(
             user_id=user_id,
             store_id=store_id,
-            membership_id=membership_id,
+            member_id=membership_id,
             created_at=datetime.now(timezone.utc),
         )
         db.add(order)
@@ -103,7 +103,7 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
         if not order.id:
             logger.warning("No order created")
             raise HTTPException(status_code=404, detail="no order created")
-        product_ids = [items.product_id for items in cart.cartitems]
+        product_ids = sorted([items.product_id for items in cart.cartitems])
         inventory = (
             (
                 await db.execute(
@@ -271,10 +271,6 @@ async def view_order(store_id, order_id, page, limit, db, payload):
         logger.error("Unauthorized attempt to view order")
         raise HTTPException(status_code=401, detail="not a registered buyer")
     offset = (page - 1) * limit
-    if page < 1 or limit < 1:
-        raise HTTPException(
-            status_code=400, detail="page number and limit must be greater than 0"
-        )
     version = await cache_version("order_key")
     order_key = f"orders:v{version}:{user_id}:{store_id}:{order_id}:{page}:{limit}"
     cache_key = await cache(order_key)
@@ -284,8 +280,7 @@ async def view_order(store_id, order_id, page, limit, db, payload):
         select(Order)
         .options(
             selectinload(Order.orderitems)
-            .selectinload(OrderItem.cartitems)
-            .selectinload(CartItem.product)
+            .selectinload(OrderItem.product)
             .selectinload(Product.inventory),
             selectinload(Order.payment),
             selectinload(Order.user),
@@ -315,9 +310,12 @@ async def view_order(store_id, order_id, page, limit, db, payload):
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = {"Order": order_data, "Ordered_items": data}
-    await cached(order_key, response, ttl=7200)
+    full_response = StandardResponse(
+        status="success", message="order_flow", data=response
+    )
+    await cached(order_key, full_response, ttl=7200)
     logger.info(f"Order details retrieved successfully for order_id: {order_id}")
-    return StandardResponse(status="success", message="order_flow", data=response)
+    return full_response
 
 
 async def reactivate_order(store_id, order_id, db, payload):
@@ -329,9 +327,10 @@ async def reactivate_order(store_id, order_id, db, payload):
         stmt = (
             select(Order)
             .options(
+                joinedload(Order.store),
                 selectinload(Order.orderitems)
                 .selectinload(OrderItem.product)
-                .selectinload(Product.inventory)
+                .selectinload(Product.inventory),
             )
             .where(
                 Order.user_id == user_id,
@@ -339,7 +338,7 @@ async def reactivate_order(store_id, order_id, db, payload):
                 Order.id == order_id,
                 Order.status == OrderStatus.cancelled,
             )
-            .with_for_update()
+            .with_for_update(of=Order)
         )
         res = await db.execute(stmt)
         order = res.scalar_one_or_none()
@@ -351,7 +350,7 @@ async def reactivate_order(store_id, order_id, db, payload):
         if not order.orderitems:
             logger.warning("order: '%s' was created without orderitems", order_id)
             raise HTTPException(status_code=400, detail="order contains no items")
-        product_ids = [item.product_id for item in order.orderitems]
+        product_ids = sorted([item.product_id for item in order.orderitems])
         inventory = (
             (
                 await db.execute(
@@ -374,6 +373,14 @@ async def reactivate_order(store_id, order_id, db, payload):
                 status_code=404,
                 detail="Cannot reactivate order. Some items in this order are no longer available.",
             )
+        membership_stmt = select(Membership).where(
+            Membership.store_id == store_id,
+            Membership.user_id == user_id,
+            Membership.is_active,
+        )
+        membership_result = await db.execute(membership_stmt)
+        membership = membership_result.scalar_one_or_none()
+        has_premium = membership and membership.membership_type == "Premium"
         inventory_map = {inv.product_id: inv for inv in inventory}
         failed_item = None
         for item in order.orderitems:
@@ -396,9 +403,11 @@ async def reactivate_order(store_id, order_id, db, payload):
                 reason = "product unavailable"
             logger.warning("user '%s' reactivation failed, reason: %s", user_id, reason)
             raise HTTPException(status_code=400, detail=reason)
-        new_subtotal = Decimal(0)
+        new_subtotal = Decimal("0.00")
         order.status = OrderStatus.pending
-        order.re_order_time = func.now()
+        tax_rate = order.store.tax_rate
+        shipping_fee = Decimal("0.00") if has_premium else order.store.shipping_fee
+        order.re_order_time = datetime.now(timezone.utc)
         for orderitems in order.orderitems:
             product = orderitems.product
             current_item_price = product.product_price * Decimal(
@@ -410,7 +419,21 @@ async def reactivate_order(store_id, order_id, db, payload):
             target_inventory.stock_quantity -= orderitems.quantity
             if target_inventory.stock_quantity == 0:
                 product.product_availability = "out_of_stock"
-        order.subtotal = new_subtotal
+        tax_amount = (new_subtotal * Decimal(str(tax_rate)) / Decimal("100")).quantize(
+            TWO_PLACES
+        )
+        order.discount_amount = Decimal("0.00")
+        if membership:
+            order.discount_amount = (
+                new_subtotal * Decimal(str(DISCOUNT_MAP[membership.membership_type]))
+            ).quantize(TWO_PLACES)
+        order.tax_rate = tax_rate
+        order.tax_amount = tax_amount
+        order.shipping_fee = shipping_fee
+        order.subtotal = new_subtotal.quantize(TWO_PLACES)
+        order.total_amount = (
+            (new_subtotal + tax_amount + shipping_fee) - order.discount_amount
+        ).quantize(TWO_PLACES)
         await db.commit()
     except HTTPException:
         await db.rollback()
