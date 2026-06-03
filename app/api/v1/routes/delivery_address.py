@@ -10,7 +10,6 @@ from app.api.v1.schemas import (
 from app.auth.verify_jwt import verify_token
 from sqlalchemy.ext.asyncio import AsyncSession
 
-
 router = APIRouter(prefix="/delivery_address", tags=["Delivery Address"])
 
 
@@ -51,11 +50,12 @@ async def get_delivery_address(
     )
 
 
-@router.put("/select_delivery_address/{store_id}/{order_id}")
+@router.put("/select_delivery_address/{store_id}/{order_id}/{address_id}")
 async def pick_delivery_address(
     store_id: int,
     order_id: int,
     address_id: int,
+    background_task: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
@@ -65,6 +65,7 @@ async def pick_delivery_address(
         address_id=address_id,
         db=db,
         payload=payload,
+        background_task=background_task,
     )
 
 
