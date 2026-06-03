@@ -447,6 +447,7 @@ async def reactivate_order(store_id, order_id, db, payload):
         await db.rollback()
         logger.exception("error at re-order endpoint")
         raise HTTPException(status_code=500, detail="internal server error")
+    await order_invalidation(user_id=user_id)
     logger.info("Order: '%s' successfully re-ordered", order_id)
     return {
         "status": "success",
@@ -465,41 +466,70 @@ async def proceed_to_payment_portal(store_id, order_id, db, payload):
     checkout = (
         await db.execute(
             select(Order)
+            .options(
+                selectinload(Order.orderitems)
+                .selectinload(OrderItem.product)
+                .selectinload(Product.inventory)
+            )
             .where(
                 Order.user_id == user_id,
-                Order.checkout,
+                ~Order.order_delete,
                 Order.id == order_id,
                 Order.store_id == store_id,
+                Order.status == OrderStatus.pending,
             )
             .with_for_update()
         )
     ).scalar_one_or_none()
     if not checkout:
-        logger.warning("user: %s, entered invalid credentials", user_id)
+        logger.warning(
+            "user: %s attempted payment for non-existent or invalid order %s",
+            user_id,
+            order_id,
+        )
         raise HTTPException(
             status_code=404,
             detail="order not found, if you think this is a mistake try again shortly",
         )
-    retry_limit = datetime.now(timezone.utc) - timedelta(minutes=30)
-    if (checkout.re_order_time and checkout.re_order_time <= retry_limit) or (
-        checkout.created_at <= datetime.now(timezone.utc) - timedelta(hours=1)
-    ):
-        checkout.status = OrderStatus.cancelled
-        if checkout.re_order_time and checkout.re_order_time <= retry_limit:
-            checkout.order_delete = True
-        if checkout.orderitems:
-            restore_inventory(checkout)
+    now = datetime.now(timezone.utc)
+    retry_limit = now - timedelta(minutes=30)
+    time_limit = now - timedelta(hours=1)
+    is_expired = False
+    if checkout.re_order_time and checkout.re_order_time <= retry_limit:
+        checkout.order_delete = True
+        is_expired = True
+    elif not checkout.re_order_time and checkout.created_at <= time_limit:
+        is_expired = True
+    if is_expired:
         try:
+            checkout.status = OrderStatus.cancelled
+            if checkout.orderitems:
+                restore_inventory(checkout)
             await db.commit()
         except IntegrityError:
             await db.rollback()
             logger.error("Database integrity error while  updating checked out order")
+            raise HTTPException(status_code=400, detail="database integrity error")
         except Exception:
             await db.rollback()
             logger.exception("error while updating checked out order")
+            raise HTTPException(status_code=500, detail="internal server error")
         raise HTTPException(
             status_code=409, detail="Order session expired. Please re-initiate order"
         )
+    if not checkout.delivery_address:
+        logger.warning(
+            "user: %s attempted payment for order %s without delivery address",
+            user_id,
+            order_id,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Delivery address required before proceeding to payment",
+        )
+    logger.info(
+        "Order %s validated successfully. Proceeding to payment portal.", order_id
+    )
 
 
 async def cancel_order(
@@ -525,6 +555,7 @@ async def cancel_order(
             Order.user_id == user_id,
             Order.store_id == store_id,
             Order.id == order_id,
+            ~Order.order_delete,
             Order.status.in_([OrderStatus.pending, OrderStatus.cancelled]),
         )
         .with_for_update(of=Order)
@@ -551,7 +582,6 @@ async def cancel_order(
         )
     try:
         await db.commit()
-        await order_invalidation(user_id=user_id)
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while cancelling order")
@@ -560,6 +590,7 @@ async def cancel_order(
         await db.rollback()
         logger.exception("error while cancelling order")
         raise HTTPException(status_code=500, detail="internal server error")
+    await order_invalidation(user_id=user_id)
     logger.info("Order cancellation process completed for order_id: %s", order_id)
     return {"message": "order cancelled"}
 
@@ -577,7 +608,10 @@ async def delete_order(
     stmt = (
         select(Order)
         .where(
-            Order.user_id == user_id, Order.store_id == store_id, Order.id == order_id
+            Order.user_id == user_id,
+            ~Order.order_delete,
+            Order.store_id == store_id,
+            Order.id == order_id,
         )
         .with_for_update()
     )
@@ -585,8 +619,12 @@ async def delete_order(
     logger.info(f"Fetching order to delete for order_id: {order_id}")
     if not result:
         logger.error(f"Order with order_id: {order_id} not found for deletion")
-        raise HTTPException(status_code=404, detail="order item not found")
-    if result.status not in ["cancelled", "delivered", "shipped"]:
+        raise HTTPException(status_code=404, detail="order not found")
+    if result.status not in [
+        OrderStatus.cancelled,
+        OrderStatus.delivered,
+        OrderStatus.shipped,
+    ]:
         raise HTTPException(
             status_code=400,
             detail="Cannot delete an active order. Please cancel it first.",
@@ -594,7 +632,6 @@ async def delete_order(
     result.order_delete = True
     try:
         await db.commit()
-        await order_invalidation(user_id=user_id)
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while deleting order")
@@ -603,5 +640,6 @@ async def delete_order(
         await db.rollback()
         logger.exception("error while deleting order")
         raise HTTPException(status_code=500, detail="internal server error")
+    await order_invalidation(user_id=user_id)
     logger.info(f"Order deletion process completed for order_id: {order_id}")
     return {"message": "order deleted"}
