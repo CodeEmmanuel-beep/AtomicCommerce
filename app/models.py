@@ -172,7 +172,7 @@ class Store(Base):
     products = relationship("Product", back_populates="store")
     inventories = relationship("Inventory", back_populates="store")
     carts = relationship("Cart", back_populates="store")
-    membership = relationship("Membership", back_populates="store")
+    membership = relationship("Membership", back_populates="store",uselist=False)
     product_images = relationship("ProductImage", back_populates="store")
 
 
@@ -386,7 +386,7 @@ class Payment(Base):
     last_event_id: Mapped[str] = mapped_column(String, index=True)
 
     user = relationship("User", back_populates="payments")
-    order = relationship("Order", back_populates="payment", uselist=False)
+    order = relationship("Order", back_populates="payment")
     refunds = relationship("Refund", back_populates="payment")
 
 
@@ -643,7 +643,6 @@ class Order(Base):
         nullable=False,
         index=True,
     )
-    check_out: Mapped[bool] = mapped_column(Boolean, default=False)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(precision=12, scale=2), default=0)
     total_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=12, scale=2), default=0
@@ -673,7 +672,7 @@ class Order(Base):
     user = relationship("User", back_populates="orders")
     orderitems = relationship("OrderItem", back_populates="order")
     membership = relationship("Membership", back_populates="orders")
-    store = relationship("Store", back_populates="order", uselist=False)
+    store = relationship("Store", back_populates="order")
     address = relationship("Address", back_populates="orders")
 
 
