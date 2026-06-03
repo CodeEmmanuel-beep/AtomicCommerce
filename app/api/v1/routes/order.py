@@ -49,7 +49,7 @@ async def view_orders(
 
 @router.get(
     "/view_an_order",
-    response_model=StandardResponse[PaginatedMetadata[OrderResponse]],
+    response_model=StandardResponse,
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
@@ -95,10 +95,10 @@ async def proceed_to_payment(
     )
 
 
-@router.put("/cancel_order")
+@router.put("/cancel_order/{store_id}/{order_id}")
 async def cancel(
-    order_id: int,
     store_id: int,
+    order_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
@@ -107,10 +107,10 @@ async def cancel(
     )
 
 
-@router.delete("/delete_order")
+@router.delete("/delete_order/{store_id}/{order_id}")
 async def delete_order(
-    order_id: int,
     store_id: int,
+    order_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
