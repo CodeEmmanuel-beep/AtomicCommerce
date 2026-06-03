@@ -491,7 +491,7 @@ class OrderItemRes(BaseModel):
     product: Cart_OrderProductResponse
     membership_type: List[MemRes] = Field(default_factory=list)
     quantity: float
-    price: float
+    price: Decimal
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -506,7 +506,8 @@ class OrderResponse(BaseModel):
     total_quantity: float
     subtotal: Decimal
     total_amount: Decimal
-    status: str = Field(default="pending")
+    status: str
+    delivery_address: list | None = None
     created_at: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
