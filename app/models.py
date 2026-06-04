@@ -172,7 +172,7 @@ class Store(Base):
     products = relationship("Product", back_populates="store")
     inventories = relationship("Inventory", back_populates="store")
     carts = relationship("Cart", back_populates="store")
-    membership = relationship("Membership", back_populates="store",uselist=False)
+    membership = relationship("Membership", back_populates="store", uselist=False)
     product_images = relationship("ProductImage", back_populates="store")
 
 
@@ -364,12 +364,13 @@ class Payment(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
     order_id: Mapped[int] = mapped_column(Integer, ForeignKey("order.id"), index=True)
     payment_method: Mapped[str] = mapped_column(String)
+    currency: Mapped[str] = mapped_column(String)
     amount_paid: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     payment_status: Mapped[PaymentStatus] = mapped_column(
         SQLEnum(PaymentStatus), default=PaymentStatus.PENDING.value, index=True
     )
     reference_id: Mapped[str] = mapped_column(String, unique=True, index=True)
-    transaction_id: Mapped[str] = mapped_column(String, index=True)
+    transaction_id: Mapped[str] = mapped_column(String, index=True,nullable=True)
     discount_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
     )
@@ -383,7 +384,7 @@ class Payment(Base):
     payment_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    last_event_id: Mapped[str] = mapped_column(String, index=True)
+    last_event_id: Mapped[str] = mapped_column(String, index=True,nullable=True)
 
     user = relationship("User", back_populates="payments")
     order = relationship("Order", back_populates="payment")
