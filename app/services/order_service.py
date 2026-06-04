@@ -35,6 +35,60 @@ import asyncio
 
 logger = get_logger("order")
 
+
+async def order_expiration(store_id, order_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("Unauthorized attempt at the order_expiration endpoint")
+        raise HTTPException(status_code=401, detail="unauthorized access")
+    stmt = select(Order).where(
+        ~Order.order_delete,
+        Order.id == order_id,
+        Order.store_id == store_id,
+        Order.user_id == user_id,
+    )
+    order = (await db.execute(stmt)).scalar_one_or_none()
+    if not order:
+        logger.warning("order: '%s' not found", order_id)
+        raise HTTPException(status_code=404, detail="order not found")
+    now = datetime.now(timezone.utc)
+    if order.re_order_time:
+        delta = order.re_order_time + timedelta(minutes=30)
+    else:
+        delta = order.created_at + timedelta(hours=1)
+    count_down = (delta - now).total_seconds()
+    if order.status == OrderStatus.cancelled:
+        return {
+            "status": "expired",
+            "total seconds remaining": 0,
+            "order expires in": "0 seconds",}
+    if count_down <= 0:
+        return {
+            "status": "expired",
+            "total seconds remaining": 0,
+            "order expires in": "0 seconds",}
+    minutes = int(count_down // 60)
+    seconds = int(count_down % 60)
+    if minutes > 1:
+        return {
+            "status": "active",
+            "total seconds remaining": int(count_down),
+            "order expires in": f"{minutes} minutes and {seconds} seconds",
+        }
+    elif minutes == 1:
+        return {
+            "status": "active",
+            "total seconds remaining": int(count_down),
+            "order expires in": f"{minutes} minute and {seconds} seconds",
+        }
+    else:
+        return {
+            "status": "active",
+            "total seconds remaining": int(count_down),
+            "order expires in": f"{seconds} seconds",
+        }
+
+
 DISCOUNT_MAP = {
     "Standard": Decimal("0.01"),
     "Regular": Decimal("0.02"),
@@ -255,6 +309,7 @@ async def view_orders(store_id, page, limit, db, payload):
     logger.info("total orders found: '%s' for user: %s", total, user_id)
     order = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
     if not order:
+        logger.warning("search for orders returned no result")
         return StandardResponse(status="success", message="no orders found", data=None)
     logger.info("preparing paginated response for orders of user: %s", user_id)
     data = PaginatedMetadata[OrderResponse](
@@ -297,7 +352,7 @@ async def view_order(store_id, order_id, page, limit, db, payload):
     order = (await db.execute(stmt.offset(offset).limit(limit))).scalar_one_or_none()
     logger.info(f"Fetched order details for order_id: {order_id}")
     if not order:
-        logger.error(f"Order with order_id: {order_id} not found")
+        logger.error("Order with order_id: '%s' not found", order_id)
         raise HTTPException(
             status_code=404, detail=f"order with the order id: {order_id} not found"
         )
