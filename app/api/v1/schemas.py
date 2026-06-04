@@ -378,13 +378,14 @@ class PaymentResponse(BaseModel):
     id: int
     name: List[str] = Field(default_factory=list)
     payment_method: str
-    amount_paid: float
+    currency: str
+    amount_paid: Decimal
     payment_status: str
     shipping_fee: float
-    discount_amount: float
-    tax_amount: float
+    discount_amount: Decimal
+    tax_amount: Decimal
     reference_id: str
-    transaction_id: str
+    transaction_id: str | None = None
     payment_date: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
