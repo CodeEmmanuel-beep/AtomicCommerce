@@ -1,6 +1,5 @@
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-import stripe
 from sqlalchemy import select, text, func, or_, update, case, literal, exists
 from sqlalchemy.exc import IntegrityError
 from app.models import (
@@ -25,13 +24,14 @@ from app.api.v1.schemas import (
 from dateutil.relativedelta import relativedelta
 from app.database.config import settings
 from app.database.get import AsyncSessionLocal
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from app.utils.redis import cache, cached
 from sqlalchemy.orm import selectinload
+import stripe
 
 logger = get_logger("payment")
 
-stripe.api_key = settings.STRIPE_SECRET_KEY
+stripe_client = stripe.StripeClient(settings.STRIPE_SECRET_KEY)
 
 
 async def membership_activation(membership_id):
@@ -106,8 +106,6 @@ async def create_payment(
                         Order.user_id == user_id,
                         Order.id == order_id,
                         Order.status == "pending",
-                        Order.created_at
-                        < datetime.now(timezone.utc) - timedelta(hours=5),
                     )
                 )
             ).scalar_one_or_none()
@@ -119,29 +117,31 @@ async def create_payment(
                     status_code=404, detail="Order not found or already processed."
                 )
             try:
-                intent = stripe.checkout.Session.create(
-                    payment_method_types=["card"],
-                    client_reference_id=str(order.id),
-                    metadata={
-                        "user_id": str(user_id),
-                        "type": "order_payment",
-                        "order_id": str(order.id),
-                    },
-                    line_items=[
-                        {
-                            "price_data": {
-                                "currency": currency,
-                                "product_data": {
-                                    "name": f"Order {order.id} Payment",
+                intent = await stripe_client.v1.checkout.sessions.create_async(
+                    params={
+                        "payment_method_types": ["card"],
+                        "client_reference_id": str(order.id),
+                        "metadata": {
+                            "user_id": str(user_id),
+                            "type": "order_payment",
+                            "order_id": str(order.id),
+                        },
+                        "line_items": [
+                            {
+                                "price_data": {
+                                    "currency": currency,
+                                    "product_data": {
+                                        "name": f"Order {order.id} Payment",
+                                    },
+                                    "unit_amount": int(round(order.total_amount * 100)),
                                 },
-                                "unit_amount": int(order.total_amount * 100),
-                            },
-                            "quantity": 1,
-                        }
-                    ],
-                    mode="payment",
-                    success_url="https://yourdomain.com/success?session_id={CHECKOUT_SESSION_ID}",
-                    cancel_url="https://yourdomain.com/cancel",
+                                "quantity": 1,
+                            }
+                        ],
+                        "mode": "payment",
+                        "success_url": "https://yourdomain.com/success?session_id={CHECKOUT_SESSION_ID}",
+                        "cancel_url": "https://yourdomain.com/cancel",
+                    }
                 )
             except stripe.StripeError as e:
                 logger.error(f"Stripe error occurred: {e.user_message}")
@@ -158,6 +158,7 @@ async def create_payment(
                     reference_id=intent.id,
                     shipping_fee=order.shipping_fee,
                     discount_amount=order.discount_amount,
+                    tax_rate=order.tax_rate,
                     tax_amount=order.tax_amount,
                     payment_status="pending",
                 )
