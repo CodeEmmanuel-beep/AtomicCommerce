@@ -61,12 +61,14 @@ async def order_expiration(store_id, order_id, db, payload):
         return {
             "status": "expired",
             "total seconds remaining": 0,
-            "order expires in": "0 seconds",}
+            "order expires in": "0 seconds",
+        }
     if count_down <= 0:
         return {
             "status": "expired",
             "total seconds remaining": 0,
-            "order expires in": "0 seconds",}
+            "order expires in": "0 seconds",
+        }
     minutes = int(count_down // 60)
     seconds = int(count_down % 60)
     if minutes > 1:
@@ -392,6 +394,7 @@ async def reactivate_order(store_id, order_id, db, payload):
                 Order.user_id == user_id,
                 Order.store_id == store_id,
                 Order.id == order_id,
+                ~Order.order_delete,
                 Order.status == OrderStatus.cancelled,
             )
             .with_for_update(of=Order)
@@ -599,7 +602,6 @@ async def cancel_order(
         raise HTTPException(status_code=401, detail="not authorized")
     stmt = (
         select(Order)
-        .outerjoin(Payment, Order.id == Payment.order_id)
         .options(
             selectinload(Order.payment),
             selectinload(Order.orderitems)
