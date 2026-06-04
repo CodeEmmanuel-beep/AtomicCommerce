@@ -29,6 +29,18 @@ async def create_order(
     )
 
 
+@router.get("/order_expiration_countdown/{store_id}/{order_id}")
+async def order_countdown(
+    store_id: int,
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await order_service.order_expiration(
+        store_id=store_id, order_id=order_id, db=db, payload=payload
+    )
+
+
 @router.get(
     "/view_orders",
     response_model=StandardResponse[PaginatedMetadata[OrderResponse]],
