@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, Depends
+from fastapi import APIRouter, Query, Depends, Request, BackgroundTasks
 from app.services import payment_service
 from app.auth.verify_jwt import verify_token
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,13 @@ async def initiate_payment(
         currency=currency,
         payload=payload,
         one_time_subscription=one_time_subscription,
+    )
+
+
+@router.post("/webhook")
+async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
+    return await payment_service.stripe_webhook(
+        request=request, background_task=background_tasks
     )
 
 
