@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from sqlalchemy import select, text, func, or_, update, case, literal, exists
+from sqlalchemy import select, text, func, or_, update, case, literal, exists, cast
 from sqlalchemy.exc import IntegrityError
 from app.models import (
     Subscription,
@@ -109,6 +109,16 @@ async def create_payment(
                     )
                 )
             ).scalar_one_or_none()
+            payment_exists = (
+                await session.execute(
+                    select(Payment).where(Payment.order_id == order_id)
+                )
+            ).scalar_one_or_none()
+            if payment_exists:
+                return {
+                    "message": "follow the link below to complete payment",
+                    "checkout_url": payment_exists.checkout_url,
+                }
             if not order:
                 logger.warning(
                     f"user_id: {user_id} attempted to create payment for non-existent or already processed order_id: {order_id}"
@@ -139,7 +149,7 @@ async def create_payment(
                             }
                         ],
                         "mode": "payment",
-                        "success_url": "https://yourdomain.com/success?session_id={CHECKOUT_SESSION_ID}",
+                        "success_url": "http://localhost:8000/docs/?session_id={CHECKOUT_SESSION_ID}",
                         "cancel_url": "https://yourdomain.com/cancel",
                     }
                 )
@@ -156,6 +166,7 @@ async def create_payment(
                     currency=currency,
                     payment_method="card",
                     reference_id=intent.id,
+                    checkout_url=intent.url,
                     shipping_fee=order.shipping_fee,
                     discount_amount=order.discount_amount,
                     tax_rate=order.tax_rate,
@@ -235,7 +246,7 @@ async def create_payment(
                         }
                     ],
                     mode="payment",
-                    success_url="https://yourdomain.com/success?session_id={CHECKOUT_SESSION_ID}",
+                    success_url="http://localhost:8000/docs?session_id={CHECKOUT_SESSION_ID}",
                     cancel_url="https://yourdomain.com/cancel",
                 )
                 logger.info(
@@ -443,25 +454,34 @@ async def stripe_webhook(request, background_task):
         logger.exception("error verifying signature")
         raise HTTPException(status_code=400, detail="invalid signature")
     async with AsyncSessionLocal() as db:
+        membership_id = None
         session = event["data"]["object"]
         stripe_session_id = (
-            session.get("id")
+            getattr(session, "id", None)
             if "checkout.session" in event["type"]
-            else session.get("subscription")
+            else getattr(session, "subscription", None)
         )
-        metadata = session.get("metadata", {})
-        sub_details = session.get("subscription_details", {})
-        subscription_metadata = sub_details.get("metadata", {})
-        if "membership" in [metadata.get("type"), subscription_metadata.get("type")]:
+        metadata = getattr(session, "metadata", None)
+        type_metadata = getattr(metadata, "type", None)
+        sub_details = getattr(session, "subscription_details", {})
+        subscription_metadata = getattr(sub_details, "metadata", {})
+        type_subscription_metadata = getattr(subscription_metadata, "type", None)
+        if "membership" in [type_metadata, type_subscription_metadata]:
             logger.info(
                 f"Received webhook for membership subscription event: {event['type']} with metadata: {metadata}"
             )
-            membership_id = metadata.get("membership_id")
-            sub_id = session.get("subscription", None)
+            membership_id = getattr(metadata, "membership_id", None)
+            sub_id = getattr(session, "subscription", None)
             event_type = literal(event["type"])
             expire_case = case(
                 (
                     event_type == "checkout.session.completed",
+                    func.greatest(
+                        Subscription.expire_at, func.now() + text("INTERVAL '30 days'")
+                    ),
+                ),
+                (
+                    event_type == "payment_intent.succeeded",
                     func.greatest(
                         Subscription.expire_at, func.now() + text("INTERVAL '30 days'")
                     ),
@@ -482,6 +502,8 @@ async def stripe_webhook(request, background_task):
             )
             status_case = case(
                 (event_type == "checkout.session.completed", "active"),
+                (event_type == "payment_intent.succeeded", "active"),
+                (event_type == "payment_intent.payment_failed", "inactive"),
                 (event_type == "invoice.paid", "active"),
                 (event_type == "customer.subscription.updated", "active"),
                 (event_type == "customer.subscription.deleted", "cancelled"),
@@ -490,21 +512,21 @@ async def stripe_webhook(request, background_task):
                 (event_type == "checkout.session.expired", "past_due"),
                 else_=Subscription.status,
             )
-            reference_status = case(
+            reference_id = case(
                 (event_type == "checkout.session.completed", session["id"]),
-                (event_type == "invoice.paid", session.get("subscription")),
+                (event_type == "invoice.paid", getattr(session, "subscription", None)),
                 (
                     event_type == "customer.subscription.updated",
-                    session.get("subscription"),
+                    getattr(session, "subscription", None),
                 ),
                 (
                     event_type == "customer.subscription.deleted",
-                    session.get("subscription"),
+                    getattr(session, "subscription", None),
                 ),
-                (event_type == "checkout.session.failed", session["id"]),
+                (event_type == "payment_intent.payment_failed", session["id"]),
                 (
                     event_type == "invoice.payment_failed",
-                    session.get("subscription"),
+                    getattr(session, "subscription", None),
                 ),
                 (event_type == "checkout.session.expired", session["id"]),
                 else_=Subscription.reference_id,
@@ -521,10 +543,10 @@ async def stripe_webhook(request, background_task):
                 )
                 .values(
                     last_event_id=event["id"],
-                    customer_id=session.get("customer", Subscription.customer_id),
+                    customer_id=getattr(session, "customer", Subscription.customer_id),
                     expire_at=expire_case,
                     status=status_case,
-                    reference_id=reference_status,
+                    reference_id=reference_id,
                     last_event_at=func.now(),
                 )
                 .returning(Subscription.id)
@@ -534,34 +556,66 @@ async def stripe_webhook(request, background_task):
                     f"Subscription {membership_id} already processed. Skipping."
                 )
                 return {"status": "success", "message": "already processed"}
-        if metadata.get("type") == "order_payment":
+        if type_metadata == "order_payment":
             logger.info(
                 f"Received webhook for order payment event: {event['type']} with metadata: {metadata}"
             )
-            actual_transaction_id = session["payment_intent"]
+            if event["type"].startswith("checkout.session."):
+                actual_transaction_id = getattr(session, "payment_intent", None)
+            else:
+                actual_transaction_id = getattr(session, "id", None)
             event_type = literal(event["type"])
+            target_enum = Payment.payment_status.type
             payment_status_case = case(
-                (event_type == "checkout.session.completed", PaymentStatus.SUCCESS),
-                (event_type == "checkout.session.expired", PaymentStatus.FAILED),
+                (
+                    event_type == "checkout.session.completed",
+                    cast(PaymentStatus.SUCCESS.value, target_enum),
+                ),
+                (
+                    event_type == "payment_intent.succeeded",
+                    cast(PaymentStatus.SUCCESS.value, target_enum),
+                ),
+                (
+                    event_type == "checkout.session.expired",
+                    cast(PaymentStatus.FAILED.value, target_enum),
+                ),
+                (
+                    event_type == "payment_intent.payment_failed",
+                    cast(PaymentStatus.FAILED.value, target_enum),
+                ),
                 else_=Payment.payment_status,
             )
             order_status_case = case(
                 (event_type == "checkout.session.completed", OrderStatus.processing),
+                (event_type == "payment_intent.succeeded", OrderStatus.processing),
+                (event_type == "payment_intent.payment_failed", OrderStatus.pending),
                 (event_type == "checkout.session.expired", OrderStatus.pending),
                 else_=Order.status,
             )
             transaction_id_case = case(
                 (event_type == "checkout.session.completed", actual_transaction_id),
+                (event_type == "payment_intent.succeeded", actual_transaction_id),
+                (event_type == "payment_intent.payment_failed", actual_transaction_id),
                 else_=Payment.transaction_id,
             )
+            event_timer = event["created"]
+            event_timestamp = datetime.fromtimestamp(event_timer, tz=timezone.utc)
             idemp = await db.execute(
                 update(Payment)
                 .where(
                     Payment.reference_id == stripe_session_id,
-                    Payment.last_event_id != event["id"],
+                    or_(
+                        Payment.last_event_at.is_(None),
+                        Payment.last_event_at < event_timestamp,
+                    ),
+                    or_(
+                        Payment.last_event_id.is_(None),
+                        Payment.last_event_id != event["id"],
+                    ),
                 )
                 .values(
                     last_event_id=event["id"],
+                    last_event_at=event_timestamp,
                     transaction_id=transaction_id_case,
                     payment_status=payment_status_case,
                 )
@@ -578,7 +632,7 @@ async def stripe_webhook(request, background_task):
                 .values(status=order_status_case)
                 .returning(Order.id)
             )
-        if metadata.get("type") == "order_refund":
+        if type_metadata == "order_refund":
             if event["type"] == "charge.refunded":
                 idempo = await db.execute(
                     update(Refund)
@@ -599,9 +653,11 @@ async def stripe_webhook(request, background_task):
                 await db.execute(
                     update(Payment)
                     .where(Payment.id == payment_id)
-                    .values(payment_status=PaymentStatus.REFUNDED)
+                    .values(
+                        payment_status=cast(PaymentStatus.REFUNDED.value, target_enum)
+                    )
                 )
-        if metadata.get("type") not in ["membership", "order_payment", "order_refund"]:
+        if type_metadata not in ["membership", "order_payment", "order_refund"]:
             logger.warning(
                 f"Received unhandled event type: {event['type']} with metadata: {metadata}"
             )
@@ -706,10 +762,10 @@ async def get_payment(store_id, payment_status, time_frame, page, limit, db, pay
             "message": f"store's existence is below {time_frame}",
         }
     status_map = {
-        "approved": PaymentStatus.SUCCESS,
-        "pending": PaymentStatus.PENDING,
-        "refunds": PaymentStatus.REFUNDED,
-        "failed": PaymentStatus.FAILED,
+        "approved": PaymentStatus.SUCCESS.value,
+        "pending": PaymentStatus.PENDING.value,
+        "refunds": PaymentStatus.REFUNDED.value,
+        "failed": PaymentStatus.FAILED.value,
     }
     status_value = status_map.get(payment_status, None)
     if not status_value:
