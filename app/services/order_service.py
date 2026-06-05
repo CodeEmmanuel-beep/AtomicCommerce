@@ -10,7 +10,6 @@ from app.models import (
     Order,
     OrderItem,
     CartItem,
-    Payment,
     Product,
     Inventory,
     OrderStatus,
