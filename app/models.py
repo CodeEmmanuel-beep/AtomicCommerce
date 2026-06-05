@@ -15,8 +15,9 @@ from sqlalchemy import (
     CheckConstraint,
     Text,
 )
+
 from typing import Optional
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, ENUM as PG_ENUM
 from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped, declarative_base
 from sqlalchemy import func
@@ -367,10 +368,16 @@ class Payment(Base):
     currency: Mapped[str] = mapped_column(String)
     amount_paid: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     payment_status: Mapped[PaymentStatus] = mapped_column(
-        SQLEnum(PaymentStatus), default=PaymentStatus.PENDING.value, index=True
+        PG_ENUM(PaymentStatus, name="paymentstatus", native_enum=True),
+        default=PaymentStatus.PENDING,
+        index=True,
     )
+    last_event_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, nullable=True
+    )
+    checkout_url: Mapped[str] = mapped_column(String, unique=True, index=True)
     reference_id: Mapped[str] = mapped_column(String, unique=True, index=True)
-    transaction_id: Mapped[str] = mapped_column(String, index=True,nullable=True)
+    transaction_id: Mapped[str] = mapped_column(String, index=True, nullable=True)
     discount_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
     )
@@ -384,8 +391,9 @@ class Payment(Base):
     payment_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    last_event_id: Mapped[str] = mapped_column(String, index=True,nullable=True)
+    last_event_id: Mapped[str] = mapped_column(String, index=True, nullable=True)
 
+    __table_args__ = (UniqueConstraint("order_id", name="unique_order_paymennt"),)
     user = relationship("User", back_populates="payments")
     order = relationship("Order", back_populates="payment")
     refunds = relationship("Refund", back_populates="payment")
@@ -616,6 +624,7 @@ class Cart(Base):
 class OrderStatus(str, Enum):
     pending = "pending"
     processing = "processing"
+    paid = "paid"
     shipped = "shipped"
     delivered = "delivered"
     cancelled = "cancelled"
@@ -640,7 +649,7 @@ class Order(Base):
     order_delete: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[OrderStatus] = mapped_column(
         SQLEnum(OrderStatus),
-        default=OrderStatus.pending.value,
+        default=OrderStatus.pending,
         nullable=False,
         index=True,
     )
