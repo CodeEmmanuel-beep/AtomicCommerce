@@ -264,6 +264,7 @@ async def run_router():
                                     time_of_op=datetime.fromisoformat(
                                         time_op.replace("Z", "+00:00")
                                     ),
+                                    payment_status=payload.get("payment_status"),
                                 )
                                 await notification_queue.put(notice)
                                 user_id = payload.get("user_id")
