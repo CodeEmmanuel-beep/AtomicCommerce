@@ -393,7 +393,7 @@ class Payment(Base):
     )
     last_event_id: Mapped[str] = mapped_column(String, index=True, nullable=True)
 
-    __table_args__ = (UniqueConstraint("order_id", name="unique_order_paymennt"),)
+    __table_args__ = (UniqueConstraint("order_id", name="unique_order_payment"),)
     user = relationship("User", back_populates="payments")
     order = relationship("Order", back_populates="payment")
     refunds = relationship("Refund", back_populates="payment")
@@ -487,6 +487,7 @@ class Notification(Base):
     notification: Mapped[str] = mapped_column(String)
     from_user: Mapped[int] = mapped_column(Integer, index=True)
     notified_user: Mapped[int] = mapped_column(Integer, index=True)
+    payment_status: Mapped[str] = mapped_column(String, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     time_of_op: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
