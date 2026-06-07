@@ -78,6 +78,7 @@ class UserResponse(BaseModel):
 class NotificationResponse(BaseModel):
     id: int
     notification: str
+    payment_status: str | None = None
     is_read: bool = Field(default=False)
     time_of_op: datetime | None = None
     created_at: datetime
