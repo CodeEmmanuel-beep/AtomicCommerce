@@ -94,6 +94,7 @@ async def view_delivery_address(store_id, page, limit, db, payload):
         .where(
             Order.store_id == store_id, Order.user_id == user_id, ~Address.is_deleted
         )
+        .distinct()
         .offset(offset)
         .limit(limit)
     )
@@ -105,7 +106,7 @@ async def view_delivery_address(store_id, page, limit, db, payload):
         )
     total = (
         await db.execute(
-            select(func.count(Address.id))
+            select(func.count(func.distinct(Address.id)))
             .join(Order, Address.id == Order.delivery_address_id)
             .where(
                 Order.store_id == store_id,
