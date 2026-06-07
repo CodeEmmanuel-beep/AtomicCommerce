@@ -72,7 +72,7 @@ async def get_notifications(
     for notify, sender in notifier:
         data = NotificationResponse.model_validate(notify)
         data.notification = (
-            f"{notify.notification} {sender.first_name} {sender.surname}"
+            f"{notify.notification} by {sender.first_name} {sender.surname}"
             if sender.is_active
             else f"{notify.notification}" "deleted user"
         )
@@ -138,7 +138,7 @@ async def notifications_history(
     for notify, sender in notifier:
         data = NotificationResponse.model_validate(notify)
         data.notification = (
-            f"{notify.notification} {sender.first_name} {sender.surname}"
+            f"{notify.notification} by {sender.first_name} {sender.surname}"
             if sender.is_active
             else f"{notify.notification}" "deleted user"
         )
