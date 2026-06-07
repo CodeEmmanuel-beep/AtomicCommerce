@@ -1,6 +1,17 @@
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from sqlalchemy import select, text, func, or_, update, case, literal, exists, cast
+from sqlalchemy import (
+    select,
+    text,
+    func,
+    or_,
+    update,
+    case,
+    literal,
+    exists,
+    cast,
+    Integer,
+)
 from sqlalchemy.exc import IntegrityError
 from app.models import (
     Subscription,
@@ -32,6 +43,7 @@ import stripe
 logger = get_logger("payment")
 
 stripe_client = stripe.StripeClient(settings.STRIPE_SECRET_KEY)
+target_enum = Payment.payment_status.type
 
 
 async def membership_activation(membership_id):
@@ -109,22 +121,38 @@ async def create_payment(
                     )
                 )
             ).scalar_one_or_none()
-            payment_exists = (
-                await session.execute(
-                    select(Payment).where(Payment.order_id == order_id)
-                )
-            ).scalar_one_or_none()
-            if payment_exists:
-                return {
-                    "message": "follow the link below to complete payment",
-                    "checkout_url": payment_exists.checkout_url,
-                }
             if not order:
                 logger.warning(
                     f"user_id: {user_id} attempted to create payment for non-existent or already processed order_id: {order_id}"
                 )
                 raise HTTPException(
                     status_code=404, detail="Order not found or already processed."
+                )
+            payment_exist = (
+                await session.execute(
+                    select(Payment).where(
+                        Payment.order_id == order_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if (
+                payment_exist
+                and payment_exist.payment_status == PaymentStatus.PENDING.value
+            ):
+                return {
+                    "message": "follow the link below to complete payment",
+                    "checkout_url": payment_exist.checkout_url,
+                }
+            if (
+                payment_exist
+                and payment_exist.payment_status == PaymentStatus.SUCCESS.value
+            ):
+                logger.info(
+                    f"user_id: {user_id} attempted to pay for order_id: {order_id} which is already paid"
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail="payment for this order has already been completed",
                 )
             try:
                 intent = await stripe_client.v1.checkout.sessions.create_async(
@@ -159,31 +187,50 @@ async def create_payment(
                     status_code=400, detail=f"Stripe error: {e.user_message}"
                 )
             try:
-                payment = Payment(
-                    user_id=user_id,
-                    order_id=order.id,
-                    amount_paid=order.total_amount,
-                    currency=currency,
-                    payment_method="card",
-                    reference_id=intent.id,
-                    checkout_url=intent.url,
-                    shipping_fee=order.shipping_fee,
-                    discount_amount=order.discount_amount,
-                    tax_rate=order.tax_rate,
-                    tax_amount=order.tax_amount,
-                    payment_status="pending",
-                )
-                session.add(payment)
+                if payment_exist:
+                    await session.execute(
+                        select(Payment)
+                        .where(Payment.id == payment_exist.id)
+                        .with_for_update()
+                    )
+                    updated_fields = {
+                        "payment_status": PaymentStatus.PENDING.value,
+                        "amount_paid": order.total_amount,
+                        "currency": currency,
+                        "payment_method": "card",
+                        "reference_id": intent.id,
+                        "checkout_url": intent.url,
+                        "transaction_id": None,
+                        "last_event_id": None,
+                        "last_event_at": None,
+                    }
+                    for attr, field in updated_fields.items():
+                        setattr(payment_exist, attr, field)
+                    log_action = "updated"
+                    target_payment = payment_exist
+                else:
+                    payment = Payment(
+                        user_id=user_id,
+                        order_id=order.id,
+                        amount_paid=order.total_amount,
+                        currency=currency,
+                        payment_method="card",
+                        reference_id=intent.id,
+                        checkout_url=intent.url,
+                        shipping_fee=order.shipping_fee,
+                        discount_amount=order.discount_amount,
+                        tax_rate=order.tax_rate,
+                        tax_amount=order.tax_amount,
+                        payment_status="pending",
+                    )
+                    session.add(payment)
+                    log_action = "created"
+                    target_payment = payment
                 await session.commit()
-                await session.refresh(payment)
+                await session.refresh(target_payment)
                 logger.info(
-                    f"Payment created successfully for user_id: {user_id}, amount: {order.total_amount} {currency}"
+                    f"Payment {log_action} successfully for user_id: {user_id}, amount: {order.total_amount} {currency}"
                 )
-                return {
-                    "status": "success",
-                    "checkout_url": intent.url,
-                    "data": PaymentResponse.model_validate(payment),
-                }
             except IntegrityError:
                 await session.rollback()
                 logger.error(
@@ -202,6 +249,11 @@ async def create_payment(
                     status_code=500,
                     detail="An unexpected error occurred while processing payment.",
                 )
+            return {
+                "status": "success",
+                "checkout_url": intent.url,
+                "data": PaymentResponse.model_validate(target_payment),
+            }
         if membership_id and one_time_subscription == "one_time":
             sub = (
                 await session.execute(
@@ -458,7 +510,7 @@ async def stripe_webhook(request, background_task):
         session = event["data"]["object"]
         stripe_session_id = (
             getattr(session, "id", None)
-            if "checkout.session" in event["type"]
+            if "subscription" not in session
             else getattr(session, "subscription", None)
         )
         metadata = getattr(session, "metadata", None)
@@ -556,7 +608,14 @@ async def stripe_webhook(request, background_task):
                     f"Subscription {membership_id} already processed. Skipping."
                 )
                 return {"status": "success", "message": "already processed"}
-        if type_metadata == "order_payment":
+        if type_metadata == "order_payment" and event["type"] in (
+            "checkout.session.completed",
+            "payment_intent.succeeded",
+            "checkout.session.expired",
+            "payment_intent.payment_failed",
+            "charge.succeeded",
+            "charge.failed",
+        ):
             logger.info(
                 f"Received webhook for order payment event: {event['type']} with metadata: {metadata}"
             )
@@ -564,49 +623,59 @@ async def stripe_webhook(request, background_task):
                 actual_transaction_id = getattr(session, "payment_intent", None)
             else:
                 actual_transaction_id = getattr(session, "id", None)
+            VALID_SUCCESS_EVENTS = (
+                "checkout.session.completed",
+                "payment_intent.succeeded",
+                "charge.succeeded",
+            )
+            VALID_FAILURE_EVENTS = (
+                "checkout.session.expired",
+                "payment_intent.payment_failed",
+                "charge.failed",
+            )
             event_type = literal(event["type"])
-            target_enum = Payment.payment_status.type
             payment_status_case = case(
                 (
-                    event_type == "checkout.session.completed",
+                    event_type.in_(VALID_SUCCESS_EVENTS),
                     cast(PaymentStatus.SUCCESS.value, target_enum),
                 ),
                 (
-                    event_type == "payment_intent.succeeded",
-                    cast(PaymentStatus.SUCCESS.value, target_enum),
-                ),
-                (
-                    event_type == "checkout.session.expired",
-                    cast(PaymentStatus.FAILED.value, target_enum),
-                ),
-                (
-                    event_type == "payment_intent.payment_failed",
+                    event_type.in_(VALID_FAILURE_EVENTS),
                     cast(PaymentStatus.FAILED.value, target_enum),
                 ),
                 else_=Payment.payment_status,
             )
-            order_status_case = case(
-                (event_type == "checkout.session.completed", OrderStatus.processing),
-                (event_type == "payment_intent.succeeded", OrderStatus.processing),
-                (event_type == "payment_intent.payment_failed", OrderStatus.pending),
-                (event_type == "checkout.session.expired", OrderStatus.pending),
-                else_=Order.status,
-            )
+            if event["type"] in VALID_SUCCESS_EVENTS:
+                order_status = OrderStatus.processing
+            elif event["type"] in VALID_FAILURE_EVENTS:
+                order_status = OrderStatus.pending
+            else:
+                order_status = None
             transaction_id_case = case(
-                (event_type == "checkout.session.completed", actual_transaction_id),
-                (event_type == "payment_intent.succeeded", actual_transaction_id),
-                (event_type == "payment_intent.payment_failed", actual_transaction_id),
+                (event_type.in_(VALID_SUCCESS_EVENTS), actual_transaction_id),
+                (
+                    event_type.in_(VALID_FAILURE_EVENTS),
+                    actual_transaction_id,
+                ),
                 else_=Payment.transaction_id,
             )
             event_timer = event["created"]
             event_timestamp = datetime.fromtimestamp(event_timer, tz=timezone.utc)
+            order_id = (
+                int(metadata["order_id"])
+                if metadata and "order_id" in metadata
+                else None
+            )
             idemp = await db.execute(
                 update(Payment)
                 .where(
-                    Payment.reference_id == stripe_session_id,
+                    or_(
+                        Payment.reference_id == stripe_session_id,
+                        Payment.order_id == order_id,
+                    ),
                     or_(
                         Payment.last_event_at.is_(None),
-                        Payment.last_event_at < event_timestamp,
+                        Payment.last_event_at <= event_timestamp,
                     ),
                     or_(
                         Payment.last_event_id.is_(None),
@@ -625,11 +694,15 @@ async def stripe_webhook(request, background_task):
             if not rows:
                 logger.info(f"Payment {stripe_session_id} already processed. Skipping.")
                 return {"status": "success", "message": "already processed"}
-            order_ids = [row[0] for row in rows]
+            order_ids = (
+                [int(metadata["order_id"])]
+                if metadata and "order_id" in metadata
+                else [row[0] for row in rows]
+            )
             await db.execute(
                 update(Order)
                 .where(Order.id.in_(order_ids))
-                .values(status=order_status_case)
+                .values(status=order_status)
                 .returning(Order.id)
             )
         if type_metadata == "order_refund":
@@ -676,7 +749,7 @@ async def stripe_webhook(request, background_task):
                 "error while saving expired payment status on webhook endpoint"
             )
             raise HTTPException(status_code=500, detail="internal server error")
-        logger.info("Payment marked as expired and failed.")
+        logger.info(f"Payment {stripe_session_id} processed successfully.")
         if membership_id:
             background_task.add_task(membership_activation, membership_id)
         return {
