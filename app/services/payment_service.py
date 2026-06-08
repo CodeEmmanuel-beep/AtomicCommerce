@@ -451,26 +451,48 @@ async def charge_refund(payment_id, amount, reason, db, payload):
     if not user_id or role not in allowed_roles:
         logger.error("possible security and financial breach at charge_refund endpoint")
         return {"message": "Luke 13:3"}
-    stmt = select(Payment).where(Payment.id == payment_id)
+    stmt = select(Payment).where(Payment.id == payment_id).with_for_update()
     result = await db.execute(stmt)
     payment = result.scalar_one_or_none()
     if not payment:
         logger.warning("payment: %s, queried but not found", payment_id)
         raise HTTPException(status_code=404, detail="Payment record not found")
+    if payment.payment_status not in [
+        PaymentStatus.SUCCESS.value,
+        PaymentStatus.REFUNDED.value,
+    ]:
+        logger.critical(
+            "user: %s, tried reufunding a payment that was nopt successful", user_id
+        )
+        raise HTTPException(status_code=400, detail="payment was not successful")
     if amount > payment.amount_paid:
         logger.warning("user: %s, tried overrefunding", user_id)
         raise HTTPException(
             status_code=400, detail="Refund amount exceeds the original payment"
         )
+    refunded_so_far = (
+        await db.execute(
+            select(func.coalesce(func.sum(Refund.refund_amount), 0)).where(
+                Refund.payment_id == payment.id
+            )
+        )
+    ).scalar()
+    remaining = payment.amount_paid - refunded_so_far
+    if amount > remaining:
+        raise HTTPException(
+            status_code=400, detail="Refund amount exceeds remaining refundable balance"
+        )
     try:
-        refund = stripe.Refund.create(
-            payment_intent=payment.transaction_id,
-            amount=amount * 100,
-            metadata={
-                "type": "order_refund",
-                "reason": reason,
-                "order_id": payment.order_id,
-            },
+        refund = await stripe_client.v1.refunds.create_async(
+            params={
+                "payment_intent": payment.transaction_id,
+                "amount": int(round(amount * 100)),
+                "metadata": {
+                    "type": "order_refund",
+                    "reason": reason,
+                    "order_id": str(payment.order_id),
+                },
+            }
         )
     except stripe.StripeError as e:
         logger.error(f"stripe refund failed: {str(e)}")
@@ -479,17 +501,18 @@ async def charge_refund(payment_id, amount, reason, db, payload):
         refund_log = Refund(
             user_id=payment.user_id,
             payment_id=payment.id,
+            refund_reason=reason,
             order_id=payment.order_id,
             refund_id=refund.id,
             refund_amount=amount,
         )
         db.add(refund_log)
         await db.commit()
-    except IntegrityError:
-        logger.error("database error at charge_refund endpoint")
-        raise HTTPException(status_code=400, detail="database error")
-    except Exception:
-        logger.exception("internal server error at charge_refund endpoint")
+    except Exception as db_err:
+        logger.critical(
+            f"FATAL STATE MISMATCH: Stripe refund {refund.id} succeeded for amount {amount}, "
+            f"but database tracking write failed! Manual reconcile required for order_id {payment.order_id}. Error: {str(db_err)}"
+        )
         raise HTTPException(status_code=500, detail="internal server error")
     return {"status": "success", "message": "refund logged", "refund_id": refund.id}
 
@@ -518,6 +541,16 @@ async def stripe_webhook(request, background_task):
         sub_details = getattr(session, "subscription_details", {})
         subscription_metadata = getattr(sub_details, "metadata", {})
         type_subscription_metadata = getattr(subscription_metadata, "type", None)
+        VALID_SUCCESS_EVENTS = (
+            "checkout.session.completed",
+            "payment_intent.succeeded",
+            "charge.succeeded",
+        )
+        VALID_FAILURE_EVENTS = (
+            "checkout.session.expired",
+            "payment_intent.payment_failed",
+            "charge.failed",
+        )
         if "membership" in [type_metadata, type_subscription_metadata]:
             logger.info(
                 f"Received webhook for membership subscription event: {event['type']} with metadata: {metadata}"
@@ -623,16 +656,6 @@ async def stripe_webhook(request, background_task):
                 actual_transaction_id = getattr(session, "payment_intent", None)
             else:
                 actual_transaction_id = getattr(session, "id", None)
-            VALID_SUCCESS_EVENTS = (
-                "checkout.session.completed",
-                "payment_intent.succeeded",
-                "charge.succeeded",
-            )
-            VALID_FAILURE_EVENTS = (
-                "checkout.session.expired",
-                "payment_intent.payment_failed",
-                "charge.failed",
-            )
             event_type = literal(event["type"])
             payment_status_case = case(
                 (
@@ -705,31 +728,68 @@ async def stripe_webhook(request, background_task):
                 .values(status=order_status)
                 .returning(Order.id)
             )
-        if type_metadata == "order_refund":
+        if type_metadata == "order_refund" and event["type"] in [
+            "charge.refunded",
+            "refund.updated",
+        ]:
+            logger.info(
+                f"Received webhook for order payment event: {event['type']} with metadata: {metadata}"
+            )
             if event["type"] == "charge.refunded":
-                idempo = await db.execute(
-                    update(Refund)
-                    .where(
-                        Refund.refund_id == stripe_session_id,
+                refunds_obj = getattr(session, "refunds", {})
+                if refunds_obj:
+                    refunds_list = (
+                        getattr(refunds_obj, "data", [])
+                        if hasattr(refunds_obj, "data")
+                        else refunds_obj.get("data", [])
+                    )
+                    if refunds_list:
+                        stripe_session_id = (
+                            getattr(refunds_list[-1], "id", None)
+                            if hasattr(refunds_list[-1], "id")
+                            else refunds_list[-1].get("id")
+                        )
+            target_status = PaymentStatus.REFUNDED.value
+            if (
+                getattr(session, "object", None) == "refund"
+                and getattr(session, "status", None) == "failed"
+            ):
+                target_status = PaymentStatus.SUCCESS.value
+                logger.error(
+                    f"Bank rejected refund {stripe_session_id}. Reverting parent payment status."
+                )
+            created_at = getattr(session, "created", None)
+            created_timestamp = (
+                datetime.fromtimestamp(created_at, tz=timezone.utc)
+                if created_at
+                else datetime.now(timezone.utc)
+            )
+            idempo = await db.execute(
+                update(Refund)
+                .where(
+                    Refund.refund_id == stripe_session_id,
+                    or_(
+                        Refund.last_event_at.is_(None),
+                        Refund.last_event_at <= created_timestamp,
+                    ),
+                    or_(
+                        Refund.last_event_id.is_(None),
                         Refund.last_event_id != event["id"],
-                    )
-                    .values(last_event_id=event["id"])
-                    .returning(Refund.payment_id)
+                    ),
                 )
-                refunded = idempo.scalar_one_or_none()
-                if not refunded:
-                    logger.info(
-                        f"Payment {stripe_session_id} already processed. Skipping."
-                    )
-                    return {"status": "success", "message": "already processed"}
-                payment_id = int(refunded)
-                await db.execute(
-                    update(Payment)
-                    .where(Payment.id == payment_id)
-                    .values(
-                        payment_status=cast(PaymentStatus.REFUNDED.value, target_enum)
-                    )
-                )
+                .values(last_event_id=event["id"], last_event_at=created_timestamp)
+                .returning(Refund.payment_id)
+            )
+            refunded = idempo.scalar_one_or_none()
+            if not refunded:
+                logger.info(f"Payment {stripe_session_id} already processed. Skipping.")
+                return {"status": "success", "message": "already processed"}
+            payment_id = int(refunded)
+            await db.execute(
+                update(Payment)
+                .where(Payment.id == payment_id)
+                .values(payment_status=cast(target_status, target_enum))
+            )
         if type_metadata not in ["membership", "order_payment", "order_refund"]:
             logger.warning(
                 f"Received unhandled event type: {event['type']} with metadata: {metadata}"
@@ -772,13 +832,10 @@ async def get_payment(store_id, payment_status, time_frame, page, limit, db, pay
             f"cache hit at get_payment_endpoint for payment_status: {payment_status}, page:{page}"
         )
         return StandardResponse(**payment_cache)
-    if page <= 0 or limit <= 0:
-        raise HTTPException(
-            status_code=400, detail="page and limit should be atleast 1"
-        )
-    check = (
+    row = (
         await db.execute(
             select(
+                Store,
                 or_(
                     exists().where(
                         store_owners.c.users_id == user_id,
@@ -788,19 +845,17 @@ async def get_payment(store_id, payment_status, time_frame, page, limit, db, pay
                         store_staffs.c.users_id == user_id,
                         store_staffs.c.stores_id == store_id,
                     ),
-                )
-            )
+                ),
+            ).where(Store.id == store_id)
         )
-    ).scalar()
-    if not check and role not in allowed_roles:
+    ).fetchone()
+    store, auth = row if row else (None, False)
+    if not auth and role not in allowed_roles:
         logger.warning(
             "user: %s, tried accessing get_payment endpoint without appropriate credentials",
             user_id,
         )
         raise HTTPException(status_code=403, detail="restricted access")
-    store = (
-        await db.execute(select(Store).where(Store.id == store_id))
-    ).scalar_one_or_none()
     if not store:
         logger.warning(
             "user: %s, search for payment history for a store that does not exist store: %s",
@@ -825,15 +880,15 @@ async def get_payment(store_id, payment_status, time_frame, page, limit, db, pay
     }
     time_period = time_map.get(time_frame)
     if not time_period:
-        return {
-            "status": "error",
-            "message": "invalid time frame selected",
-        }
+        return StandardResponse(
+            status="error", message="invalid time frame selected", data=None
+        )
     if store.founded > time_period:
-        return {
-            "status": "error",
-            "message": f"store's existence is below {time_frame}",
-        }
+        return StandardResponse(
+            status="error",
+            message=f"store's existence is below {time_frame}",
+            data=None,
+        )
     status_map = {
         "approved": PaymentStatus.SUCCESS.value,
         "pending": PaymentStatus.PENDING.value,
@@ -842,10 +897,9 @@ async def get_payment(store_id, payment_status, time_frame, page, limit, db, pay
     }
     status_value = status_map.get(payment_status, None)
     if not status_value:
-        return {
-            "status": "error",
-            "message": "invalid payment status selected",
-        }
+        return StandardResponse(
+            status="error", message="invalid payment status selected", data=None
+        )
     payment_list = payment_list_stmt.where(
         Payment.payment_status == status_value, Payment.payment_date >= time_period
     ).order_by(Payment.payment_date.desc())
@@ -854,14 +908,15 @@ async def get_payment(store_id, payment_status, time_frame, page, limit, db, pay
     )
     if not result:
         logger.info(f"store: {store_id}, has no {payment_status} payments")
-        return {
-            "status": "success",
-            "message": f"this store has no {payment_status} payments",
-        }
+        return StandardResponse(
+            status="success",
+            message=f"this store has no {payment_status} payments",
+            data=None,
+        )
     total = (
         await db.execute(
             select(func.count(Payment.id))
-            .join(Order)
+            .join(Order, Payment.order_id == Order.id)
             .where(
                 Order.store_id == store_id,
                 Payment.payment_status == status_value,
