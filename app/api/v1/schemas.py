@@ -377,7 +377,7 @@ class StoreResponse(BaseModel):
 
 class PaymentResponse(BaseModel):
     id: int
-    name: List[str] = Field(default_factory=list)
+    order_id: int
     payment_method: str
     currency: str
     amount_paid: Decimal
