@@ -234,7 +234,10 @@ class StoreAccount(Base):
     rejected_reason: Mapped[str] = mapped_column(String, nullable=True)
     previous_rejected_reason: Mapped[str] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), onupdate=func.now(), nullable=True
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=True,
     )
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     submitted_at: Mapped[datetime] = mapped_column(
@@ -388,10 +391,13 @@ class Payment(Base):
     tax_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=12, scale=2), default=0
     )
+    last_event_id: Mapped[str] = mapped_column(String, index=True, nullable=True)
+    last_updated: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
     payment_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    last_event_id: Mapped[str] = mapped_column(String, index=True, nullable=True)
 
     __table_args__ = (UniqueConstraint("order_id", name="unique_order_payment"),)
     user = relationship("User", back_populates="payments")
@@ -408,13 +414,17 @@ class Refund(Base):
     )
     order_id: Mapped[int] = mapped_column(Integer, ForeignKey("order.id"), index=True)
     refund_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    refund_reason: Mapped[str] = mapped_column(String)
     refund_amount: Mapped[Decimal] = mapped_column(
         Numeric(precision=10, scale=2), default=0
+    )
+    last_event_id: Mapped[str] = mapped_column(String, index=True, nullable=True)
+    last_event_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, nullable=True
     )
     refund_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    last_event_id: Mapped[str] = mapped_column(String, index=True)
 
     user = relationship("User", back_populates="refunds")
     order = relationship("Order", back_populates="refunds")
