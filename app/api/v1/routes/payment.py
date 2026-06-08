@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query, Depends, Request, BackgroundTasks
 from app.services import payment_service
 from app.auth.verify_jwt import verify_token
+from app.api.v1.schemas import PaymentResponse, StandardResponse, PaginatedMetadata
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.get import get_db
 from decimal import Decimal
@@ -43,7 +44,12 @@ async def update_plan(
     )
 
 
-@router.get("/payment_list/{store_id}")
+@router.get(
+    "/payment_list/{store_id}",
+    response_model=StandardResponse[PaginatedMetadata[PaymentResponse]],
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
 async def get_payment_list(
     store_id: int,
     payment_status: str = Query("approved", enum=["failed", "pending", "refunds"]),
