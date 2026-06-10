@@ -16,7 +16,6 @@ router = APIRouter(prefix="/member", tags=["Membership"])
 async def membership(
     store_id: int,
     membership_type: str = Query("Regular", enum=["Standard", "Premium", "Regular"]),
-    activate: str = Query("yes", enum=["no", "yes"]),
     activation_type: str = Query("subscription", enum=["one_time", "subscription"]),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
@@ -24,7 +23,6 @@ async def membership(
     return await membership_service.make_member(
         store_id=store_id,
         membership_type=membership_type,
-        activate=activate,
         activation_type=activation_type,
         db=db,
         payload=payload,
