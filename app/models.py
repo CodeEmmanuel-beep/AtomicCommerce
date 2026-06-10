@@ -6,7 +6,6 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Boolean,
-    Date,
     Numeric,
     UniqueConstraint,
     Table,
@@ -431,19 +430,31 @@ class Refund(Base):
     payment = relationship("Payment", back_populates="refunds")
 
 
+class MembershipType(str, Enum):
+    Standard = "Standard"
+    Regular = "Regular"
+    Premium = "Premium"
+
+
 class Membership(Base):
     __tablename__ = "membership"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("user.id"), index=True)
-    store_id = Column(Integer, ForeignKey("store.id"), index=True)
-    membership_type = Column(String, index=True)
-    is_active = Column(Boolean, default=False, index=True)
-    is_deleted = Column(Boolean, default=False, index=True)
-    is_pause = Column(Boolean, default=False, index=True)
-    pause_date = Column(Date)
-    delete_date = Column(Date)
-    reactivation_date = Column(Date)
-    start_date = Column(Date, server_default=func.now())
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
+    membership_type: Mapped[MembershipType] = mapped_column(
+        SQLEnum(MembershipType), default=MembershipType.Regular, index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_pause: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    pause_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    delete_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reactivation_date: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    start_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
     __table_args__ = (
         UniqueConstraint("user_id", "store_id", name="user_store_membership"),
@@ -463,6 +474,13 @@ class SubscriptionPlan(str, Enum):
     Regular = "Regular"
 
 
+class SubscriptionStatus(str, Enum):
+    inactive = "inactive"
+    active = "active"
+    past_due = "past_due"
+    cancelled = "cancelled"
+
+
 class Subscription(Base):
     __tablename__ = "subscription"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -478,12 +496,18 @@ class Subscription(Base):
     plan_price: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(precision=10, scale=2), nullable=True
     )
-    status: Mapped[str] = mapped_column(String, index=True)
-    customer_id: Mapped[str] = mapped_column(String)
-    reference_id: Mapped[str] = mapped_column(String, index=True)
-    last_event_id: Mapped[str] = mapped_column(String, index=True)
-    last_event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    expire_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[SubscriptionStatus] = mapped_column(
+        SQLEnum(SubscriptionStatus), default=SubscriptionStatus.inactive, index=True
+    )
+    customer_id: Mapped[str] = mapped_column(String, nullable=True)
+    reference_id: Mapped[str] = mapped_column(String, index=True, nullable=True)
+    last_event_id: Mapped[str] = mapped_column(String, index=True, nullable=True)
+    last_event_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, nullable=True
+    )
+    expire_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True, nullable=True
+    )
     time_of_subscription: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
