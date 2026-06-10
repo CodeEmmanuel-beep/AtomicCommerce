@@ -19,20 +19,26 @@ from app.database.config import settings
 logger = get_logger("membership")
 
 
-async def make_member(
-    store_id, membership_type, activate, activation_type, db, payload
-):
+async def make_member(store_id, membership_type, activation_type, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized user tried to access make_member endpoint")
         raise HTTPException(
             status_code=401, detail="you need to register to apply for membership"
         )
+    store_exists = (
+        await db.execute(select(exists().where(Store.id == store_id)))
+    ).scalar()
+    if not store_exists:
+        logger.warning(
+            "user: %s, tried being a member of a non existent store", user_id
+        )
+        raise HTTPException(status_code=404, detail="store not found")
     existing = (
         await db.execute(
-            select(Membership)
-            .where(Membership.user_id == user_id, Membership.store_id == store_id)
-            .with_for_update()
+            select(Membership).where(
+                Membership.user_id == user_id, Membership.store_id == store_id
+            )
         )
     ).scalar_one_or_none()
     if existing:
@@ -43,13 +49,26 @@ async def make_member(
                 detail="this ID has a deleted membership. Contact support to reactivate.",
             )
         raise HTTPException(status_code=400, detail="already a member of this store.")
-    member = Membership(
-        user_id=user_id,
-        membership_type=membership_type,
-    )
-    db.add(member)
-    if activate == "yes":
+    if membership_type not in ("Standard", "Regular", "Premium"):
+        raise HTTPException(
+            status_code=400,
+            detail="membership_type should be either Standard, Regular or Premium",
+        )
+    if activation_type not in ("one_time", "subscription"):
+        raise HTTPException(
+            status_code=400,
+            detail="activation_type must be either 'one_time' or 'subscription'",
+        )
+    try:
+        member = Membership(
+            user_id=user_id,
+            store_id=store_id,
+            membership_type=membership_type,
+        )
+        db.add(member)
         await db.flush()
+        logger.info("successfully added member: %s, to store: %s", member.id, store_id)
+
         sub_table = Subscription(membership_id=member.id, plan_name=membership_type)
         if activation_type == "one_time":
             price_map = {
@@ -68,12 +87,11 @@ async def make_member(
             sub_table.price_id = price_map[membership_type]
             sub_table.plan_price = None
         db.add(sub_table)
-    try:
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as e:
         await db.rollback()
         logger.error(
-            f"database error occured while adding user:'{user_id}' as a member"
+            f"database error occured while adding user:'{user_id}' as a member {e}"
         )
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
