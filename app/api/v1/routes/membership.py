@@ -7,6 +7,8 @@ from app.api.v1.schemas import (
     StandardResponse,
     PaginatedMetadata,
     MembershipRes,
+    MembershipResponse,
+    SubscriptionResponse,
 )
 
 router = APIRouter(prefix="/member", tags=["Membership"])
@@ -50,7 +52,7 @@ async def update_membership_type(
 
 @router.get(
     "/member_profile/{store_id}",
-    response_model=StandardResponse,
+    response_model=StandardResponse[MembershipResponse],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
@@ -61,6 +63,22 @@ async def view_profile(
 ):
     return await membership_service.view_membership(
         store_id=store_id, db=db, payload=payload
+    )
+
+
+@router.get(
+    "/subscription_data/{member_id}",
+    response_model=StandardResponse[SubscriptionResponse],
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
+async def view_subscription_data(
+    member_id: int,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await membership_service.view_subscription(
+        member_id=member_id, db=db, payload=payload
     )
 
 
