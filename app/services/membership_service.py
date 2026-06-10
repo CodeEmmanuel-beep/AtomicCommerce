@@ -2,8 +2,11 @@ from app.logs.logger import get_logger
 from fastapi import HTTPException
 from app.models import Membership, Store, store_owners, store_staffs, Subscription
 from sqlalchemy.exc import IntegrityError
-from app.api.v1.schemas import MembershipResponse, StandardResponse
-
+from app.api.v1.schemas import (
+    MembershipResponse,
+    StandardResponse,
+    SubscriptionResponse,
+)
 from app.utils.helper import view_selected_members
 from sqlalchemy import select, func, or_, exists
 from sqlalchemy.orm import selectinload
@@ -68,7 +71,6 @@ async def make_member(store_id, membership_type, activation_type, db, payload):
         db.add(member)
         await db.flush()
         logger.info("successfully added member: %s, to store: %s", member.id, store_id)
-
         sub_table = Subscription(membership_id=member.id, plan_name=membership_type)
         if activation_type == "one_time":
             price_map = {
@@ -208,8 +210,39 @@ async def view_membership(store_id, db, payload):
     full_response = StandardResponse(
         status="success", message="membership information", data=member_data
     )
-    await cached(cache_key, full_response, ttl=18000)
+    await cached(cache_key, full_response, ttl=1800)
     logger.info("member's data cached successfully member_id: %s", member.id)
+    return full_response
+
+
+async def view_subscription(member_id, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt to access view_subscription endpoint")
+        raise HTTPException(status_code=401, detail="not a registered user")
+    cache_key = f"subscription:{member_id}:{user_id}"
+    cached_member = await cache(cache_key)
+    if cached_member:
+        logger.info("cached hit at view_subscription endpoint user %s", user_id)
+        return StandardResponse(**cached_member)
+    stmt = (
+        select(Subscription)
+        .join(Membership, Membership.id == Subscription.membership_id)
+        .where(Membership.user_id == user_id, Subscription.membership_id == member_id)
+    )
+    subscription = (await db.execute(stmt)).scalar_one_or_none()
+    if not subscription:
+        logger.warning(
+            "query attempt at view_subscription endpoint returned null, user %s",
+            user_id,
+        )
+        raise HTTPException(status_code=404, detail="subscription not found")
+    subscription_data = SubscriptionResponse.model_validate(subscription)
+    full_response = StandardResponse(
+        status="success", message="subscription information", data=subscription_data
+    )
+    await cached(cache_key, full_response, ttl=1800)
+    logger.info("subscription data cached successfully")
     return full_response
 
 
