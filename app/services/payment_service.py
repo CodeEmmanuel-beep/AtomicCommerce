@@ -10,12 +10,12 @@ from sqlalchemy import (
     literal,
     exists,
     cast,
-    Integer,
 )
 from sqlalchemy.exc import IntegrityError
 from app.models import (
     Subscription,
     Payment,
+    SubscriptionStatus,
     Order,
     Membership,
     PaymentStatus,
@@ -46,13 +46,15 @@ stripe_client = stripe.StripeClient(settings.STRIPE_SECRET_KEY)
 target_enum = Payment.payment_status.type
 
 
-async def membership_activation(membership_id):
+async def membership_activation(membership_id, user_id):
     async with AsyncSessionLocal() as db:
         try:
             async with db.begin():
                 stmt = await db.execute(
-                    select(Membership, Subscription).where(
-                        Membership.id == membership_id
+                    select(Membership, Subscription)
+                    .join(Subscription, Membership.id == Subscription.membership_id)
+                    .where(
+                        Membership.id == membership_id, Membership.user_id == user_id
                     )
                 )
                 result = stmt.first()
@@ -139,10 +141,11 @@ async def create_payment(
                 payment_exist
                 and payment_exist.payment_status == PaymentStatus.PENDING.value
             ):
-                return {
-                    "message": "follow the link below to complete payment",
-                    "checkout_url": payment_exist.checkout_url,
-                }
+                return StandardResponse(
+                    status="success",
+                    message="follow the link below to complete payment",
+                    data=payment_exist.checkout_url,
+                )
             if (
                 payment_exist
                 and payment_exist.payment_status == PaymentStatus.SUCCESS.value
@@ -195,7 +198,7 @@ async def create_payment(
                     )
                     updated_fields = {
                         "payment_status": PaymentStatus.PENDING.value,
-                        "amount_paid": order.total_amount,
+                        "total_amount": order.total_amount,
                         "currency": currency,
                         "payment_method": "card",
                         "reference_id": intent.id,
@@ -212,7 +215,7 @@ async def create_payment(
                     payment = Payment(
                         user_id=user_id,
                         order_id=order.id,
-                        amount_paid=order.total_amount,
+                        total_amount=order.total_amount,
                         currency=currency,
                         payment_method="card",
                         reference_id=intent.id,
@@ -249,11 +252,17 @@ async def create_payment(
                     status_code=500,
                     detail="An unexpected error occurred while processing payment.",
                 )
-            return {
-                "status": "success",
+            data = {
                 "checkout_url": intent.url,
-                "data": PaymentResponse.model_validate(target_payment),
+                "payment details": PaymentResponse.model_validate(
+                    target_payment
+                ).model_dump(exclude_none=True),
             }
+            return StandardResponse(
+                status="success",
+                message="follow the link below to complete your payment",
+                data=data,
+            )
         if membership_id and one_time_subscription == "one_time":
             sub = (
                 await session.execute(
@@ -274,32 +283,36 @@ async def create_payment(
                     detail="register as a member before subscribing to a plan.",
                 )
             try:
-                subscription = stripe.checkout.Session.create(
-                    payment_method_types=["card"],
-                    client_reference_id=str(user_id),
-                    metadata={
-                        "user_id": str(user_id),
-                        "type": "membership",
-                        "payment_type": "one_time",
-                        "membership_id": str(membership_id),
-                    },
-                    line_items=[
-                        {
-                            "price_data": {
-                                "currency": currency,
-                                "product_data": {
-                                    "name": f"membership one time payment for {sub.plan_name} plan"
+                member_payment = await stripe_client.v1.checkout.sessions.create_async(
+                    params={
+                        "payment_method_types": ["card"],
+                        "client_reference_id": str(user_id),
+                        "metadata": {
+                            "user_id": str(user_id),
+                            "type": "membership",
+                            "payment_type": "one_time",
+                            "membership_id": str(membership_id),
+                        },
+                        "line_items": [
+                            {
+                                "price_data": {
+                                    "currency": currency,
+                                    "product_data": {
+                                        "name": f"membership one time payment for {sub.plan_name} plan"
+                                    },
+                                    "unit_amount": (
+                                        int(sub.plan_price * 100)
+                                        if sub.plan_price
+                                        else 0
+                                    ),
                                 },
-                                "unit_amount": (
-                                    int(sub.plan_price * 100) if sub.plan_price else 0
-                                ),
-                            },
-                            "quantity": 1,
-                        }
-                    ],
-                    mode="payment",
-                    success_url="http://localhost:8000/docs?session_id={CHECKOUT_SESSION_ID}",
-                    cancel_url="https://yourdomain.com/cancel",
+                                "quantity": 1,
+                            }
+                        ],
+                        "mode": "payment",
+                        "success_url": "http://localhost:8000/docs?session_id={CHECKOUT_SESSION_ID}",
+                        "cancel_url": "https://yourdomain.com/cancel",
+                    }
                 )
                 logger.info(
                     f"subscription payment created successfully for user_id: {user_id}, subscription_plan: {sub.plan_name}"
@@ -310,16 +323,26 @@ async def create_payment(
                     status_code=400, detail=f"Stripe error: {e.user_message}"
                 )
             try:
-                sub.reference_id = subscription.id
+                await session.execute(
+                    select(Subscription)
+                    .where(Subscription.id == sub.id)
+                    .with_for_update()
+                )
+                sub.reference_id = member_payment.id
                 session.add(sub)
                 await session.commit()
                 await session.refresh(sub)
-                return {
-                    "status": "success",
-                    "message": "subscription payment initiated, complete payment to activate membership",
-                    "checkout_url": subscription.url,
-                    "data": SubscriptionResponse.model_validate(sub),
+                data = {
+                    "checkout_url": member_payment.url,
+                    "subscription details": SubscriptionResponse.model_validate(
+                        sub
+                    ).model_dump(exclude_none=True),
                 }
+                return StandardResponse(
+                    status="success",
+                    message="subscription payment initiated, complete payment to activate membership",
+                    data=data,
+                )
             except IntegrityError:
                 await session.rollback()
                 logger.error(
@@ -357,33 +380,39 @@ async def create_payment(
                     status_code=404,
                     detail="register as a member before subscribing to a plan.",
                 )
+            if sub.status == SubscriptionStatus.active:
+                raise HTTPException(
+                    status_code=409, detail="you have already subscribed"
+                )
             try:
-                subscription = stripe.checkout.Session.create(
-                    payment_method_types=["card"],
-                    client_reference_id=str(user_id),
-                    metadata={
-                        "user_id": str(user_id),
-                        "type": "membership",
-                        "payment_type": "subscription",
-                        "membership_id": str(membership_id),
-                    },
-                    subscription_data={
+                member_subscription = await stripe_client.v1.checkout.sessions.create_async(
+                    params={
+                        "payment_method_types": ["card"],
+                        "client_reference_id": str(user_id),
                         "metadata": {
                             "user_id": str(user_id),
                             "type": "membership",
                             "payment_type": "subscription",
                             "membership_id": str(membership_id),
                         },
-                    },
-                    line_items=[
-                        {
-                            "price": sub.price_id if sub.price_id else "",
-                            "quantity": 1,
-                        }
-                    ],
-                    mode="subscription",
-                    success_url="https://yourdomain.com/success?session_id={CHECKOUT_SESSION_ID}",
-                    cancel_url="https://yourdomain.com/cancel",
+                        "subscription_data": {
+                            "metadata": {
+                                "user_id": str(user_id),
+                                "type": "membership",
+                                "payment_type": "subscription",
+                                "membership_id": str(membership_id),
+                            },
+                        },
+                        "line_items": [
+                            {
+                                "price": sub.price_id if sub.price_id else "",
+                                "quantity": 1,
+                            }
+                        ],
+                        "mode": "subscription",
+                        "success_url": "http://localhost:8000?session_id={CHECKOUT_SESSION_ID}",
+                        "cancel_url": "https://yourdomain.com/cancel",
+                    }
                 )
                 logger.info(
                     f"subscription payment created successfully for user_id: {user_id}, subscription_plan: {sub.plan_name}"
@@ -394,16 +423,26 @@ async def create_payment(
                     status_code=400, detail=f"Stripe error: {e.user_message}"
                 )
             try:
-                sub.reference_id = subscription.id
+                await session.execute(
+                    select(Subscription)
+                    .where(Subscription.id == sub.id)
+                    .with_for_update()
+                )
+                sub.reference_id = member_subscription.id
                 session.add(sub)
                 await session.commit()
                 await session.refresh(sub)
-                return {
-                    "status": "success",
-                    "message": "subscription payment initiated, complete payment to activate membership",
-                    "checkout_url": subscription.url,
-                    "data": SubscriptionResponse.model_validate(sub),
+                data = {
+                    "checkout_url": member_subscription.url,
+                    "subscription details": SubscriptionResponse.model_validate(
+                        sub
+                    ).model_dump(exclude_none=True),
                 }
+                return StandardResponse(
+                    status="success",
+                    message="subscription payment initiated, complete payment to activate membership",
+                    data=data,
+                )
             except IntegrityError:
                 await session.rollback()
                 logger.error(
@@ -441,7 +480,12 @@ async def update_payment(sub_id, db, payload):
     portal_session = stripe.billing_portal.Session.create(
         customer=sub.customer_id, return_url="https://example.com/account"
     )
-    return {"bill_update_linK": portal_session.url}
+    data = {"bill_update_linK": portal_session.url}
+    return StandardResponse(
+        status="success",
+        message="follow the link below to update your subscription",
+        data=data,
+    )
 
 
 async def charge_refund(payment_id, amount, reason, db, payload):
@@ -450,7 +494,7 @@ async def charge_refund(payment_id, amount, reason, db, payload):
     allowed_roles = ["Admin", "Owner"]
     if not user_id or role not in allowed_roles:
         logger.error("possible security and financial breach at charge_refund endpoint")
-        return {"message": "Luke 13:3"}
+        raise HTTPException(status_code=401, detail="Luke 13:3")
     stmt = select(Payment).where(Payment.id == payment_id).with_for_update()
     result = await db.execute(stmt)
     payment = result.scalar_one_or_none()
@@ -465,7 +509,7 @@ async def charge_refund(payment_id, amount, reason, db, payload):
             "user: %s, tried reufunding a payment that was nopt successful", user_id
         )
         raise HTTPException(status_code=400, detail="payment was not successful")
-    if amount > payment.amount_paid:
+    if amount > payment.total_amount:
         logger.warning("user: %s, tried overrefunding", user_id)
         raise HTTPException(
             status_code=400, detail="Refund amount exceeds the original payment"
@@ -477,7 +521,7 @@ async def charge_refund(payment_id, amount, reason, db, payload):
             )
         )
     ).scalar()
-    remaining = payment.amount_paid - refunded_so_far
+    remaining = payment.total_amount - refunded_so_far
     if amount > remaining:
         raise HTTPException(
             status_code=400, detail="Refund amount exceeds remaining refundable balance"
@@ -496,7 +540,10 @@ async def charge_refund(payment_id, amount, reason, db, payload):
         )
     except stripe.StripeError as e:
         logger.error(f"stripe refund failed: {str(e)}")
-        raise HTTPException(status_code=400, detail="payment processor declined refund")
+        raise HTTPException(
+            status_code=400,
+            detail=f"payment processor declined refund: {e.user_message}",
+        )
     try:
         refund_log = Refund(
             user_id=payment.user_id,
@@ -514,7 +561,8 @@ async def charge_refund(payment_id, amount, reason, db, payload):
             f"but database tracking write failed! Manual reconcile required for order_id {payment.order_id}. Error: {str(db_err)}"
         )
         raise HTTPException(status_code=500, detail="internal server error")
-    return {"status": "success", "message": "refund logged", "refund_id": refund.id}
+    data = {"refund_id": refund.id}
+    return StandardResponse(status="success", message="refund logged", data=data)
 
 
 async def stripe_webhook(request, background_task):
@@ -530,11 +578,14 @@ async def stripe_webhook(request, background_task):
         raise HTTPException(status_code=400, detail="invalid signature")
     async with AsyncSessionLocal() as db:
         membership_id = None
+        user_id = None
         session = event["data"]["object"]
-        stripe_session_id = (
-            getattr(session, "id", None)
-            if "subscription" not in session
-            else getattr(session, "subscription", None)
+        stripe_session_id = getattr(session, "id", None)
+        created_at = getattr(session, "created", None)
+        created_timestamp = (
+            datetime.fromtimestamp(created_at, tz=timezone.utc)
+            if created_at
+            else datetime.now(timezone.utc)
         )
         metadata = getattr(session, "metadata", None)
         type_metadata = getattr(metadata, "type", None)
@@ -551,96 +602,214 @@ async def stripe_webhook(request, background_task):
             "payment_intent.payment_failed",
             "charge.failed",
         )
-        if "membership" in [type_metadata, type_subscription_metadata]:
+        if (
+            "membership" in [type_metadata, type_subscription_metadata]
+            and event["type"] != "charge.updated"
+        ):
             logger.info(
                 f"Received webhook for membership subscription event: {event['type']} with metadata: {metadata}"
             )
-            membership_id = getattr(metadata, "membership_id", None)
+            membership_id_str = (
+                getattr(metadata, "membership_id", None)
+                if hasattr(metadata, "membership_id")
+                else metadata.get("membership_id") if metadata else None
+            )
             sub_id = getattr(session, "subscription", None)
+            membership_id = int(membership_id_str) if membership_id_str else None
+            user_id_str = (
+                getattr(metadata, "user_id", None)
+                if hasattr(metadata, "user_id")
+                else metadata.get("user_id") if metadata else None
+            )
+            sub_id = getattr(session, "subscription", None)
+            user_id = int(user_id_str) if user_id_str else None
+            payment_type = (
+                getattr(metadata, "payment_type", None)
+                if hasattr(metadata, "payment_type")
+                else metadata.get("payment_type") if metadata else None
+            )
+            sub_id = getattr(session, "subscription", None)
+            if not sub_id:
+                sub_id = stripe_session_id
             event_type = literal(event["type"])
+            subscription_days = None
+            if event["type"].startswith("customer.subscription"):
+                sub_items = (
+                    getattr(session, "items", None)
+                    if hasattr(session, "items")
+                    else session.get("items")
+                )
+                if sub_items:
+                    item_data = (
+                        getattr(sub_items, "data", [])
+                        if hasattr(sub_items, "data")
+                        else sub_items.get("data")
+                    )
+                    if item_data:
+                        first_data = item_data[0]
+                        subscription_days = (
+                            getattr(first_data, "current_period_end")
+                            if hasattr(first_data, "current_period_end")
+                            else first_data.get("current_period_end")
+                        )
+            elif event["type"].startswith("invoice"):
+                lines = getattr(session, "lines", {})
+                if lines:
+                    lines_data = (
+                        getattr(lines, "data", [])
+                        if hasattr(lines, "data")
+                        else lines.get("data")
+                    )
+                    if lines_data:
+                        first_data = lines_data[0]
+                        line_period = (
+                            getattr(first_data, "period", {})
+                            if hasattr(first_data, "period")
+                            else first_data.get("period")
+                        )
+                        if line_period:
+                            subscription_days = (
+                                getattr(line_period, "end")
+                                if hasattr(line_period, "end")
+                                else line_period.get("end")
+                            )
+            if not subscription_days:
+                subscription_days = getattr(session, "period_end", None)
             expire_case = case(
                 (
-                    event_type == "checkout.session.completed",
-                    func.greatest(
-                        Subscription.expire_at, func.now() + text("INTERVAL '30 days'")
+                    event_type.in_(
+                        ("checkout.session.completed", "payment_intent.succeeded")
                     ),
+                    func.greatest(Subscription.expire_at, func.now())
+                    + text("INTERVAL '30 days'"),
                 ),
                 (
-                    event_type == "payment_intent.succeeded",
-                    func.greatest(
-                        Subscription.expire_at, func.now() + text("INTERVAL '30 days'")
-                    ),
-                ),
-                (
-                    event_type == "invoice.paid",
-                    datetime.fromtimestamp(
-                        session["current_period_end"], tz=timezone.utc
-                    ),
-                ),
-                (
-                    event_type == "customer.subscription.updated",
-                    datetime.fromtimestamp(
-                        session["current_period_end"], tz=timezone.utc
-                    ),
+                    event_type.in_(("customer.subscription.updated", "invoice.paid")),
+                    func.to_timestamp(subscription_days),
                 ),
                 else_=Subscription.expire_at,
             )
             status_case = case(
-                (event_type == "checkout.session.completed", "active"),
-                (event_type == "payment_intent.succeeded", "active"),
-                (event_type == "payment_intent.payment_failed", "inactive"),
-                (event_type == "invoice.paid", "active"),
-                (event_type == "customer.subscription.updated", "active"),
-                (event_type == "customer.subscription.deleted", "cancelled"),
-                (event_type == "checkout.session.failed", "past_due"),
-                (event_type == "invoice.payment_failed", "past_due"),
-                (event_type == "checkout.session.expired", "past_due"),
-                else_=Subscription.status,
-            )
-            reference_id = case(
-                (event_type == "checkout.session.completed", session["id"]),
-                (event_type == "invoice.paid", getattr(session, "subscription", None)),
                 (
-                    event_type == "customer.subscription.updated",
-                    getattr(session, "subscription", None),
+                    event_type.in_(
+                        (
+                            "checkout.session.completed",
+                            "invoice.paid",
+                            "payment_intent.succeeded",
+                        )
+                    ),
+                    SubscriptionStatus.active,
                 ),
                 (
                     event_type == "customer.subscription.deleted",
-                    getattr(session, "subscription", None),
+                    SubscriptionStatus.cancelled,
                 ),
-                (event_type == "payment_intent.payment_failed", session["id"]),
                 (
-                    event_type == "invoice.payment_failed",
-                    getattr(session, "subscription", None),
-                ),
-                (event_type == "checkout.session.expired", session["id"]),
-                else_=Subscription.reference_id,
-            )
-            idem = await db.execute(
-                update(Subscription)
-                .where(
-                    or_(
-                        Subscription.reference_id == stripe_session_id,
-                        Subscription.reference_id == sub_id,
+                    event_type.in_(
+                        (
+                            "invoice.payment_failed",
+                            "checkout.session.expired",
+                        )
                     ),
-                    Subscription.last_event_at < event["created"],
-                    Subscription.last_event_id != event["id"],
-                )
-                .values(
-                    last_event_id=event["id"],
-                    customer_id=getattr(session, "customer", Subscription.customer_id),
-                    expire_at=expire_case,
-                    status=status_case,
-                    reference_id=reference_id,
-                    last_event_at=func.now(),
-                )
-                .returning(Subscription.id)
+                    SubscriptionStatus.past_due,
+                ),
+                else_=Subscription.status,
             )
-            if not idem.scalar():
-                logger.info(
-                    f"Subscription {membership_id} already processed. Skipping."
+            reference_id = Subscription.reference_id
+            if payment_type == "one_time":
+                reference_id = case(
+                    (
+                        event_type.in_(
+                            ("checkout.session.completed", "checkout.session.expired")
+                        ),
+                        getattr(session, "payment_intent", None),
+                    ),
+                    (
+                        event_type.in_(
+                            (
+                                "payment_intent.payment_failed",
+                                "payment_intent.succeeded",
+                            )
+                        ),
+                        getattr(session, "id", None),
+                    ),
+                    (
+                        event_type.in_(
+                            (
+                                "invoice.payment_failed",
+                                "customer.subscription.deleted",
+                                "invoice.paid",
+                            )
+                        ),
+                        getattr(session, "subscription", None),
+                    ),
+                    else_=Subscription.reference_id,
                 )
-                return {"status": "success", "message": "already processed"}
+            elif payment_type == "subscription":
+                reference_id = case(
+                    (
+                        event_type.in_(
+                            (
+                                "checkout.session.completed",
+                                "checkout.session.expired",
+                                "invoice.payment_failed",
+                                "customer.subscription.deleted",
+                                "invoice.paid",
+                            )
+                        ),
+                        getattr(session, "subscription", None),
+                    ),
+                    else_=Subscription.reference_id,
+                )
+            membership_status_case = case(
+                (
+                    event_type.in_(
+                        (
+                            "checkout.session.completed",
+                            "invoice.paid",
+                            "payment_intent.succeeded",
+                        )
+                    ),
+                    True,
+                ),
+                else_=Membership.is_active,
+            )
+            if membership_id:
+                idem = await db.execute(
+                    update(Subscription)
+                    .where(
+                        Subscription.membership_id == membership_id,
+                        or_(
+                            Subscription.last_event_at.is_(None),
+                            Subscription.last_event_at <= created_timestamp,
+                        ),
+                        or_(
+                            Subscription.last_event_id.is_(None),
+                            Subscription.last_event_id != event["id"],
+                        ),
+                    )
+                    .values(
+                        last_event_id=event["id"],
+                        customer_id=getattr(session, "customer", None)
+                        or Subscription.customer_id,
+                        expire_at=func.greatest(Subscription.expire_at, expire_case),
+                        status=status_case,
+                        reference_id=reference_id,
+                        last_event_at=created_timestamp,
+                    )
+                    .returning(Subscription.membership_id)
+                )
+                returned_id = idem.scalar()
+                if not returned_id:
+                    logger.info(
+                        f"Subscription {membership_id} already processed. Skipping."
+                    )
+                    return {"status": "success", "message": "already processed"}
+                idempo = await db.execute(
+                    update(Membership)
+                    .where(Membership.id == returned_id)
+                    .values(is_active=membership_status_case)
+                )
         if type_metadata == "order_payment" and event["type"] in (
             "checkout.session.completed",
             "payment_intent.succeeded",
@@ -682,52 +851,48 @@ async def stripe_webhook(request, background_task):
                 ),
                 else_=Payment.transaction_id,
             )
-            event_timer = event["created"]
-            event_timestamp = datetime.fromtimestamp(event_timer, tz=timezone.utc)
             order_id = (
                 int(metadata["order_id"])
                 if metadata and "order_id" in metadata
                 else None
             )
-            idemp = await db.execute(
-                update(Payment)
-                .where(
-                    or_(
-                        Payment.reference_id == stripe_session_id,
-                        Payment.order_id == order_id,
-                    ),
-                    or_(
-                        Payment.last_event_at.is_(None),
-                        Payment.last_event_at <= event_timestamp,
-                    ),
-                    or_(
-                        Payment.last_event_id.is_(None),
-                        Payment.last_event_id != event["id"],
-                    ),
+            if order_id:
+                idemp = await db.execute(
+                    update(Payment)
+                    .where(
+                        or_(
+                            Payment.reference_id == stripe_session_id,
+                            Payment.order_id == order_id,
+                        ),
+                        or_(
+                            Payment.last_event_at.is_(None),
+                            Payment.last_event_at <= created_timestamp,
+                        ),
+                        or_(
+                            Payment.last_event_id.is_(None),
+                            Payment.last_event_id != event["id"],
+                        ),
+                    )
+                    .values(
+                        last_event_id=event["id"],
+                        last_event_at=created_timestamp,
+                        transaction_id=transaction_id_case,
+                        payment_status=payment_status_case,
+                    )
+                    .returning(Payment.order_id)
                 )
-                .values(
-                    last_event_id=event["id"],
-                    last_event_at=event_timestamp,
-                    transaction_id=transaction_id_case,
-                    payment_status=payment_status_case,
+                row = idemp.scalar()
+                if not row:
+                    logger.info(
+                        f"Payment {stripe_session_id} already processed. Skipping."
+                    )
+                    return {"status": "success", "message": "already processed"}
+                await db.execute(
+                    update(Order)
+                    .where(Order.id == row)
+                    .values(status=order_status)
+                    .returning(Order.id)
                 )
-                .returning(Payment.order_id)
-            )
-            rows = idemp.fetchall()
-            if not rows:
-                logger.info(f"Payment {stripe_session_id} already processed. Skipping.")
-                return {"status": "success", "message": "already processed"}
-            order_ids = (
-                [int(metadata["order_id"])]
-                if metadata and "order_id" in metadata
-                else [row[0] for row in rows]
-            )
-            await db.execute(
-                update(Order)
-                .where(Order.id.in_(order_ids))
-                .values(status=order_status)
-                .returning(Order.id)
-            )
         if type_metadata == "order_refund" and event["type"] in [
             "charge.refunded",
             "refund.updated",
@@ -758,12 +923,6 @@ async def stripe_webhook(request, background_task):
                 logger.error(
                     f"Bank rejected refund {stripe_session_id}. Reverting parent payment status."
                 )
-            created_at = getattr(session, "created", None)
-            created_timestamp = (
-                datetime.fromtimestamp(created_at, tz=timezone.utc)
-                if created_at
-                else datetime.now(timezone.utc)
-            )
             idempo = await db.execute(
                 update(Refund)
                 .where(
@@ -811,7 +970,7 @@ async def stripe_webhook(request, background_task):
             raise HTTPException(status_code=500, detail="internal server error")
         logger.info(f"Payment {stripe_session_id} processed successfully.")
         if membership_id:
-            background_task.add_task(membership_activation, membership_id)
+            background_task.add_task(membership_activation, membership_id, user_id)
         return {
             "status": "success",
             "message": "webhook payment processed",
