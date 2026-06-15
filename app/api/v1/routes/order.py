@@ -12,7 +12,7 @@ from app.database.get import get_db
 router = APIRouter(prefix="/order", tags=["Order"])
 
 
-@router.post("/order")
+@router.post("/order/{store_id}/{order_id}")
 async def create_order(
     store_id: int,
     cart_id: int,
@@ -42,7 +42,7 @@ async def order_countdown(
 
 
 @router.get(
-    "/view_orders",
+    "/view_orders/{store_id}",
     response_model=StandardResponse[PaginatedMetadata[OrderResponse]],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
@@ -60,7 +60,7 @@ async def view_orders(
 
 
 @router.get(
-    "/view_an_order",
+    "/view_an_order/{store_id}/{order_id}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
@@ -95,7 +95,7 @@ async def re_order(
     )
 
 
-@router.post("/order_payment")
+@router.post("/order_payment/{store_id}/{order_id}")
 async def proceed_to_payment(
     store_id: int,
     order_id: int,
