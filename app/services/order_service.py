@@ -575,6 +575,7 @@ async def proceed_to_payment_portal(store_id, order_id, db, payload):
             status_code=409, detail="Order session expired. Please re-initiate order"
         )
     if not checkout.delivery_address:
+        await db.commit()
         logger.warning(
             "user: %s attempted payment for order %s without delivery address",
             user_id,
@@ -584,6 +585,19 @@ async def proceed_to_payment_portal(store_id, order_id, db, payload):
             status_code=400,
             detail="Delivery address required before proceeding to payment",
         )
+    added_twenty = timedelta(minutes=20)
+    if checkout.re_order_time:
+        checkout.re_order_time += added_twenty
+    elif not checkout.re_order_time:
+        checkout.created_at += added_twenty
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "Failed to persist checkout window update for order: %s", order_id
+        )
+        raise HTTPException(status_code=500, detail="Database transaction failure")
     logger.info(
         "Order %s validated successfully. Proceeding to payment portal.", order_id
     )
