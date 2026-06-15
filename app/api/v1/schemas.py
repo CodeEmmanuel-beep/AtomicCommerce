@@ -380,9 +380,9 @@ class PaymentResponse(BaseModel):
     order_id: int
     payment_method: str
     currency: str
-    amount_paid: Decimal
+    total_amount: Decimal
     payment_status: str
-    shipping_fee: float
+    shipping_fee: Decimal
     discount_amount: Decimal
     tax_amount: Decimal
     reference_id: str
@@ -396,10 +396,10 @@ class SubscriptionResponse(BaseModel):
     id: int
     membership_id: int
     plan_name: str
-    price_id: str
-    plan_price: Decimal
+    price_id: str | None
+    plan_price: Decimal | None
     status: str
-    expire_at: datetime
+    expire_at: datetime | None = None
     time_of_subscription: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -505,6 +505,7 @@ class OrderResponse(BaseModel):
     tax_rate: float
     tax_amount: Decimal
     shipping_fee: Decimal
+    discount_amount: Decimal
     total_quantity: float
     subtotal: Decimal
     total_amount: Decimal
@@ -516,20 +517,19 @@ class OrderResponse(BaseModel):
 
 
 class MembershipResponse(BaseModel):
+    user: ProfileResponse
     id: int
-    profile: ProfileResponse
     membership_type: str
     is_active: bool = Field(default=False)
-    period_of_membership: str = Field(default_factory=str)
-    start_date: Optional[date]
+    start_date: datetime
 
     @computed_field
     def offer_status(self) -> str:
         if not self.is_active:
             return "must be an active member to receive a membership discount"
-        discounts = {"Regular": "3%", "Standard": "5%", "Premium": "10%"}
+        discounts = {"Regular": "1%", "Standard": "2%", "Premium": "3%"}
         rate = discounts.get(self.membership_type, "0%")
-        return f"{rate} membership discound"
+        return f"{rate} discount on every purchase"
 
     model_config = ConfigDict(from_attributes=True)
 
