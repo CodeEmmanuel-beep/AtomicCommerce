@@ -161,7 +161,9 @@ async def add_item_to_cart(
         "product: %s added to cart: %s for user: %s", product_id, cart.id, user_id
     )
     await cart_invalidation(user_id=user_id)
-    return {"status": "success", "message": "product added to cart"}
+    return StandardResponse(
+        status="success", message="product added to cart", data=None
+    )
 
 
 async def retrieve_cart(store_id, page, limit, db, payload):
@@ -242,7 +244,9 @@ async def edit_quantity(store_id, cart_id, cartitem_id, new_quantity, db, payloa
             raise HTTPException(status_code=404, detail="cart or cart item not found")
         cart, target_item = row
         if target_item.quantity == new_quantity:
-            return {"status": "success"}
+            return StandardResponse(
+                status="success", message="no quantity change", data=None
+            )
         old_quantity = target_item.quantity
         difference = new_quantity - old_quantity
         target_item.quantity = new_quantity
@@ -266,7 +270,9 @@ async def edit_quantity(store_id, cart_id, cartitem_id, new_quantity, db, payloa
     logger.info(
         f"Cart item {cartitem_id} quantity updated successfully in cart {cart_id} for user {user_id}"
     )
-    return {"message": "cart item quantity updated"}
+    return StandardResponse(
+        status="success", message="cart item quantity updated", data=None
+    )
 
 
 async def update_cart(cart_id, store_id, db, payload):
@@ -297,7 +303,9 @@ async def update_cart(cart_id, store_id, db, payload):
             if item.product.inventory.stock_quantity < item.quantity:
                 remove_items[item.id] = item
         if not remove_items:
-            return {"message": "cart is up to date"}
+            return StandardResponse(
+                status="success", message="cart is up to date", data=None
+            )
         to_be_deleted_id = list(remove_items.keys())
         total_deducted = sum(i.quantity for i in remove_items.values())
         (await db.execute(delete(CartItem).where(CartItem.id.in_(to_be_deleted_id))))
@@ -316,7 +324,9 @@ async def update_cart(cart_id, store_id, db, payload):
         logger.exception("error while updating cart")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Cart with id: {cart_id} for user {user_id} successfully updated")
-    return {"message": "cart successfully updated"}
+    return StandardResponse(
+        status="success", message="cart successfully updated", data=None
+    )
 
 
 async def delete_one(
@@ -373,7 +383,7 @@ async def delete_one(
     logger.info(
         f"Cart item {cartitem_id} deleted from cart {cart_id} for user {user_id}"
     )
-    return {"message": "cart item deleted"}
+    return StandardResponse(status="success", message="cart item deleted", data=None)
 
 
 async def delete_all(
@@ -408,4 +418,4 @@ async def delete_all(
         logger.exception(f"error while deleting cart {cart_id} for user {user_id}")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Cart {cart_id} successfully deleted for user {user_id}")
-    return {"message": "cart emptied"}
+    return StandardResponse(status="success", message="cart emptied", data=None)
