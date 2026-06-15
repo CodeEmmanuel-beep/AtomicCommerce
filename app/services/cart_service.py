@@ -134,19 +134,16 @@ async def add_item_to_cart(
     )
     if not cartitem and len(cart.cartitems) >= 30:
         raise HTTPException(status_code=403, detail="cart full")
-    difference = 0
     if cartitem:
-        difference = quantity - cartitem.quantity
-        cartitem.quantity = quantity
+        cartitem.quantity += quantity
     else:
-        difference = quantity
         items = CartItem(
             cart_id=cart.id,
             product_id=product_id,
             quantity=quantity,
         )
         db.add(items)
-    cart.total_quantity = Cart.total_quantity + difference
+    cart.total_quantity += quantity
     logger.info(
         "adding product: '%s' to cart: '%s' for user: %s", product_id, cart.id, user_id
     )
