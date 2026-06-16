@@ -57,42 +57,35 @@ async def order_expiration(store_id, order_id, db, payload):
         delta = order.created_at + timedelta(hours=1)
     count_down = (delta - now).total_seconds()
     if order.status == OrderStatus.cancelled:
-        return {
-            "status": "expired",
-            "total seconds remaining": 0,
-            "order expires in": "0 seconds",
-        }
+        data = {"total seconds remaining": 0, "order expires in": "0 seconds"}
+        return StandardResponse(status="success", message="order expired", data=data)
     if count_down <= 0:
-        return {
-            "status": "expired",
-            "total seconds remaining": 0,
-            "order expires in": "0 seconds",
-        }
+        data = {"total seconds remaining": 0, "order expires in": "0 seconds"}
+        return StandardResponse(status="success", message="order expired", data=data)
     minutes = int(count_down // 60)
     seconds = int(count_down % 60)
+    data = None
     if minutes > 1:
-        return {
-            "status": "active",
+        data = {
             "total seconds remaining": int(count_down),
             "order expires in": f"{minutes} minutes and {seconds} seconds",
         }
     elif minutes == 1:
-        return {
-            "status": "active",
+        data = {
             "total seconds remaining": int(count_down),
             "order expires in": f"{minutes} minute and {seconds} seconds",
         }
-    else:
-        return {
-            "status": "active",
+    elif minutes < 1:
+        data = {
             "total seconds remaining": int(count_down),
             "order expires in": f"{seconds} seconds",
         }
+    return StandardResponse(status="success", message="order active", data=data)
 
 
 DISCOUNT_MAP = {
-    "Standard": Decimal("0.01"),
-    "Regular": Decimal("0.02"),
+    "Standard": Decimal("0.02"),
+    "Regular": Decimal("0.01"),
     "Premium": Decimal("0.03"),
 }
 
@@ -262,12 +255,11 @@ async def create_orders(store_id, cart_id, db, payload, background_task):
         raise HTTPException(status_code=500, detail="internal server error")
     background_task.add_task(invalidate_cache, user_id)
     logger.info("order items created successfully for order_id: %s", order_id)
-    return {
-        "status": "success",
-        "order_id": order_id,
-        "message": "order item successfully created",
-        "additional_message": "you have one hour to check out the order",
-    }
+    return StandardResponse(
+        status="success",
+        message="order item successfully created",
+        data=f"you have one hour to check out the order, order_id: '{order_id}'",
+    )
 
 
 async def view_orders(store_id, page, limit, db, payload):
@@ -366,9 +358,9 @@ async def view_order(store_id, order_id, page, limit, db, payload):
         items=[OrderItemRes.model_validate(item) for item in items],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
-    response = {"Order": order_data, "Ordered_items": data}
+    response = {"order": order_data, "ordered_items": data}
     full_response = StandardResponse(
-        status="success", message="order_flow", data=response
+        status="success", message="order retrieved successfully", data=response
     )
     await cached(order_key, full_response, ttl=7200)
     logger.info(f"Order details retrieved successfully for order_id: {order_id}")
@@ -506,11 +498,11 @@ async def reactivate_order(store_id, order_id, db, payload):
         raise HTTPException(status_code=500, detail="internal server error")
     await order_invalidation(user_id=user_id)
     logger.info("Order: '%s' successfully re-ordered", order_id)
-    return {
-        "status": "success",
-        "message": "re-order successful",
-        "detail": "you have 30 minutes to check out this order, if this order is not checked out after 30 minutes, it will be automatically deleted",
-    }
+    return StandardResponse(
+        status="success",
+        message="re-order successful",
+        data="you have 30 minutes to check out this order, if this order is not checked out after 30 minutes, it will be automatically deleted",
+    )
 
 
 async def proceed_to_payment_portal(store_id, order_id, db, payload):
@@ -638,7 +630,9 @@ async def cancel_order(
     payment_status = result.payment.payment_status if result.payment else "pending"
     if payment_status == "pending":
         if result.status == OrderStatus.cancelled:
-            return {"message": "order already cancelled"}
+            return StandardResponse(
+                status="success", message="order already cancelled", data=None
+            )
         result.status = OrderStatus.cancelled
         if result.orderitems:
             restore_inventory(result)
@@ -662,7 +656,7 @@ async def cancel_order(
         raise HTTPException(status_code=500, detail="internal server error")
     await order_invalidation(user_id=user_id)
     logger.info("Order cancellation process completed for order_id: %s", order_id)
-    return {"message": "order cancelled"}
+    return StandardResponse(status="success", message="order cancelled", data=None)
 
 
 async def delete_order(
@@ -712,4 +706,4 @@ async def delete_order(
         raise HTTPException(status_code=500, detail="internal server error")
     await order_invalidation(user_id=user_id)
     logger.info(f"Order deletion process completed for order_id: {order_id}")
-    return {"message": "order deleted"}
+    return StandardResponse(status="success", message="order deleted", data=None)
