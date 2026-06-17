@@ -1,4 +1,12 @@
-from app.models import Order, Product, OrderItem, OrderStatus
+from app.models import (
+    Order,
+    Product,
+    OrderItem,
+    OrderStatus,
+    Membership,
+    Subscription,
+    SubscriptionStatus,
+)
 from app.database.async_config import AsyncSessionLocal, engine
 from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
@@ -73,6 +81,71 @@ async def invalidate_order():
             raise
 
 
+async def activate():
+    async with AsyncSessionLocal() as db:
+        now = datetime.now(timezone.utc)
+        try:
+            activation = (
+                await db.execute(
+                    select(Membership, Subscription)
+                    .join(Subscription, Membership.id == Subscription.membership_id)
+                    .where(
+                        Subscription.expire_at > now,
+                        or_(
+                            ~Membership.is_active,
+                            Subscription.status != SubscriptionStatus.active,
+                        ),
+                    )
+                    .limit(1000)
+                    .with_for_update(skip_locked=True)
+                )
+            ).all()
+            if not activation:
+                logger.info("no membership to reconcile")
+                return
+            for member, subscribe in activation:
+                logger.info("activation process started")
+                member.is_active = True
+                subscribe.status = SubscriptionStatus.active
+            await db.commit()
+            logger.info("batched activation complete")
+        except Exception:
+            await db.rollback()
+            logger.exception("fetal error, reconciling activation status")
+            raise
+
+
+async def deactivate():
+    async with AsyncSessionLocal() as db:
+        now = datetime.now(timezone.utc)
+        try:
+            deactivation = (
+                (
+                    await db.execute(
+                        select(Membership)
+                        .join(Subscription, Membership.id == Subscription.membership_id)
+                        .where(Subscription.expire_at < now)
+                        .limit(1000)
+                        .with_for_update(skip_locked=True)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not deactivation:
+                logger.info("no membership to reconcile")
+                return
+            for member in deactivation:
+                logger.info("deactivation process started")
+                member.is_active = False
+            await db.commit()
+            logger.info("batched deactivation complete")
+        except Exception:
+            await db.rollback()
+            logger.exception("fetal error, reconciling deactivation status")
+            raise
+
+
 def get_worker_loop():
     try:
         return asyncio.get_event_loop()
@@ -94,6 +167,36 @@ def set_up_worker_process(**kwargs):
 
 
 @shared_task(
+    name="member_subscribe_activation",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 5, "countdown": 20},
+)
+def activation_status():
+    try:
+        loop = get_worker_loop()
+        loop.run_until_complete(activate())
+    except Exception:
+        logger.exception("fetal error, reconciling activation status")
+        raise
+
+
+@shared_task(
+    name="member_deactivation",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 5, "countdown": 20},
+)
+def deactivation_status():
+    try:
+        loop = get_worker_loop()
+        loop.run_until_complete(deactivate())
+    except Exception:
+        logger.exception("fetal error, reconciling activation status")
+        raise
+
+
+@shared_task(
     name="app.utils.scheduled_task.cancel_order",
     autoretry_for=(Exception,),
     retry_backoff=True,
@@ -107,3 +210,4 @@ def cancel_order():
         logger.exception(
             "fatal processing exception occurred during batch order invalidation"
         )
+        raise
