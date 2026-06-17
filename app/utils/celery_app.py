@@ -11,7 +11,6 @@ celery_app = Celery(
 celery_app.conf.worker_prefetch_multiplier = 1
 celery_app.conf.task_acks_late = True
 
-celery_app.conf.update()
 celery_app.conf.update(
     task_track_started=True,
     task_serializer="json",
@@ -27,6 +26,14 @@ celery_app.conf.update(
         "cancel_order": {
             "task": "app.utils.scheduled_task.cancel_order",
             "schedule": 300,
-        }
+        },
+        "activation_status": {
+            "task": "member_subscribe_activation",
+            "schedule": 3600,
+        },
+        "deactivation_status": {
+            "task": "member_deactivation",
+            "schedule": 3660,
+        },
     }
 )
