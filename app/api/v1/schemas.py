@@ -7,6 +7,7 @@ from pydantic import (
     field_validator,
     ValidationInfo,
 )
+from fastapi import Form, File, UploadFile
 from typing import Optional, List, TypeVar, Generic, Any
 from datetime import datetime, date
 from app.utils.supabase_url import get_public_url
@@ -373,6 +374,27 @@ class StoreResponse(BaseModel):
     founded: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ProfileMode(BaseModel):
+    first_name: str = Form(None)
+    middle_name: str = Form(None)
+    surname: str = Form(None)
+    email: str = Form(None)
+    nationality: str = Form(None)
+    phone_number: str = Form(None)
+    address: str = Form(None)
+
+
+class RegistrationModel(BaseModel):
+    first_name: str = Form(...)
+    surname: str = Form(...)
+    username: str = Form(...)
+    email: str = Form(...)
+    nationality: str = Form(...)
+    address: str = Form(None)
+    password: str = Form(...)
+    confirm_password: str = Form(...)
 
 
 class PaymentResponse(BaseModel):
