@@ -1,16 +1,12 @@
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from sqlalchemy import select
+from sqlalchemy import select, exists
 from app.models import User, Membership
-from app.utils.supabase_url import get_public_url, cleaned_up
+from app.utils.supabase_url import get_public_url
 from sqlalchemy.orm import selectinload
 from app.api.v1.schemas import StandardResponse, UserResponse
-from app.utils.helper import file_generator
 from email_validator import validate_email, EmailNotValidError
-from app.database.config import settings
-from werkzeug.utils import secure_filename
 from sqlalchemy.exc import IntegrityError
-import uuid
 
 logger = get_logger("profiles")
 
@@ -38,135 +34,81 @@ async def view_profile(db, payload):
     user = profile[0][0]
     members = [pro[1] for pro in profile if pro[1] is not None]
     membership = {mem.store.store_name: mem.membership_type for mem in members}
-    userres = UserResponse.model_validate(user)
-    userres.profile_picture = (
+    user_res = UserResponse.model_validate(user)
+    user_res.profile_picture = (
         get_public_url(user.profile_picture) if user.profile_picture else None
     )
-    userres.membership = [membership]
-    return StandardResponse(status="success", message="profile", data=userres)
+    user_res.membership = [membership]
+    return StandardResponse(status="success", message="profile", data=user_res)
 
 
 async def edit_profile(
-    first_name,
-    middle_name,
-    surname,
-    email,
-    nationality,
-    address,
-    phone_number,
-    profile_picture,
+    profile,
     db,
-    get_supabase,
     payload,
 ):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at the edit_profile endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
+    if profile.email:
+        try:
+            validate_email(profile.email)
+        except EmailNotValidError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     user_exists = (
         await db.execute(select(User).where(User.id == user_id).with_for_update())
     ).scalar_one_or_none()
-    if email:
-        try:
-            validate_email(email)
-        except EmailNotValidError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        if not user_exists:
-            logger.warning("user: %s, do not have a profile in database", user_id)
-            raise HTTPException(status_code=404, detail="profile not found")
+    if not user_exists:
+        logger.warning("user: %s, do not have a profile in database", user_id)
+        raise HTTPException(status_code=404, detail="profile not found")
+    if profile.email and profile.email != user_exists.email:
         email_exists = (
             await db.execute(
-                select(User).where(User.email == email, User.id != user_id)
+                select(exists().where(User.email == profile.email, User.id != user_id))
             )
-        ).scalar_one_or_none()
+        ).scalar()
         if email_exists:
             raise HTTPException(
                 status_code=400, detail="email is already in use by another user"
             )
-    filename = None
-    old_filename = None
-    if profile_picture:
-        try:
-            allowed_files = ["image/png", "image/jpeg", "image/webp"]
-            if profile_picture.content_type not in allowed_files:
-                logger.warning(
-                    "user tried uploading an invalid file type: %s",
-                    profile_picture.content_type,
-                )
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
-                )
-            logger.info("Starting file upload for new user")
-            file_byte = await file_generator(profile_picture, "not_registered")
-            filename = f"{uuid.uuid4()}_{secure_filename(profile_picture.filename)}"
-            client = await get_supabase.storage.from_(settings.BUCKET).upload(
-                filename, file_byte, {"content-type": profile_picture.content_type}
-            )
-            if hasattr(client, "error"):
-                logger.error("error uploading profile picture %s", client)
-                raise HTTPException(status_code=500, detail="error uploading image")
-            old_filename = user_exists.profile_picture
-            user_exists.profile_picture = filename
-        except Exception as e:
-            await db.rollback()
-            logger.exception("error saving profile picture")
-            if filename:
-                await cleaned_up(
-                    get_supabase,
-                    filename,
-                    context_1="error removing orphaned profile photo",
-                    context_2="successfully removed orphaned profile photo",
-                )
-                if isinstance(e, HTTPException):
-                    raise e
-                raise HTTPException(status_code=500, detail="error saving photo")
     logger.info("Starting update for user: %s", user_id)
-    fields = {
-        "first_name": first_name,
-        "middle_name": middle_name,
-        "surname": surname,
-        "email": email,
-        "phone_number": phone_number,
-        "nationality": nationality,
-        "address": address,
-    }
-    for attr, field in fields.items():
-        if field:
-            setattr(user_exists, attr, field)
+    has_changed = False
+    update_data = profile.model_dump(exclude_unset=True)
+    fields = [
+        "first_name",
+        "middle_name",
+        "surname",
+        "email",
+        "phone_number",
+        "nationality",
+        "address",
+    ]
+    nullable = ["middle_name", "address"]
+    for field, new_value in update_data.items():
+        if field in fields:
+            current_value = getattr(user_exists, field, None)
+            if new_value or field in nullable:
+                if current_value != new_value:
+                    setattr(user_exists, field, new_value)
+                    has_changed = True
+    if not has_changed:
+        await db.rollback()
+        return StandardResponse(
+            status="success", message="no new changes detected", data=None
+        )
     try:
         await db.commit()
-        if old_filename:
-            await cleaned_up(
-                get_supabase,
-                old_filename,
-                context_1="error removing old profile photo",
-                context_2="successfully old profile photo",
-            )
-    except IntegrityError as e:
-        logger.error(f"could not edit profile for user, {user_id}: {str(e)}")
-        if filename:
-            await cleaned_up(
-                get_supabase,
-                filename,
-                context_1="error removing orphaned profile photo",
-                context_2="successfully removed orphaned profile photo",
-            )
+    except IntegrityError:
+        logger.error("could not edit profile for user, '%s'", user_id)
         raise HTTPException(status_code=400, detail="database error")
-    except Exception as e:
+    except Exception:
         logger.exception("could not edit profile for user %s", user_id)
-        if filename:
-            await cleaned_up(
-                get_supabase,
-                filename,
-                context_1="error removing orphaned profile photo",
-                context_2="successfully removed orphaned profile photo",
-            )
-        if isinstance(e, HTTPException):
-            raise e
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("user: %s, successfully edited his profile", user_id)
-    return {"status": "success", "message": "profile successfully edited"}
+    return StandardResponse(
+        status="success", message="profile successfully edited", data=None
+    )
 
 
 delete_profile_log = get_logger("delete_profile")
@@ -208,7 +150,9 @@ async def delete_profile(userId, db, payload):
                 status_code=403, detail="Admins cannot delete other Admins."
             )
     if not data.is_active:
-        return {"status": "success", "message": "user already deactivated"}
+        return StandardResponse(
+            status="success", message="user already deactivated", data=None
+        )
     data.is_active = False
     profile_id = data.id
     try:
@@ -226,12 +170,12 @@ async def delete_profile(userId, db, payload):
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("deleted profile %s", profile_id)
-    return {
-        "status": "success",
-        "message": "deleted profile",
-        "data": {
+    return StandardResponse(
+        status="success",
+        message="deleted profile",
+        data={
             "id": profile_id,
             "user_id": user_id,
             "deleted": "Yes",
         },
-    }
+    )
