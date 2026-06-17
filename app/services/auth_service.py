@@ -12,6 +12,7 @@ from sqlalchemy import select, func
 from app.models import User
 from email_validator import validate_email, EmailNotValidError
 import uuid
+from app.api.v1.schemas import StandardResponse
 from app.logs.logger import get_logger
 from datetime import timedelta
 from app.database.config import settings
@@ -24,24 +25,15 @@ FORBIDDEN_WORDS = {"user", "admin", "system", "root", "moderator"}
 
 
 async def reg(
-    first_name,
-    surname,
-    username,
-    email,
-    nationality,
-    address,
-    password,
-    confirm_password,
-    profile_picture,
+    registration,
     db,
-    get_supabase,
 ):
     min_chars = 4
-    if len(username) < min_chars:
+    if len(registration.username) < min_chars:
         raise HTTPException(
             status_code=400, detail="username should be atleast 4 characters"
         )
-    user_str = username.strip()
+    user_str = registration.username.strip()
     if "".join(user_str.split()).lower() in FORBIDDEN_WORDS:
         raise HTTPException(
             status_code=400, detail="your username is restricted, choose another"
@@ -53,15 +45,16 @@ async def reg(
     user_exists = (
         await db.execute(
             select(User).where(
-                func.lower(func.trim(User.username)) == username.strip().lower()
+                func.lower(func.trim(User.username))
+                == registration.username.strip().lower()
             )
         )
     ).scalar_one_or_none()
     try:
-        validate_email(email)
+        validate_email(registration.email)
     except EmailNotValidError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    if password != confirm_password:
+    if registration.password != registration.confirm_password:
         raise HTTPException(
             status_code=400, detail="confirm password does not match password"
         )
@@ -70,76 +63,98 @@ async def reg(
             status_code=400, detail="username is already in use by another user"
         )
     email_exists = (
-        await db.execute(select(User).where(User.email == email))
+        await db.execute(select(User).where(User.email == registration.email))
     ).scalar_one_or_none()
     if email_exists:
         raise HTTPException(
             status_code=400, detail="email is already in use by another user"
         )
-    filename = None
-    if profile_picture:
-        try:
-            allowed_files = ["image/png", "image/jpeg", "image/webp"]
-            if profile_picture.content_type not in allowed_files:
-                logger.warning(
-                    "user tried uploading an invalid file type: %s",
-                    profile_picture.content_type,
-                )
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
-                )
-            logger.info("Starting file upload for new user")
-            file_byte = await file_generator(profile_picture, "not_registered")
-            filename = f"{uuid.uuid4()}_{secure_filename(profile_picture.filename)}"
-            client = await get_supabase.storage.from_(settings.BUCKET).upload(
-                filename, file_byte, {"content-type": profile_picture.content_type}
-            )
-            if hasattr(client, "error"):
-                logger.error("error uploading profile picture %s", client)
-                raise HTTPException(status_code=500, detail="error uploading image")
-        except Exception as e:
-            await db.rollback()
-            logger.exception("error saving profile picture")
-            if filename:
-                await cleaned_up(
-                    get_supabase,
-                    filename,
-                    context_1="error removing orphaned profile photo",
-                    context_2="successfully removed orphaned profile photo",
-                )
-                if isinstance(e, HTTPException):
-                    raise e
-                raise HTTPException(status_code=500, detail="error saving photo")
-    password = hashed_password(password)
-    logger.info("Starting registration for user: %s", username)
-    new_user = User(
-        profile_picture=filename,
-        first_name=first_name.strip(),
-        surname=surname.strip(),
-        role="user",
-        username=username.strip().lower(),
-        email=email.strip(),
-        nationality=nationality.strip(),
-        address=address.strip() if address else None,
-        password=password,
-    )
     try:
+        password = hashed_password(registration.password)
+        logger.info("Starting registration for user: %s", registration.username)
+        new_user = User(
+            first_name=registration.first_name.strip(),
+            surname=registration.surname.strip(),
+            role="user",
+            username=registration.username.strip().lower(),
+            email=registration.email.strip(),
+            nationality=registration.nationality.strip(),
+            address=registration.address.strip() if registration.address else None,
+            password=password,
+        )
         db.add(new_user)
         await db.commit()
     except IntegrityError:
-        logger.error("could not register user %s", username)
-        if filename:
-            await cleaned_up(
-                get_supabase,
-                filename,
-                context_1="error removing orphaned profile photo",
-                context_2="successfully removed orphaned profile photo",
-            )
+        logger.error("could not register user %s", registration.username)
         raise HTTPException(status_code=400, detail="database error")
-    except Exception as e:
+    except Exception:
         await db.rollback()
-        logger.exception("could not register user %s", username)
+        logger.exception("could not register user %s", registration.username)
+        raise HTTPException(status_code=500, detail="internal server error")
+    logger.info("user: %s, successfully registered", registration.username)
+    return StandardResponse(
+        status="success",
+        message=f"Registeration Successful {registration.username}, login to continue",
+        data=None,
+    )
+
+
+async def upload_profile_picture(profile_picture, db, payload, get_supabase):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("Unauthorized attempt at the upload_profile_picture function")
+        raise HTTPException(status_code=401, detail="not a valid user")
+    user = (
+        await db.execute(select(User).where(User.id == user_id))
+    ).scalar_one_or_none()
+    if not user:
+        logger.warning(
+            "user: %s, tried uploading profile picture in an unauthorized row"
+        )
+        raise HTTPException(status_code=404, detail="user not found")
+    filename = None
+    old_filename = user.profile_picture if user.profile_picture else None
+    await db.rollback()
+    try:
+        allowed_files = ["image/png", "image/jpeg", "image/webp"]
+        if profile_picture.content_type not in allowed_files:
+            logger.warning(
+                "user tried uploading an invalid file type: %s",
+                profile_picture.content_type,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
+            )
+        logger.info("Starting file upload for new user")
+        file_byte = await file_generator(profile_picture, "user_id")
+        filename = f"{uuid.uuid4()}_{secure_filename(profile_picture.filename)}"
+        client = await get_supabase.storage.from_(settings.BUCKET).upload(
+            filename,
+            file_byte,
+            {"content-type": profile_picture.content_type},
+        )
+        if hasattr(client, "error"):
+            logger.error("error uploading profile picture %s", client)
+            raise HTTPException(status_code=500, detail="error uploading image")
+        result = await db.execute(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+        locked_user = result.scalar_one_or_none()
+        if not locked_user:
+            raise HTTPException(
+                status_code=404, detail="User record vanished during asset upload."
+            )
+        locked_user.profile_picture = filename
+        await db.commit()
+        if old_filename:
+            await cleaned_up(
+                get_supabase,
+                old_filename,
+                context_1="error removing orphaned profile photo",
+                context_2="successfully removed orphaned profile photo",
+            )
+    except HTTPException:
         if filename:
             await cleaned_up(
                 get_supabase,
@@ -147,11 +162,22 @@ async def reg(
                 context_1="error removing orphaned profile photo",
                 context_2="successfully removed orphaned profile photo",
             )
-        if isinstance(e, HTTPException):
-            raise e
+        raise
+    except Exception:
+        await db.rollback()
+        logger.exception("foundational error saving profile picture to database")
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                context_1="error removing orphaned profile photo",
+                context_2="successfully removed orphaned profile photo",
+            )
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info("user: %s, successfully registered", username)
-    return {f"Registeration Successful {username}, login to continue"}
+    logger.info("profile picture uploaded successfully")
+    return StandardResponse(
+        status="success", message="profile picture uploaded successfully", data=None
+    )
 
 
 async def logins(login, response, db):
@@ -186,12 +212,8 @@ async def logins(login, response, db):
         key="refresh", value=refresh_token, secure=True, samesite="lax", httponly=True
     )
     logger.info(f"User {login.username} logged in successfully")
-    return {
-        "status": "success",
-        "message": "login successful",
-        "access_token": access_token,
-        "token_type": "Bearer",
-    }
+    data = {"access_token": access_token, "token_type": "Bearer"}
+    return StandardResponse(status="success", message="login successful", data=data)
 
 
 async def create_role(username, role, db, payload):
@@ -233,7 +255,9 @@ async def create_role(username, role, db, payload):
         logger.exception("error occured while creating role")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("%s, successfully assigned a new role'", username)
-    return {"status": "success", "message": f"{username} assigned role {role}"}
+    return StandardResponse(
+        status="success", message=f"{username} assigned role {role}", data=None
+    )
 
 
 async def refresh_token(request, response):
@@ -272,10 +296,11 @@ async def refresh_token(request, response):
         key="refresh", value=new_token, httponly=True, samesite="lax", secure=True
     )
     logger.info(f"Refresh token successful for username: {username}")
-    return {"access_token": new_access, "token_type": "Bearer"}
+    data = {"access_token": new_access, "token_type": "Bearer"}
+    return StandardResponse(status="success", message="refresh token", data=data)
 
 
 async def logout(response):
     response.delete_cookie("refresh")
     logger.info("User logged out successfully")
-    return {"message": "logged out"}
+    return StandardResponse(status="success", message="logged out", data=None)
