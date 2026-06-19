@@ -40,7 +40,10 @@ desktop.ini
 
 #logs
 .logs
-*.logss
+*.logs
+.log.2
+/logs
+.log
 
 #celery
 celerybeat-schedule
