@@ -10,7 +10,11 @@ from app.database.get import get_db
 router = APIRouter(prefix="/cart", tags=["Cart"])
 
 
-@router.post("/add_to_cart")
+@router.post(
+    "/add_to_cart",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def add_cartitem(
     store_id: int,
     product_id: int,
@@ -49,7 +53,11 @@ async def get_cart(
     )
 
 
-@router.put("/edit_quantity")
+@router.put(
+    "/edit_quantity",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def change_quanity(
     store_id: int,
     cart_id: int,
@@ -68,7 +76,11 @@ async def change_quanity(
     )
 
 
-@router.put("/update_cart/{store_id}/{cart_id}")
+@router.put(
+    "/update_cart/{store_id}/{cart_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def update__cart(
     store_id: int,
     cart_id: int,
@@ -80,7 +92,11 @@ async def update__cart(
     )
 
 
-@router.delete("/delete_cartitem")
+@router.delete(
+    "/delete_cartitem",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_one(
     store_id: int,
     cart_id: int,
@@ -97,7 +113,11 @@ async def delete_one(
     )
 
 
-@router.delete("/delete_cart/{store_id}/{cart_id}")
+@router.delete(
+    "/delete_cart/{store_id}/{cart_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_cart(
     store_id: int,
     cart_id: int,
