@@ -12,7 +12,11 @@ from app.services import category_service
 router = APIRouter(prefix="/category", tags=["Category"])
 
 
-@router.post("/create_category")
+@router.post(
+    "/create_category",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def create_a_category(
     name: str, db: AsyncSession = Depends(get_db), payload: dict = Depends(verify_token)
 ):
