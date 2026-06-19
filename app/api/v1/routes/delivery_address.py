@@ -13,7 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter(prefix="/delivery_address", tags=["Delivery Address"])
 
 
-@router.post("/add_delivery_address")
+@router.post(
+    "/add_delivery_address",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def create_address(
     store_id: int,
     order_id: int,
@@ -50,7 +54,11 @@ async def get_delivery_address(
     )
 
 
-@router.put("/select_delivery_address/{store_id}/{order_id}/{address_id}")
+@router.put(
+    "/select_delivery_address/{store_id}/{order_id}/{address_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def pick_delivery_address(
     store_id: int,
     order_id: int,
@@ -69,7 +77,11 @@ async def pick_delivery_address(
     )
 
 
-@router.delete("/delete_delivery_address/{store_id}/{address_id}")
+@router.delete(
+    "/delete_delivery_address/{store_id}/{address_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_address(
     store_id: int,
     address_id: int,
