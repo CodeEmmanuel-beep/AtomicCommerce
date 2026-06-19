@@ -45,7 +45,7 @@ class User(Base):
     first_name: Mapped[str] = mapped_column(String, index=True)
     middle_name: Mapped[str] = mapped_column(String, nullable=True)
     surname: Mapped[str] = mapped_column(String, index=True)
-    username: Mapped[str] = mapped_column(String, index=True)
+    username: Mapped[str] = mapped_column(String, unique=True, index=True)
     password: Mapped[str] = mapped_column(String)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     role: Mapped[str] = mapped_column(String, default="user", index=True)
@@ -368,7 +368,7 @@ class Payment(Base):
     order_id: Mapped[int] = mapped_column(Integer, ForeignKey("order.id"), index=True)
     payment_method: Mapped[str] = mapped_column(String)
     currency: Mapped[str] = mapped_column(String)
-    amount_paid: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     payment_status: Mapped[PaymentStatus] = mapped_column(
         PG_ENUM(PaymentStatus, name="paymentstatus", native_enum=True),
         default=PaymentStatus.PENDING,
@@ -521,7 +521,8 @@ class Notification(Base):
     notification: Mapped[str] = mapped_column(String)
     from_user: Mapped[int] = mapped_column(Integer, index=True)
     notified_user: Mapped[int] = mapped_column(Integer, index=True)
-    payment_status: Mapped[str] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=True)
+    type: Mapped[str] = mapped_column(String, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     time_of_op: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
