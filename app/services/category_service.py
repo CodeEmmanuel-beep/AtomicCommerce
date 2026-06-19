@@ -50,7 +50,7 @@ async def category(name, db, payload):
         await db.rollback()
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("category: %s, created successfully", name)
-    return {"status": "success", "message": "category created"}
+    return StandardResponse(status="success", message="category created", data=None)
 
 
 async def retrieve(page, limit, db):
@@ -112,12 +112,12 @@ async def delete_category(category_id, db, payload):
         logger.exception("error occured while deleting category: %s", data.id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("deleted category %s", category_id)
-    return {
-        "status": "success",
-        "message": "deleted category",
-        "data": {
+    return StandardResponse(
+        status="success",
+        message="deleted category",
+        data={
             "id": category_id,
             "user_id": user_id,
             "deleted": "Yes",
         },
-    }
+    )
