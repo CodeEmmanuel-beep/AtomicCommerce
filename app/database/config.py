@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     Standard_Price: Decimal
     Regular_Price: Decimal
     Premium_Price: Decimal
+    Standard_Product: str
+    Regular_Product: str
+    Premium_Product: str
     STRIPE_SECRET_KEY: str
 
     model_config = {"env_file": ".env"}
