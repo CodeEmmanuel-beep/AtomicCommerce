@@ -107,7 +107,11 @@ async def proceed_to_payment(
     )
 
 
-@router.put("/cancel_order/{store_id}/{order_id}")
+@router.put(
+    "/cancel_order/{store_id}/{order_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def cancel(
     store_id: int,
     order_id: int,
@@ -119,7 +123,11 @@ async def cancel(
     )
 
 
-@router.delete("/delete_order/{store_id}/{order_id}")
+@router.delete(
+    "/delete_order/{store_id}/{order_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_order(
     store_id: int,
     order_id: int,
