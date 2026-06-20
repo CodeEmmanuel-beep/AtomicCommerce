@@ -72,7 +72,9 @@ async def delivery_address(
     background_task.add_task(order_invalidation, user_id)
     background_task.add_task(order_address_invalidation, user_id)
     logger.info(f"Delivery address added successfully for order_id: {order_id}")
-    return {"status": "success", "message": "delivery address added successfully"}
+    return StandardResponse(
+        status="success", message="delivery address added successfully", data=None
+    )
 
 
 async def view_delivery_address(store_id, page, limit, db, payload):
@@ -190,7 +192,9 @@ async def choose_order_address(
         raise HTTPException(status_code=500, detail="internal server error")
     background_task.add_task(order_invalidation, user_id)
     logger.info(f"Delivery address chosen successfully for order_id: {order_id}")
-    return {"status": "success", "message": "delivery address chosen successfully"}
+    return StandardResponse(
+        status="success", message="delivery address chosen successfully", data=None
+    )
 
 
 async def remove_delivery_address(store_id, address_id, background_task, db, payload):
@@ -245,4 +249,6 @@ async def remove_delivery_address(store_id, address_id, background_task, db, pay
     background_task.add_task(order_invalidation, user_id)
     background_task.add_task(order_address_invalidation, user_id)
     logger.info(f"Delivery address successfully deleted address_id: {address_id}")
-    return {"status": "success", "message": "delivery address deleted successfully"}
+    return StandardResponse(
+        status="success", message="delivery address deleted successfully", data=None
+    )
