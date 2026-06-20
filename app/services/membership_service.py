@@ -1,6 +1,14 @@
 from app.logs.logger import get_logger
 from fastapi import HTTPException
-from app.models import Membership, Store, store_owners, store_staffs, Subscription
+from app.models import (
+    Membership,
+    Store,
+    store_owners,
+    store_staffs,
+    Subscription,
+    SubscriptionStatus,
+    SubscriptionPlan,
+)
 from sqlalchemy.exc import IntegrityError
 from app.api.v1.schemas import (
     MembershipResponse,
@@ -104,61 +112,69 @@ async def make_member(store_id, membership_type, activation_type, db, payload):
         f"member crerated with user_id: '{user_id}' and membership_type: '{membership_type}'"
     )
     await member_global_invalidation()
-    return {"message": "membership created"}
+    return StandardResponse(status="success", message="membership created", data=None)
 
 
-async def update(store_id, membership_type, activate, activation_type, db, payload):
+async def update(store_id, membership_type, activation_type, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized user tried to assess make_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = (
-        select(Membership)
-        .where(Membership.user_id == user_id, Membership.store_id == store_id)
-        .with_for_update()
-    )
-    change = (await db.execute(stmt)).scalar_one_or_none()
-    if not change:
-        logger.warning(
-            f"user: {user_id} tried updating their membership without being a member"
+    try:
+        stmt = (
+            select(Membership, Subscription)
+            .outerjoin(Subscription, Membership.id == Subscription.membership_id)
+            .where(
+                Membership.user_id == user_id,
+                Membership.store_id == store_id,
+            )
+            .with_for_update(of=Membership)
         )
-        raise HTTPException(status_code=404, detail="not a member")
-    sub = (
-        await db.execute(
-            select(Subscription)
-            .where(Subscription.membership_id == change.id)
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if sub:
-        logger.info("existing subscription found for user: %s", user_id)
-        return {
-            "status": "success",
-            "message": "existing subscription found. Use the 'Update Plan' portal to manage it.",
-        }
-    change.membership_type = membership_type
-    if activate == "yes":
-        sub_table = Subscription(membership_id=change.id, plan_name=membership_type)
+        row = (await db.execute(stmt)).fetchone()
+        member, subscribe = row or (None, None)
+        if not member:
+            logger.warning(
+                f"user: {user_id} tried updating their membership without being a member"
+            )
+            raise HTTPException(
+                status_code=404,
+                detail="not a member, contact support if you think this is a mistake",
+            )
+        if not subscribe:
+            subscribe = Subscription(
+                membership_id=member.id, status=SubscriptionStatus.inactive
+            )
+            db.add(subscribe)
+        if subscribe.status != SubscriptionStatus.inactive:
+            logger.info("existing subscription found for user: %s", user_id)
+            return StandardResponse(
+                status="success",
+                message="existing subscription found. Use the 'Update Plan' portal to manage it.",
+                data=None,
+            )
+        member.membership_type = SubscriptionPlan[membership_type]
+        subscribe.plan_name = membership_type
         if activation_type == "one_time":
             price_map = {
                 "Standard": settings.Standard_Price,
                 "Regular": settings.Regular_Price,
                 "Premium": settings.Premium_Price,
             }
-            sub_table.plan_price = price_map[membership_type]
-            sub_table.price_id = None
+            subscribe.plan_price = price_map[membership_type]
+            subscribe.price_id = None
         if activation_type == "subscription":
             price_map = {
                 "Standard": settings.Standard,
                 "Regular": settings.Regular,
                 "Premium": settings.Premium,
             }
-            sub_table.price_id = price_map[membership_type]
-            sub_table.plan_price = None
-        db.add(sub_table)
-    try:
+            subscribe.price_id = price_map[membership_type]
+            subscribe.plan_price = None
         await db.commit()
         await member_invalidation(user_id)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -175,7 +191,9 @@ async def update(store_id, membership_type, activate, activation_type, db, paylo
         f"user: {user_id} successfully updated their membership_type to '{membership_type}'"
     )
     await member_global_invalidation()
-    return {"message": "membership type updated"}
+    return StandardResponse(
+        status="success", message="membership type updated", data=None
+    )
 
 
 async def view_membership(store_id, db, payload):
@@ -349,7 +367,9 @@ async def pause_membership(db, payload):
         raise HTTPException(status_code=409, detail="invalid request")
     today = func.now()
     if pause.is_pause:
-        return {"message": "membership is already paused"}
+        return StandardResponse(
+            status="success", message="membership is already paused", data=None
+        )
     pause.is_pause = True
     pause.pause_date = today
     try:
@@ -368,7 +388,7 @@ async def pause_membership(db, payload):
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"user: {user_id} paused their membership")
     await member_global_invalidation()
-    return {"message": "membership paused"}
+    return StandardResponse(status="success", message="membership paused", data=None)
 
 
 async def reactivate_membership(db, payload):
@@ -385,7 +405,9 @@ async def reactivate_membership(db, payload):
         raise HTTPException(status_code=404, detail="not a member")
     today = func.now()
     if not activate.is_pause:
-        return {"message": "membership is not paused"}
+        return StandardResponse(
+            status="success", message="membership is not paused", data=None
+        )
     activate.is_pause = False
     activate.reactivation_date = today
     try:
@@ -405,7 +427,7 @@ async def reactivate_membership(db, payload):
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"user: {user_id} reactivated their membership")
-    return {"message": "member reactivated"}
+    return StandardResponse(status="success", message="member reactivated", data=None)
 
 
 async def restore_membership(store_id, membership_id, db, payload):
@@ -441,7 +463,9 @@ async def restore_membership(store_id, membership_id, db, payload):
         )
         raise HTTPException(status_code=404, detail="no member to restore")
     if not restore.is_deleted:
-        return {"message": "membership is not deleted"}
+        return StandardResponse(
+            status="success", message="membership is not deleted", data=None
+        )
     restore.is_deleted = False
     try:
         await db.commit()
@@ -461,7 +485,7 @@ async def restore_membership(store_id, membership_id, db, payload):
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("membership restored for membership_id: %s", membership_id)
     await member_global_invalidation()
-    return {"message": "membership restored"}
+    return StandardResponse(status="success", message="membership restored", data=None)
 
 
 async def delete_member(store_id, membership_id, db, payload):
@@ -499,7 +523,9 @@ async def delete_member(store_id, membership_id, db, payload):
         )
         raise HTTPException(status_code=404, detail="not a member")
     if member.is_deleted:
-        return {"message": "membership is already deleted"}
+        return StandardResponse(
+            status="success", message="membership is already deleted", data=None
+        )
     member.is_deleted = True
     member.is_active = False
     member.is_pause = False
@@ -522,4 +548,4 @@ async def delete_member(store_id, membership_id, db, payload):
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"user: {user_id} deleted their membership")
     await member_global_invalidation()
-    return {"message": "membership deleted"}
+    return StandardResponse(status="success", message="membership deleted", data=None)
