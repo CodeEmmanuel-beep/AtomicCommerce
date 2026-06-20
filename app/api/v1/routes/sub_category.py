@@ -5,11 +5,14 @@ from app.database.get import get_db
 from app.services import sub_category_service
 from app.api.v1.schemas import StandardResponse, PaginatedMetadata, SubCategoryResponse
 
-
 router = APIRouter(prefix="/sub_category", tags=["Sub Category"])
 
 
-@router.post("create_sub_category")
+@router.post(
+    "create_sub_category",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def create_a_sub_category(
     category_id: int,
     name: str,
@@ -38,7 +41,11 @@ async def sub_category_list(
     )
 
 
-@router.delete("/delete")
+@router.delete(
+    "/delete",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_one_sub_category(
     sub_category_id: int,
     db: AsyncSession = Depends(get_db),
