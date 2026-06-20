@@ -8,7 +8,7 @@ from app.models import (
     SubscriptionStatus,
 )
 from app.database.async_config import AsyncSessionLocal, engine
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, cast, String
 from sqlalchemy.orm import selectinload
 from datetime import timedelta, datetime, timezone
 from app.logs.logger import get_logger
@@ -111,7 +111,7 @@ async def activate():
             logger.info("batched activation complete")
         except Exception:
             await db.rollback()
-            logger.exception("fetal error, reconciling activation status")
+            logger.exception("fatal error, reconciling activation status")
             raise
 
 
@@ -142,28 +142,76 @@ async def deactivate():
             logger.info("batched deactivation complete")
         except Exception:
             await db.rollback()
-            logger.exception("fetal error, reconciling deactivation status")
+            logger.exception("fatal error, reconciling deactivation status")
             raise
 
 
-def get_worker_loop():
+async def update_membership_type():
+    async with AsyncSessionLocal() as db:
+        try:
+            member_update = (
+                await db.execute(
+                    select(Membership, Subscription)
+                    .join(Subscription, Membership.id == Subscription.membership_id)
+                    .where(
+                        cast(Subscription.plan_name, String)
+                        != cast(Membership.membership_type, String)
+                    )
+                    .limit(1000)
+                    .with_for_update(skip_locked=True)
+                )
+            ).all()
+            if not member_update:
+                logger.info("no membership_type to reconcile")
+                return
+            for member, subscribe in member_update:
+                logger.info("membership update started")
+                member.membership_type = subscribe.plan_name
+            await db.commit()
+            logger.info("batched member update complete")
+        except Exception:
+            await db.rollback()
+            logger.exception("fatal error, updating membership type")
+            raise
+
+
+def get_worker_loop(coro):
     try:
-        return asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result()
     except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
 
 
 @worker_process_init.connect
 def set_up_worker_process(**kwargs):
     try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    loop.run_until_complete(engine.dispose())
+        loop.run_until_complete(engine.dispose())
+    except Exception:
+        logger.exception("Failed to safely detach parent process database engine pool.")
     logger.info("worker process database engine reset complete.")
+
+
+@shared_task(
+    name="membership_update",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3, "countdown": 60},
+)
+def membership_update():
+    try:
+        get_worker_loop(update_membership_type())
+    except Exception:
+        logger.exception("fatal error, updating membership type")
+        raise
 
 
 @shared_task(
@@ -174,10 +222,9 @@ def set_up_worker_process(**kwargs):
 )
 def activation_status():
     try:
-        loop = get_worker_loop()
-        loop.run_until_complete(activate())
+        get_worker_loop(activate())
     except Exception:
-        logger.exception("fetal error, reconciling activation status")
+        logger.exception("fatal error, reconciling activation status")
         raise
 
 
@@ -189,10 +236,9 @@ def activation_status():
 )
 def deactivation_status():
     try:
-        loop = get_worker_loop()
-        loop.run_until_complete(deactivate())
+        get_worker_loop(deactivate())
     except Exception:
-        logger.exception("fetal error, reconciling activation status")
+        logger.exception("fatal error, reconciling activation status")
         raise
 
 
@@ -204,8 +250,7 @@ def deactivation_status():
 )
 def cancel_order():
     try:
-        loop = get_worker_loop()
-        loop.run_until_complete(invalidate_order())
+        get_worker_loop(invalidate_order())
     except Exception:
         logger.exception(
             "fatal processing exception occurred during batch order invalidation"
