@@ -35,5 +35,6 @@ celery_app.conf.update(
             "task": "member_deactivation",
             "schedule": 3660,
         },
+        "member_update": {"task": "membership_update", "schedule": 43200},
     }
 )
