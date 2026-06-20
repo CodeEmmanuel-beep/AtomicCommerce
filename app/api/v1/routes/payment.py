@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query, Depends, Request, BackgroundTasks
-from app.services import payment_service
+from app.services import payment_service, stripe_webhook_service
 from app.auth.verify_jwt import verify_token
 from app.api.v1.schemas import PaymentResponse, StandardResponse, PaginatedMetadata
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +28,7 @@ async def initiate_payment(
 
 @router.post("/webhook")
 async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
-    return await payment_service.stripe_webhook(
+    return await stripe_webhook_service.stripe_webhook(
         request=request, background_task=background_tasks
     )
 
