@@ -93,7 +93,6 @@ async def activate():
                         Subscription.expire_at > now,
                         or_(
                             ~Membership.is_active,
-                            Subscription.status != SubscriptionStatus.active,
                         ),
                     )
                     .limit(1000)
@@ -120,24 +119,24 @@ async def deactivate():
         now = datetime.now(timezone.utc)
         try:
             deactivation = (
-                (
-                    await db.execute(
-                        select(Membership)
-                        .join(Subscription, Membership.id == Subscription.membership_id)
-                        .where(Subscription.expire_at < now)
-                        .limit(1000)
-                        .with_for_update(skip_locked=True)
+                await db.execute(
+                    select(Membership, Subscription)
+                    .join(Subscription, Membership.id == Subscription.membership_id)
+                    .where(
+                        Subscription.status != SubscriptionStatus.inactive,
+                        Subscription.expire_at < now,
                     )
+                    .limit(1000)
+                    .with_for_update(skip_locked=True)
                 )
-                .scalars()
-                .all()
-            )
+            ).all()
             if not deactivation:
                 logger.info("no membership to reconcile")
                 return
-            for member in deactivation:
+            for member, subscribe in deactivation:
                 logger.info("deactivation process started")
                 member.is_active = False
+                subscribe.status = SubscriptionStatus.past_due
             await db.commit()
             logger.info("batched deactivation complete")
         except Exception:
