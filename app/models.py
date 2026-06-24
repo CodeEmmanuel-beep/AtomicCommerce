@@ -446,8 +446,6 @@ class Membership(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    is_pause: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    pause_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     delete_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -512,6 +510,7 @@ class Subscription(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    __table_args__ = (UniqueConstraint("membership_id", name="subscribed_member"),)
     membership = relationship("Membership", back_populates="subscriptions")
 
 
@@ -522,7 +521,7 @@ class Notification(Base):
     from_user: Mapped[int] = mapped_column(Integer, index=True)
     notified_user: Mapped[int] = mapped_column(Integer, index=True)
     status: Mapped[str] = mapped_column(String, nullable=True)
-    type: Mapped[str] = mapped_column(String, nullable=True)
+    membership_type: Mapped[str] = mapped_column(String, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     time_of_op: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
