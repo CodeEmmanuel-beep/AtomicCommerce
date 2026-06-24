@@ -31,6 +31,7 @@ services:
 
  celery_worker:
    build: .
+   container_name: celery_worker
    volumes:
     - .:/app
     - .logs:/app/logs
@@ -47,6 +48,7 @@ services:
 
  celery_beat:
   build: .
+  container_name: celery_beat
   volumes:
    - .:/app
    - ./logs:/app/logs
