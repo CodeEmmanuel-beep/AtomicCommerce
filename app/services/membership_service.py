@@ -14,16 +14,20 @@ from app.api.v1.schemas import (
     MembershipResponse,
     StandardResponse,
     SubscriptionResponse,
+    MembershipRes,
+    PaginatedMetadata,
+    PaginatedResponse,
 )
-from app.utils.helper import view_selected_members
-from sqlalchemy import select, func, or_, exists
+from sqlalchemy import select, func, or_, exists, and_
 from sqlalchemy.orm import selectinload
 from app.utils.redis import (
     cache,
+    cache_version,
     cached,
     member_invalidation,
     member_global_invalidation,
 )
+from app.utils.helper import store_auth
 import asyncio
 from app.database.config import settings
 
@@ -276,7 +280,7 @@ async def view_memberships(db, payload):
         return StandardResponse(**cached_member)
     stmt = (
         select(Membership)
-        .options(selectinload(Membership.stores))
+        .options(selectinload(Membership.store))
         .where(
             Membership.user_id == user_id,
             ~Membership.is_deleted,
@@ -290,10 +294,17 @@ async def view_memberships(db, payload):
             user_id,
         )
         raise HTTPException(status_code=404, detail="not a member of any store")
-    store_map = {mem.stores.slug: mem.stores.store_name for mem in members}
+    store_map = [
+        {
+            "id": i + 1,
+            "store name": mem.store.store_name,
+            "membership_type": mem.membership_type,
+        }
+        for i, mem in enumerate(members)
+    ]
     full_response = StandardResponse(
         status="success",
-        message="stores where you are have a membership card",
+        message="stores where you are a member",
         data=store_map,
     )
     await cached(cache_key, full_response, ttl=1800)
@@ -301,56 +312,86 @@ async def view_memberships(db, payload):
     return full_response
 
 
-async def view_active_members(store_id, page, limit, db, payload):
-    return await view_selected_members(
-        store_id,
-        Membership.is_active,
-        ~Membership.is_deleted,
-        "active",
-        page,
-        limit,
-        db,
-        payload,
+async def view_selected_members(store_id, member_status, page, limit, db, payload):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("unauthorized attempt to access view_active_members endpoint")
+        raise HTTPException(status_code=401, detail="not a registered user")
+    offset = (page - 1) * limit
+    if member_status not in [
+        "active_members",
+        "inactive_members",
+        "paused_members",
+        "deleted_members",
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail="member_status should be either 'active_members','inactive_members','paused_members' or 'deleted_members'",
+        )
+    context = {
+        "active_members": "active",
+        "deleted_members": "deleted",
+        "paused_members": "paused",
+        "inactive_members": "inactive",
+    }[member_status]
+    await store_auth(store_id, db, payload)
+    version = await cache_version("member_key")
+    cache_key = f"membership:v{version}:{member_status}:{store_id}:{page}:{limit}"
+    cached_member = await cache(cache_key)
+    if cached_member:
+        logger.info("cached hit at view_active_members endpoint user %s", user_id)
+        return StandardResponse(**cached_member)
+    base_filter = {
+        "active_members": (
+            Membership.is_active.is_(True),
+            Membership.is_deleted.is_(False),
+        ),
+        "inactive_members": (
+            Membership.is_active.is_(False),
+            Membership.is_deleted.is_(False),
+        ),
+        "paused_members": (
+            Membership.is_pause.is_(True),
+            Membership.is_deleted.is_(False),
+        ),
+        "deleted_members": (
+            Membership.is_active.is_(False),
+            Membership.is_deleted.is_(True),
+        ),
+    }[member_status]
+    total = (
+        await db.execute(
+            select(func.count(Membership.id)).where(
+                *base_filter,
+                Membership.store_id == store_id,
+            )
+        )
+    ).scalar() or 0
+    logger.info(f"total number of {context} members: %s", total)
+    if total == 0:
+        logger.info(f"{context} members search returned an empty list")
+        response = StandardResponse(
+            status="success", message=f"no {context} member found", data=None
+        )
+        await cached(cache_key, response, ttl=360)
+        return response
+    logger.info(f"total number of {context} members %s", total)
+    store_membership = (
+        select(Membership)
+        .options(selectinload(Membership.user))
+        .where(Membership.store_id == store_id, *base_filter)
+        .offset(offset)
+        .limit(limit)
     )
-
-
-async def view_inactive_members(store_id, page, limit, db, payload):
-    return await view_selected_members(
-        store_id,
-        ~Membership.is_active,
-        ~Membership.is_deleted,
-        "inactive",
-        page,
-        limit,
-        db,
-        payload,
+    member = (await db.execute(store_membership)).scalars().all()
+    data = PaginatedMetadata[MembershipRes](
+        items=[MembershipRes.model_validate(mem) for mem in member],
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
-
-
-async def view_paused_members(store_id, page, limit, db, payload):
-    return await view_selected_members(
-        store_id,
-        Membership.is_pause,
-        ~Membership.is_deleted,
-        "paused",
-        page,
-        limit,
-        db,
-        payload,
-    )
-
-
-async def view_deleted_members(store_id, page, limit, db, payload):
-    return await view_selected_members(
-        store_id,
-        ~Membership.is_active,
-        Membership.is_deleted,
-        "deleted",
-        page,
-        limit,
-        db,
-        payload,
-    )
+    response = StandardResponse(status="success", message=f"{member_status}", data=data)
+    await cached(cache_key, response, ttl=360)
+    logger.info(f"{context} members data cached successfully for admin: %s", user_id)
+    return response
 
 
 async def pause_membership(db, payload):
