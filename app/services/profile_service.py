@@ -1,9 +1,8 @@
 from fastapi import HTTPException
 from app.logs.logger import get_logger
 from sqlalchemy import select, exists
-from app.models import User, Membership
+from app.models import User
 from app.utils.supabase_url import get_public_url
-from sqlalchemy.orm import selectinload
 from app.api.v1.schemas import StandardResponse, UserResponse
 from email_validator import validate_email, EmailNotValidError
 from sqlalchemy.exc import IntegrityError
@@ -17,28 +16,15 @@ async def view_profile(db, payload):
         logger.warning("unauthorized attempt at the view_profile endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
     profile = (
-        (
-            await db.execute(
-                select(User, Membership)
-                .outerjoin(Membership, User.id == Membership.user_id)
-                .options(selectinload(Membership.store), selectinload(User.membership))
-                .where(User.id == user_id)
-            )
-        )
-        .unique()
-        .all()
-    )
+        await db.execute(select(User).where(User.id == user_id))
+    ).scalar_one_or_none()
     if not profile:
         logger.warning("user: %s, has no user profile in the database", user_id)
         raise HTTPException(status_code=404, detail="profile not found")
-    user = profile[0][0]
-    members = [pro[1] for pro in profile if pro[1] is not None]
-    membership = {mem.store.store_name: mem.membership_type for mem in members}
-    user_res = UserResponse.model_validate(user)
+    user_res = UserResponse.model_validate(profile)
     user_res.profile_picture = (
-        get_public_url(user.profile_picture) if user.profile_picture else None
+        get_public_url(profile.profile_picture) if profile.profile_picture else None
     )
-    user_res.membership = [membership]
     return StandardResponse(status="success", message="profile", data=user_res)
 
 
