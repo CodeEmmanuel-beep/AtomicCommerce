@@ -18,7 +18,8 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
     PaginatedResponse,
 )
-from sqlalchemy import select, func, or_, exists, and_
+from datetime import datetime, timezone
+from sqlalchemy import select, func, or_, exists
 from sqlalchemy.orm import selectinload
 from app.utils.redis import (
     cache,
@@ -331,7 +332,6 @@ async def view_selected_members(store_id, member_status, page, limit, db, payloa
     context = {
         "active_members": "active",
         "deleted_members": "deleted",
-        "paused_members": "paused",
         "inactive_members": "inactive",
     }[member_status]
     await store_auth(store_id, db, payload)
@@ -348,10 +348,6 @@ async def view_selected_members(store_id, member_status, page, limit, db, payloa
         ),
         "inactive_members": (
             Membership.is_active.is_(False),
-            Membership.is_deleted.is_(False),
-        ),
-        "paused_members": (
-            Membership.is_pause.is_(True),
             Membership.is_deleted.is_(False),
         ),
         "deleted_members": (
@@ -392,83 +388,6 @@ async def view_selected_members(store_id, member_status, page, limit, db, payloa
     await cached(cache_key, response, ttl=360)
     logger.info(f"{context} members data cached successfully for admin: %s", user_id)
     return response
-
-
-async def pause_membership(db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt at pause membership endpoint")
-        raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = select(Membership).where(Membership.user_id == user_id)
-    pause = (await db.execute(stmt)).scalar_one_or_none()
-    if not pause:
-        logger.warning(
-            f"user: {user_id}, tried accessing pause_membership endpoint before registering as a member"
-        )
-        raise HTTPException(status_code=409, detail="invalid request")
-    today = func.now()
-    if pause.is_pause:
-        return StandardResponse(
-            status="success", message="membership is already paused", data=None
-        )
-    pause.is_pause = True
-    pause.pause_date = today
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        logger.error(
-            "database error occured while pausing membership user affected: %s", user_id
-        )
-        raise HTTPException(status_code=400, detail="database error")
-    except Exception:
-        await db.rollback()
-        logger.exception(
-            "error occured while pausing membership user affected: %s", user_id
-        )
-        raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"user: {user_id} paused their membership")
-    await member_global_invalidation()
-    return StandardResponse(status="success", message="membership paused", data=None)
-
-
-async def reactivate_membership(db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt to access reactivate membership endpoint")
-        raise HTTPException(status_code=401, detail="not authorized")
-    stmt = select(Membership).where(Membership.user_id == user_id)
-    activate = (await db.execute(stmt)).scalar_one_or_none()
-    if not activate:
-        logger.warning(
-            f"user: {user_id}, tried accessing reactivate_membership endpoint before registering as a member"
-        )
-        raise HTTPException(status_code=404, detail="not a member")
-    today = func.now()
-    if not activate.is_pause:
-        return StandardResponse(
-            status="success", message="membership is not paused", data=None
-        )
-    activate.is_pause = False
-    activate.reactivation_date = today
-    try:
-        await db.commit()
-        await asyncio.gather(member_invalidation(user_id), member_global_invalidation())
-    except IntegrityError:
-        await db.rollback()
-        logger.error(
-            "database error occured while reactivating membership user affected: %s",
-            user_id,
-        )
-        raise HTTPException(status_code=400, detail="database error")
-    except Exception:
-        await db.rollback()
-        logger.exception(
-            "error occured while reactivating membership user affected: %s", user_id
-        )
-        raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"user: {user_id} reactivated their membership")
-    return StandardResponse(status="success", message="member reactivated", data=None)
 
 
 async def restore_membership(store_id, membership_id, db, payload):
