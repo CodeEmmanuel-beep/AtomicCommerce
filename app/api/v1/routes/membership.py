@@ -14,7 +14,11 @@ from app.api.v1.schemas import (
 router = APIRouter(prefix="/member", tags=["Membership"])
 
 
-@router.post("/create_membership/{store_id}")
+@router.post(
+    "/create_membership/{store_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def membership(
     store_id: int,
     membership_type: str = Query("Regular", enum=["Standard", "Premium", "Regular"]),
@@ -31,11 +35,14 @@ async def membership(
     )
 
 
-@router.put("/update_membership/{store_id}")
+@router.put(
+    "/update_membership/{store_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def update_membership_type(
     store_id: int,
     membership_type: str = Query("Regular", enum=["Standard", "Premium", "Regular"]),
-    activate: str = Query("yes", enum=["no", "yes"]),
     activation_type: str = Query("subscription", enum=["one_time", "subscription"]),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
@@ -43,7 +50,6 @@ async def update_membership_type(
     return await membership_service.update(
         store_id=store_id,
         membership_type=membership_type,
-        activate=activate,
         activation_type=activation_type,
         db=db,
         payload=payload,
@@ -96,78 +102,42 @@ async def view_member_list(
 
 
 @router.get(
-    "/active_profile/{store_id}",
+    "/selected_profiles/{store_id}",
     response_model=StandardResponse[PaginatedMetadata[MembershipRes]],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def active_members(
+async def selected_members(
     store_id: int,
+    member_status: str = Query(
+        "active_members",
+        enum=[
+            "inactive_members",
+            "paused_members",
+            "deleted_members",
+            "active_members",
+        ],
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await membership_service.view_active_members(
-        store_id=store_id, db=db, payload=payload, page=page, limit=limit
+    return await membership_service.view_selected_members(
+        store_id=store_id,
+        db=db,
+        member_status=member_status,
+        payload=payload,
+        page=page,
+        limit=limit,
     )
 
 
-@router.get(
-    "/inactive_profile/{store_id}",
-    response_model=StandardResponse[PaginatedMetadata[MembershipRes]],
+@router.put(
+    "/pause_membership",
+    response_model=StandardResponse,
     response_model_exclude_none=True,
-    response_model_exclude_defaults=True,
 )
-async def inactive_members(
-    store_id: int,
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await membership_service.view_inactive_members(
-        store_id, db=db, payload=payload, page=page, limit=limit
-    )
-
-
-@router.get(
-    "/paused_profile/{store_id}",
-    response_model=StandardResponse[PaginatedMetadata[MembershipRes]],
-    response_model_exclude_none=True,
-    response_model_exclude_defaults=True,
-)
-async def paused_subscriptions(
-    store_id: int,
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await membership_service.view_paused_members(
-        store_id=store_id, db=db, payload=payload, page=page, limit=limit
-    )
-
-
-@router.get(
-    "/deleted_profile/{store_id}",
-    response_model=StandardResponse[PaginatedMetadata[MembershipRes]],
-    response_model_exclude_none=True,
-    response_model_exclude_defaults=True,
-)
-async def deleted_profile(
-    store_id: int,
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await membership_service.view_inactive_members(
-        store_id=store_id, db=db, payload=payload, page=page, limit=limit
-    )
-
-
-@router.put("/pause_membership")
 async def take_a_break(
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
@@ -175,7 +145,11 @@ async def take_a_break(
     return await membership_service.pause_membership(db=db, payload=payload)
 
 
-@router.put("/reactivate_membership")
+@router.put(
+    "/reactivate_membership",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def reactivation(
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
@@ -183,7 +157,11 @@ async def reactivation(
     return await membership_service.reactivate_membership(db=db, payload=payload)
 
 
-@router.put("/restore_profile/{store_id}")
+@router.put(
+    "/restore_profile/{store_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def restore_deleted_member(
     store_id: int,
     membership_id: int,
@@ -195,7 +173,11 @@ async def restore_deleted_member(
     )
 
 
-@router.delete("/delete_membership?{store_id}/{membership_id}")
+@router.delete(
+    "/delete_membership?{store_id}/{membership_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_membership(
     store_id: int,
     membership_id: int,
