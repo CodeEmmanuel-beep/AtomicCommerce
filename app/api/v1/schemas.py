@@ -7,9 +7,9 @@ from pydantic import (
     field_validator,
     ValidationInfo,
 )
-from fastapi import Form, File, UploadFile
+from fastapi import Form
 from typing import Optional, List, TypeVar, Generic, Any
-from datetime import datetime, date
+from datetime import datetime
 from app.utils.supabase_url import get_public_url
 from decimal import Decimal
 from enum import Enum
@@ -71,7 +71,6 @@ class UserResponse(BaseModel):
     email: str
     nationality: str
     address: str | None = None
-    membership: List = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -558,12 +557,11 @@ class MembershipResponse(BaseModel):
 
 
 class MembershipRes(BaseModel):
-    profile: ProfileResponse
+    user: ProfileResponse
     membership_type: str
-    period_of_membership: str = Field(default_factory=str)
-    start_date: Optional[date]
-    pause_date: Optional[date] = None
-    reativation_data: Optional[date] = None
-    delete_date: Optional[date] = None
+    start_date: datetime
+    pause_date: Optional[datetime] = None
+    reativation_data: Optional[datetime] = None
+    delete_date: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
