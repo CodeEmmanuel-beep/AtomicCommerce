@@ -113,7 +113,6 @@ async def selected_members(
         "active_members",
         enum=[
             "inactive_members",
-            "paused_members",
             "deleted_members",
             "active_members",
         ],
@@ -131,30 +130,6 @@ async def selected_members(
         page=page,
         limit=limit,
     )
-
-
-@router.put(
-    "/pause_membership",
-    response_model=StandardResponse,
-    response_model_exclude_none=True,
-)
-async def take_a_break(
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await membership_service.pause_membership(db=db, payload=payload)
-
-
-@router.put(
-    "/reactivate_membership",
-    response_model=StandardResponse,
-    response_model_exclude_none=True,
-)
-async def reactivation(
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await membership_service.reactivate_membership(db=db, payload=payload)
 
 
 @router.put(
