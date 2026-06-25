@@ -449,7 +449,9 @@ class Membership(Base):
     delete_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    reactivation_date: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    reactivation_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     start_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -522,6 +524,8 @@ class Notification(Base):
     notified_user: Mapped[int] = mapped_column(Integer, index=True)
     status: Mapped[str] = mapped_column(String, nullable=True)
     membership_type: Mapped[str] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     time_of_op: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
