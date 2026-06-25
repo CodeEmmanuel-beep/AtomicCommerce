@@ -150,7 +150,7 @@ async def cart_global_invalidation():
 
 async def member_invalidation(user_id: int):
     cursor = 0
-    pattern = f"members:v*:{user_id}:*"
+    pattern = f"membership:{user_id}:*"
     delete = False
     while True:
         cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
@@ -266,6 +266,8 @@ async def run_router():
                                     ),
                                     status=payload.get("status"),
                                     membership_type=payload.get("type"),
+                                    is_active=payload.get("is_active"),
+                                    is_deleted=payload.get("is_deleted"),
                                 )
                                 await notification_queue.put(notice)
                                 user_id = payload.get("user_id")
