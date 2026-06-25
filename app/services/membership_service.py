@@ -29,13 +29,14 @@ from app.utils.redis import (
     member_global_invalidation,
 )
 from app.utils.helper import store_auth
-import asyncio
 from app.database.config import settings
 
 logger = get_logger("membership")
 
 
-async def make_member(store_id, membership_type, activation_type, db, payload):
+async def make_member(
+    store_id, background_task, membership_type, activation_type, db, payload
+):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized user tried to access make_member endpoint")
@@ -116,11 +117,13 @@ async def make_member(store_id, membership_type, activation_type, db, payload):
     logger.info(
         f"member crerated with user_id: '{user_id}' and membership_type: '{membership_type}'"
     )
-    await member_global_invalidation()
+    background_task.add_task(member_global_invalidation)
     return StandardResponse(status="success", message="membership created", data=None)
 
 
-async def update(store_id, membership_type, activation_type, db, payload):
+async def update(
+    store_id, membership_type, background_task, activation_type, db, payload
+):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized user tried to assess make_member endpoint")
@@ -132,6 +135,7 @@ async def update(store_id, membership_type, activation_type, db, payload):
             .where(
                 Membership.user_id == user_id,
                 Membership.store_id == store_id,
+                Membership.is_deleted.is_(False),
             )
             .with_for_update(of=Membership)
         )
@@ -176,7 +180,7 @@ async def update(store_id, membership_type, activation_type, db, payload):
             subscribe.price_id = price_map[membership_type]
             subscribe.plan_price = None
         await db.commit()
-        await member_invalidation(user_id)
+        background_task.add_task(member_invalidation, user_id)
     except HTTPException:
         await db.rollback()
         raise
@@ -195,7 +199,8 @@ async def update(store_id, membership_type, activation_type, db, payload):
     logger.info(
         f"user: {user_id} successfully updated their membership_type to '{membership_type}'"
     )
-    await member_global_invalidation()
+    background_task.add_task(member_global_invalidation)
+    background_task.add_task(member_invalidation)
     return StandardResponse(
         status="success", message="membership type updated", data=None
     )
@@ -206,7 +211,7 @@ async def view_membership(store_id, db, payload):
     if not user_id:
         logger.warning("unauthorized attempt to access view_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    cache_key = f"membership:{store_id}:{user_id}"
+    cache_key = f"membership:{user_id}:{store_id}"
     cached_member = await cache(cache_key)
     if cached_member:
         logger.info("cached hit at view_member endpoint user %s", user_id)
@@ -217,8 +222,7 @@ async def view_membership(store_id, db, payload):
         .where(
             Membership.user_id == user_id,
             Membership.store_id == store_id,
-            ~Membership.is_deleted,
-            ~Membership.is_pause,
+            Membership.is_deleted.is_(False),
         )
     )
     member = (await db.execute(stmt)).scalar_one_or_none()
@@ -251,7 +255,11 @@ async def view_subscription(member_id, db, payload):
     stmt = (
         select(Subscription)
         .join(Membership, Membership.id == Subscription.membership_id)
-        .where(Membership.user_id == user_id, Subscription.membership_id == member_id)
+        .where(
+            Membership.user_id == user_id,
+            Subscription.membership_id == member_id,
+            Membership.is_deleted.is_(False),
+        )
     )
     subscription = (await db.execute(stmt)).scalar_one_or_none()
     if not subscription:
@@ -264,7 +272,7 @@ async def view_subscription(member_id, db, payload):
     full_response = StandardResponse(
         status="success", message="subscription information", data=subscription_data
     )
-    await cached(cache_key, full_response, ttl=1800)
+    await cached(cache_key, full_response, ttl=300)
     logger.info("subscription data cached successfully")
     return full_response
 
@@ -274,7 +282,7 @@ async def view_memberships(db, payload):
     if not user_id:
         logger.warning("unauthorized attempt to access view_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    cache_key = f"membership_list:{user_id}"
+    cache_key = f"membership:{user_id}:v"
     cached_member = await cache(cache_key)
     if cached_member:
         logger.info("cached hit at view_member endpoint user %s", user_id)
@@ -284,8 +292,7 @@ async def view_memberships(db, payload):
         .options(selectinload(Membership.store))
         .where(
             Membership.user_id == user_id,
-            ~Membership.is_deleted,
-            ~Membership.is_pause,
+            Membership.is_deleted.is_(False),
         )
     )
     members = (await db.execute(stmt)).scalars().all()
@@ -322,7 +329,6 @@ async def view_selected_members(store_id, member_status, page, limit, db, payloa
     if member_status not in [
         "active_members",
         "inactive_members",
-        "paused_members",
         "deleted_members",
     ]:
         raise HTTPException(
@@ -395,40 +401,45 @@ async def restore_membership(store_id, membership_id, db, payload):
     if not user_id:
         logger.warning("unauthorized attempt to access restore_membership endpoint")
         raise HTTPException(status_code=401, detail="not authorized")
-    store_cte = (
-        select(Store)
-        .where(Store.id == store_id)
-        .where(
-            or_(
-                exists().where(
-                    store_owners.c.users_id == user_id,
-                    store_owners.c.stores_id == store_id,
-                ),
-                exists().where(
-                    store_staffs.c.users_id == user_id,
-                    store_staffs.c.stores_id == store_id,
-                ),
-            )
-        )
-    ).cte("portal_access")
-    membership_stmt = (
-        select(Membership)
-        .join(store_cte, Membership.store_id == store_cte.c.id)
-        .where(Membership.id == membership_id)
-    )
-    restore = (await db.execute(membership_stmt)).scalar_one_or_none()
-    if not restore:
-        logger.warning(
-            f"user: {user_id},entered invalid credentials at the restore_membership endpoint"
-        )
-        raise HTTPException(status_code=404, detail="no member to restore")
-    if not restore.is_deleted:
-        return StandardResponse(
-            status="success", message="membership is not deleted", data=None
-        )
-    restore.is_deleted = False
     try:
+        store_cte = (
+            select(Store)
+            .where(Store.id == store_id)
+            .where(
+                or_(
+                    exists().where(
+                        store_owners.c.users_id == user_id,
+                        store_owners.c.stores_id == store_id,
+                    ),
+                    exists().where(
+                        store_staffs.c.users_id == user_id,
+                        store_staffs.c.stores_id == store_id,
+                    ),
+                )
+            )
+        ).cte("portal_access")
+        membership_stmt = (
+            select(Membership)
+            .join(store_cte, Membership.store_id == store_cte.c.id)
+            .where(Membership.id == membership_id)
+            .with_for_update(of=Membership)
+        )
+        restore = (await db.execute(membership_stmt)).scalar_one_or_none()
+        if not restore:
+            logger.warning(
+                f"user: {user_id},entered invalid credentials at the restore_membership endpoint"
+            )
+            raise HTTPException(status_code=404, detail="no member to restore")
+        if not restore.is_deleted:
+            return StandardResponse(
+                status="success", message="membership is not deleted", data=None
+            )
+        restore.is_deleted = False
+        restore.reactivation_date = datetime.now(timezone.utc)
         await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -448,51 +459,43 @@ async def restore_membership(store_id, membership_id, db, payload):
     return StandardResponse(status="success", message="membership restored", data=None)
 
 
-async def delete_member(store_id, membership_id, db, payload):
+async def delete_member(store_id, membership_id, background_task, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt to access delete_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    store_cte = (
-        select(Store)
-        .join(Membership, Store.id == Membership.store_id)
-        .where(Store.id == store_id)
-        .where(
-            or_(
-                exists().where(Membership.user_id == user_id),
-                exists().where(
-                    store_owners.c.users_id == user_id,
-                    store_owners.c.stores_id == store_id,
-                ),
-                exists().where(
-                    store_staffs.c.users_id == user_id,
-                    store_staffs.c.stores_id == store_id,
-                ),
-            )
-        )
-    ).cte("portal_access")
-    membership_stmt = (
-        select(Membership)
-        .join(store_cte, Membership.store_id == store_cte.c.id)
-        .where(Membership.id == membership_id)
-    )
-    member = (await db.execute(membership_stmt)).scalar_one_or_none()
-    if not member:
-        logger.warning(
-            f"user: {user_id}, entered invalid credentials at delete_member endpoint"
-        )
-        raise HTTPException(status_code=404, detail="not a member")
-    if member.is_deleted:
-        return StandardResponse(
-            status="success", message="membership is already deleted", data=None
-        )
-    member.is_deleted = True
-    member.is_active = False
-    member.is_pause = False
-    today = func.now()
-    member.delete_date = today
+    if membership_id:
+        await store_auth(store_id, db, payload)
+        base_filter = Membership.id == membership_id
+    else:
+        base_filter = Membership.user_id == user_id
+        target_user = user_id
     try:
+        membership_stmt = (
+            select(Membership)
+            .where(Membership.store_id == store_id)
+            .where(base_filter)
+            .with_for_update()
+        )
+        member = (await db.execute(membership_stmt)).scalar_one_or_none()
+        if not member:
+            logger.warning(
+                f"user: {user_id}, entered invalid credentials at delete_member endpoint"
+            )
+            raise HTTPException(status_code=404, detail="not a member")
+        if member.is_deleted:
+            return StandardResponse(
+                status="success", message="membership is already deleted", data=None
+            )
+        member.is_deleted = True
+        member.is_active = False
+        member.delete_date = datetime.now(timezone.utc)
+        if membership_id:
+            target_user = member.user_id
         await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -506,6 +509,7 @@ async def delete_member(store_id, membership_id, db, payload):
             "error occured while deleting membership user affected: %s", user_id
         )
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"user: {user_id} deleted their membership")
-    await member_global_invalidation()
+    logger.info(f"user: {target_user} deleted their membership")
+    background_task.add_task(member_global_invalidation)
+    background_task.add_task(member_invalidation, target_user)
     return StandardResponse(status="success", message="membership deleted", data=None)
