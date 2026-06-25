@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from app.database.get import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.verify_jwt import verify_token
@@ -21,6 +21,7 @@ router = APIRouter(prefix="/member", tags=["Membership"])
 )
 async def membership(
     store_id: int,
+    background_task: BackgroundTasks,
     membership_type: str = Query("Regular", enum=["Standard", "Premium", "Regular"]),
     activation_type: str = Query("subscription", enum=["one_time", "subscription"]),
     db: AsyncSession = Depends(get_db),
@@ -28,6 +29,7 @@ async def membership(
 ):
     return await membership_service.make_member(
         store_id=store_id,
+        background_task=background_task,
         membership_type=membership_type,
         activation_type=activation_type,
         db=db,
@@ -42,6 +44,7 @@ async def membership(
 )
 async def update_membership_type(
     store_id: int,
+    background_task: BackgroundTasks,
     membership_type: str = Query("Regular", enum=["Standard", "Premium", "Regular"]),
     activation_type: str = Query("subscription", enum=["one_time", "subscription"]),
     db: AsyncSession = Depends(get_db),
@@ -49,6 +52,7 @@ async def update_membership_type(
 ):
     return await membership_service.update(
         store_id=store_id,
+        background_task=background_task,
         membership_type=membership_type,
         activation_type=activation_type,
         db=db,
@@ -149,16 +153,21 @@ async def restore_deleted_member(
 
 
 @router.delete(
-    "/delete_membership?{store_id}/{membership_id}",
+    "/delete_membership/{store_id}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
 async def delete_membership(
     store_id: int,
-    membership_id: int,
+    background_task: BackgroundTasks,
+    membership_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await membership_service.delete_member(
-        store_id=store_id, membership_id=membership_id, db=db, payload=payload
+        store_id=store_id,
+        background_task=background_task,
+        membership_id=membership_id,
+        db=db,
+        payload=payload,
     )
