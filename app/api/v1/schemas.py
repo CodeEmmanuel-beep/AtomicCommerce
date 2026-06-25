@@ -80,6 +80,8 @@ class NotificationResponse(BaseModel):
     notification: str
     membership_type: str | None = None
     status: str | None = None
+    is_active: bool | None = None
+    is_deleted: bool | None = None
     is_read: bool = Field(default=False)
     time_of_op: datetime | None = None
     created_at: datetime
@@ -539,7 +541,6 @@ class OrderResponse(BaseModel):
 
 
 class MembershipResponse(BaseModel):
-    user: ProfileResponse
     id: int
     membership_type: str
     is_active: bool = Field(default=False)
