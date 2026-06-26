@@ -71,7 +71,7 @@ async def create(store_id: int, product_id: int, stock_quantity: int, db, payloa
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("inventory created successfully for product: %s", product_id)
-    return {"message": "inventory created"}
+    return StandardResponse(status="success", message="inventory created", data=None)
 
 
 async def read(store_id, inventory_id, db, payload):
@@ -82,10 +82,14 @@ async def read(store_id, inventory_id, db, payload):
         logger.warning("user: %s, tried fetching a non existent inventory", user_id)
         raise HTTPException(status_code=404, detail="inventory not found")
     logger.info("read function returned data for user %s", user_id)
-    return {
-        "stock_quantity": result.stock_quantity,
-        "time_of_stock": result.last_updated,
-    }
+    return StandardResponse(
+        status="success",
+        message="inventory",
+        data={
+            "stock_quantity": result.stock_quantity,
+            "time_of_stock": result.last_updated,
+        },
+    )
 
 
 async def read_all(store_id, page, limit, db, payload):
@@ -163,7 +167,7 @@ async def update(store_id, inventory_id, stock_quantity, db, payload):
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("inventory: %s, updated successfully", inventory_id)
-    return {"message": "inventory updated"}
+    return StandardResponse(status="success", message="inventory updated", data=None)
 
 
 async def delete(store_id: int, inventory_id: int, db, payload):
@@ -197,4 +201,4 @@ async def delete(store_id: int, inventory_id: int, db, payload):
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("inventory: %s, successfully deleted", inventory_id)
-    return {"message": "inventory deleted"}
+    return StandardResponse(status="success", message="inventory deleted", data=None)
