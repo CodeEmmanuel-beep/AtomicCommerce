@@ -431,40 +431,40 @@ class SubscriptionResponse(BaseModel):
 
 class ProductReviewResponse(BaseModel):
     id: int
-    profile: ProfileResponse
+    user: ProfileResponse
     edited: bool = Field(default=False)
     review_text: str
     ratings: int
     product_reply_count: int = Field(default=0)
-    review_reaction_count: int
+    product_review_count: int = Field(default=0)
+    product_review_reaction_count: int = Field(default=0)
     reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
-    date_of_review: Optional[datetime]
+    time_of_post: Optional[datetime]
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class StoreReviewResponse(BaseModel):
     id: int
-    profile: ProfileResponse
+    user: ProfileResponse
     edited: bool = Field(default=False)
     review_text: str
     ratings: int
     store_reply_count: int = Field(default=0)
-    review_reaction_count: int
+    store_review_count: int = Field(default=0)
+    store_review_reaction_count: int = Field(default=0)
     reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
     reply: List[ReplyResponse] = Field(default_factory=list)
-    date_of_review: Optional[datetime]
+    time_of_post: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class Review(BaseModel):
     id: int | None = None
-    product_id: int
-    store_id: int
+    product_id: int | None = None
+    store_id: int | None = None
     review_text: str
-    ratings: int
-    date_of_review: Optional[datetime]
 
 
 class CategoryResponse(BaseModel):
