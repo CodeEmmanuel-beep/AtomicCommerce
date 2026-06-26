@@ -543,6 +543,8 @@ class Review(Base):
     ratings = Column(Integer)
     product_reply_count: Mapped[int] = mapped_column(Integer, default=0)
     store_reply_count: Mapped[int] = mapped_column(Integer, default=0)
+    product_review_count: Mapped[int] = mapped_column(Integer, default=0)
+    store_review_count: Mapped[int] = mapped_column(Integer, default=0)
     product_review_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     store_review_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     edited = Column(Boolean, default=False)
@@ -637,7 +639,6 @@ class CartItem(Base):
 
     product = relationship("Product", back_populates="cartitems")
     cart = relationship("Cart", back_populates="cartitems")
-    orderitem = relationship("OrderItem", back_populates="cartitem", uselist=False)
 
 
 class Cart(Base):
@@ -729,7 +730,6 @@ class OrderItem(Base):
     __tablename__ = "orderitem"
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("order.id"), index=True)
-    cartitem_id = Column(Integer, ForeignKey("cartitem.id"), index=True)
     product_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("product.id"), index=True
     )
@@ -738,4 +738,3 @@ class OrderItem(Base):
 
     product = relationship("Product", back_populates="orderitem")
     order = relationship("Order", back_populates="orderitems")
-    cartitem = relationship("CartItem", back_populates="orderitem")
