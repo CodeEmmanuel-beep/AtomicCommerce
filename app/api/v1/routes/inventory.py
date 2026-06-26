@@ -1,13 +1,18 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.get import get_db
+from app.api.v1.schemas import StandardResponse
 from app.services import inventory_service
 from app.auth.verify_jwt import verify_token
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
 
-@router.post("/create_inventory")
+@router.post(
+    "/create_inventory",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def write_inventory(
     store_id: int,
     product_id: int,
@@ -24,7 +29,9 @@ async def write_inventory(
     )
 
 
-@router.get("/get_inventory")
+@router.get(
+    "/get_inventory", response_model=StandardResponse, response_model_exclude_none=True
+)
 async def read_inventory(
     store_id: int,
     inventory_id: int,
@@ -36,7 +43,11 @@ async def read_inventory(
     )
 
 
-@router.get("/store_inventory_list")
+@router.get(
+    "/store_inventory_list",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def read_store_inventory(
     store_id: int,
     page: int = Query(1, ge=1),
@@ -49,7 +60,11 @@ async def read_store_inventory(
     )
 
 
-@router.put("/update_inventory")
+@router.put(
+    "/update_inventory",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def edit_inventory(
     store_id: int,
     inventory_id: int,
@@ -66,7 +81,11 @@ async def edit_inventory(
     )
 
 
-@router.delete("/delete_inventory")
+@router.delete(
+    "/delete_inventory",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_inventory(
     store_id: int,
     inventory_id: int,
