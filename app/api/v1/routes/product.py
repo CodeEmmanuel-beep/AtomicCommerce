@@ -14,7 +14,9 @@ from decimal import Decimal
 router = APIRouter(prefix="/product", tags=["Products"])
 
 
-@router.post("/add_product")
+@router.post(
+    "/add_product", response_model=StandardResponse, response_model_exclude_none=True
+)
 async def create_product(
     store_id: int = Form(...),
     sub_category_name: str = Form(...),
@@ -45,7 +47,9 @@ async def create_product(
     )
 
 
-@router.post("/product_images")
+@router.post(
+    "/product_images", response_model=StandardResponse, response_model_exclude_none=True
+)
 async def upload_product_images(
     store_id: int = Form(...),
     product_id: int = Form(...),
@@ -80,7 +84,9 @@ async def product_images_list(
     )
 
 
-@router.put("/edit_product")
+@router.put(
+    "/edit_product", response_model=StandardResponse, response_model_exclude_none=True
+)
 async def product_change(
     store_id: int,
     product_id: int,
@@ -152,7 +158,11 @@ async def search(
     )
 
 
-@router.delete("/delete_product_image/{store_id}/{product_id}/{image_id}")
+@router.delete(
+    "/delete_product_image/{store_id}/{product_id}/{image_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_image(
     store_id: int,
     product_id: int,
@@ -171,7 +181,11 @@ async def delete_image(
     )
 
 
-@router.delete("/delete/{store_id}/{product_id}", response_model=StandardResponse)
+@router.delete(
+    "/delete/{store_id}/{product_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_product(
     store_id: int,
     product_id: int,
