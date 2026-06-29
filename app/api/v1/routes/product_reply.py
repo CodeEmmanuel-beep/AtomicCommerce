@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from app.services import product_reply_service
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.schemas import (
@@ -10,16 +10,23 @@ from app.api.v1.schemas import (
 from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
 
-router = APIRouter(prefix="/product_replies", tags=["Product_Reply"])
+router = APIRouter(prefix="/product_replies", tags=["Product Reply"])
 
 
-@router.post("/create_product_reply")
+@router.post(
+    "/create_product_reply",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def post_product_reply(
     reply: Reply,
+    background_task: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await product_reply_service.reply(reply=reply, db=db, payload=payload)
+    return await product_reply_service.reply(
+        reply=reply, background_task=background_task, db=db, payload=payload
+    )
 
 
 @router.get(
@@ -44,7 +51,11 @@ async def product_reply_list(
     )
 
 
-@router.put("/edit_product_reply")
+@router.put(
+    "/edit_product_reply",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def update_product_reply(
     reply: Reply,
     db: AsyncSession = Depends(get_db),
@@ -53,7 +64,11 @@ async def update_product_reply(
     return await product_reply_service.update(reply=reply, db=db, payload=payload)
 
 
-@router.delete("/product_reply_delete")
+@router.delete(
+    "/product_reply_delete",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_product_reply(
     reply: Reply,
     db: AsyncSession = Depends(get_db),
