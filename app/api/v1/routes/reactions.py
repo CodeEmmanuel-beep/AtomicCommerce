@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, BackgroundTasks
 from app.database.get import get_db
 from app.api.v1.schemas import ReactionType
 from app.auth.verify_jwt import verify_token
@@ -11,6 +11,7 @@ router = APIRouter(prefix="/react", tags=["Reactions"])
 @router.post("/react")
 async def react_type(
     reaction_type: ReactionType,
+    background_task: BackgroundTasks,
     reply_id: int | None = None,
     review_id: int | None = None,
     db: AsyncSession = Depends(get_db),
@@ -18,6 +19,7 @@ async def react_type(
 ):
     return await reactions_service.react_type(
         reaction_type=reaction_type,
+        background_task=background_task,
         reply_id=reply_id,
         review_id=review_id,
         db=db,
