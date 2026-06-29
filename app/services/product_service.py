@@ -154,7 +154,9 @@ async def create(
             )
         logger.exception("error while saving product data")
         raise HTTPException(status_code=500, detail="internal server error")
-    return {"status": "success", "message": "product added to shelve"}
+    return StandardResponse(
+        status="success", message="product added to shelve", data=None
+    )
 
 
 async def add_image(
@@ -226,7 +228,9 @@ async def add_image(
             )
         logger.exception("error occurred while uploading product images")
         raise HTTPException(status_code=500, detail="internal server error")
-    return {"message": "product image uploaded successfully"}
+    return StandardResponse(
+        status="success", message="product image uploaded successfully", data=None
+    )
 
 
 async def view_product_pics(store_id, product_id, db):
@@ -285,7 +289,9 @@ async def delete_images(store_id, product_id, image_id, db, payload, get_supabas
             context_2="successfully removed orphaned product images",
         )
     logger.info("successfully deleted image: %s", image_id)
-    return {"status": "success", "message": "product image deleted"}
+    return StandardResponse(
+        status="success", message="product image deleted", data=None
+    )
 
 
 async def product_change(
@@ -418,7 +424,9 @@ async def product_change(
             )
         logger.exception("error occurred while updating product data")
         raise HTTPException(status_code=500, detail="internal server error")
-    return {"status": "success", "message": "product updated successfully"}
+    return StandardResponse(
+        status="success", message="product updated successfully", data=None
+    )
 
 
 async def list_products(
@@ -599,12 +607,12 @@ async def delete_one(store_id, product_id, background_task, db, payload, get_sup
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("deleted product %s", product_id)
-    return {
-        "status": "success",
-        "message": "deleted product",
-        "data": {
+    return StandardResponse(
+        status="success",
+        message="deleted product",
+        data={
             "id": data_id,
             "user_id": user_id,
             "deleted": True,
         },
-    }
+    )
