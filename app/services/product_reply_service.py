@@ -14,12 +14,16 @@ from app.models import (
     React,
     User,
     Store,
+    Order,
+    OrderItem,
+    OrderStatus,
 )
 from sqlalchemy import select, func, exists, case
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.utils.redis import (
     product_reply_invalidation,
+    product_review_invalidation,
     cache,
     cache_version,
     cached,
@@ -29,40 +33,65 @@ from app.utils.helper import react_summary
 logger = get_logger("product_reply")
 
 
-async def reply(reply, db, payload):
+async def reply(reply, background_task, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at create reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = select(
-        Review,
-        exists()
-        .where(Reply.user_id == user_id, Reply.review_id == reply.review_id)
-        .label("already_replied"),
-    ).where(Review.id == reply.review_id, Review.product_id == reply.product_id)
-    row = (await db.execute(stmt)).first()
-    if not row:
-        logger.warning("user %s, tried replying to a non-existent review", user_id)
-        raise HTTPException(status_code=404, detail="review not found")
-    review_obj, reply_exist = row
-    if reply_exist:
-        logger.warning(
-            "user: %s, tried replying to a review more than once, review: %s",
-            user_id,
-            reply.review_id,
+    purchase_check_stmt = select(
+        exists().where(
+            OrderItem.product_id == reply.product_id,
+            Order.id == OrderItem.order_id,
+            Order.user_id == user_id,
+            Order.status.in_([OrderStatus.processing, OrderStatus.delivered]),
         )
-        raise HTTPException(status_code=400, detail="only one reply per review")
-    new_reply = Reply(
-        user_id=user_id,
-        product_id=reply.product_id,
-        review_id=reply.review_id,
-        reply_text=reply.reply_text,
     )
+    has_purchased = await db.scalar(purchase_check_stmt)
+    if not has_purchased:
+        logger.warning(
+            "User %s tried to reply to a review for product %s without a valid purchase history",
+            user_id,
+            reply.product_id,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="you can only reply to reviews on purchased products",
+        )
     try:
-        review_obj.product_reply_count = Review.product_reply_count + 1
+        stmt = (
+            select(
+                Review,
+                exists().where(
+                    Reply.user_id == user_id, Reply.review_id == reply.review_id
+                ),
+            )
+            .where(Review.id == reply.review_id, Review.product_id == reply.product_id)
+            .with_for_update()
+        )
+        row = (await db.execute(stmt)).fetchone()
+        if not row:
+            logger.warning("user %s, tried replying to a non-existent review", user_id)
+            raise HTTPException(status_code=404, detail="review not found")
+        review_obj, reply_exist = row
+        if reply_exist:
+            logger.warning(
+                "user: %s, tried replying to a review more than once, review: %s",
+                user_id,
+                reply.review_id,
+            )
+            raise HTTPException(status_code=400, detail="only one reply per review")
+        new_reply = Reply(
+            user_id=user_id,
+            product_id=reply.product_id,
+            review_id=reply.review_id,
+            reply_text=reply.reply_text,
+        )
+        review_obj.product_reply_count += 1
         db.add(new_reply)
         await db.commit()
-        await product_reply_invalidation(reply.product_id)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error occurred while making reply user: %s", user_id)
@@ -71,8 +100,12 @@ async def reply(reply, db, payload):
         await db.rollback()
         logger.exception("error occurred while making reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
+    background_task.add_task(product_reply_invalidation, reply.product_id)
+    background_task.add_task(product_review_invalidation, reply.product_id)
     logger.info("reply successfully saved in database responder: %s", user_id)
-    return {"message": "reply successfully posted"}
+    return StandardResponse(
+        status="success", message="reply successfully posted", data=None
+    )
 
 
 async def view_replies(product_id, review_id, page, limit, db):
@@ -182,7 +215,9 @@ async def update(reply, db, payload):
         logger.exception("error occurred while editing reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("reply update by user '%s' successfully saved in database", user_id)
-    return {"message": "reply successfully edited"}
+    return StandardResponse(
+        status="success", message="reply successfully edited", data=None
+    )
 
 
 async def delete_reply(reply, db, payload):
@@ -219,4 +254,4 @@ async def delete_reply(reply, db, payload):
         logger.exception("error occurred while deleting reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("user '%s' successfully deleted their reply", user_id)
-    return {"message": "deleted reply"}
+    return StandardResponse(status="success", message="deleted reply", data=None)
