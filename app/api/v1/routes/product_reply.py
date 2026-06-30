@@ -58,20 +58,31 @@ async def product_reply_list(
 )
 async def update_product_reply(
     reply: Reply,
+    background_task: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await product_reply_service.update(reply=reply, db=db, payload=payload)
+    return await product_reply_service.update(
+        reply=reply, background_task=background_task, db=db, payload=payload
+    )
 
 
 @router.delete(
-    "/product_reply_delete",
+    "/product_reply_delete/{reply_id}/{review_id}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
 async def delete_product_reply(
-    reply: Reply,
+    reply_id: int,
+    review_id: int,
+    background_task: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await product_reply_service.delete_reply(reply=reply, db=db, payload=payload)
+    return await product_reply_service.delete_reply(
+        reply_id=reply_id,
+        review_id=review_id,
+        background_task=background_task,
+        db=db,
+        payload=payload,
+    )
