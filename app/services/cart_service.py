@@ -31,11 +31,11 @@ async def add_item_to_cart(
         )
     logger.info(f"Creating cart for user {user_id}")
     subq = select(
-        select(exists().where(Store.id == store_id, ~Store.is_deleted))
+        select(exists().where(Store.id == store_id, Store.is_deleted.is_(False)))
         .scalar_subquery()
         .label("store_check"),
         select(func.count(Cart.id))
-        .where(Cart.user_id == user_id, ~Cart.check_out)
+        .where(Cart.user_id == user_id, Cart.check_out.is_(False))
         .scalar_subquery()
         .label("cart_check"),
     )
@@ -62,7 +62,7 @@ async def add_item_to_cart(
             cart_stmt = (
                 select(Cart)
                 .options(selectinload(Cart.cartitems))
-                .where(Cart.user_id == user_id, ~Cart.check_out)
+                .where(Cart.user_id == user_id, Cart.check_out.is_(False))
                 .with_for_update()
             )
             result = await db.execute(cart_stmt)
@@ -81,7 +81,7 @@ async def add_item_to_cart(
             cart_stmt = (
                 select(Cart)
                 .options(selectinload(Cart.cartitems))
-                .where(Cart.user_id == user_id, ~Cart.check_out)
+                .where(Cart.user_id == user_id, Cart.check_out.is_(False))
                 .with_for_update()
             )
             result = await db.execute(cart_stmt)
@@ -104,15 +104,17 @@ async def add_item_to_cart(
     available = (
         await db.execute(
             select(
-                exists().where(
-                    and_(
+                exists(
+                    select(1)
+                    .select_from(Product)
+                    .join(Store, Product.store_id == Store.id)
+                    .join(Inventory, Inventory.product_id == Product.id)
+                    .where(
                         Store.id == store_id,
                         Product.id == product_id,
                         Product.product_availability == "available",
-                        ~Product.is_deleted,
+                        Product.is_deleted.is_(False),
                         Inventory.stock_quantity >= quantity,
-                        Product.id == Inventory.product_id,
-                        Product.store_id == Store.id,
                     )
                 )
             )
@@ -192,7 +194,7 @@ async def retrieve_cart(store_id, page, limit, db, payload):
         .where(
             Cart.user_id == user_id,
             Cart.store_id == store_id,
-            ~Cart.check_out,
+            Cart.check_out.is_(False),
         )
     )
     cart = (await db.execute(stmt)).scalar_one_or_none()
