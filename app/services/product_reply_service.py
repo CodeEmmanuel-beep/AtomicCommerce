@@ -39,11 +39,15 @@ async def reply(reply, background_task, db, payload):
         logger.warning("unauthorized attempt at create reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
     purchase_check_stmt = select(
-        exists().where(
-            OrderItem.product_id == reply.product_id,
-            Order.id == OrderItem.order_id,
-            Order.user_id == user_id,
-            Order.status.in_([OrderStatus.processing, OrderStatus.delivered]),
+        exists(
+            select(1)
+            .select_from(OrderItem)
+            .join(Order, OrderItem.order_id == Order.id)
+            .where(
+                OrderItem.product_id == reply.product_id,
+                Order.user_id == user_id,
+                Order.status.in_((OrderStatus.processing, OrderStatus.delivered)),
+            )
         )
     )
     has_purchased = await db.scalar(purchase_check_stmt)
@@ -65,7 +69,12 @@ async def reply(reply, background_task, db, payload):
                     Reply.user_id == user_id, Reply.review_id == reply.review_id
                 ),
             )
-            .where(Review.id == reply.review_id, Review.product_id == reply.product_id)
+            .join(Product, Review.product_id == Product.id)
+            .where(
+                Review.id == reply.review_id,
+                Review.product_id == reply.product_id,
+                Product.is_deleted.is_(False),
+            )
             .with_for_update()
         )
         row = (await db.execute(stmt)).fetchone()
@@ -123,15 +132,14 @@ async def view_replies(product_id, review_id, page, limit, db):
     ).desc()
     stmt = (
         select(Reply)
-        .join(User, Reply.user_id == User.id)
         .join(Product, Reply.product_id == Product.id)
-        .outerjoin(Store, Product.store_id == Store.id)
+        .join(User, Reply.user_id == User.id)
         .options(selectinload(Reply.user))
         .where(
             Reply.product_id == product_id,
-            ~Product.is_deleted,
+            Product.is_deleted.is_(False),
             Reply.review_id == review_id,
-            User.is_active,
+            User.is_active.is_(True),
         )
         .order_by(
             priority_case,
@@ -140,14 +148,14 @@ async def view_replies(product_id, review_id, page, limit, db):
     )
     total = (
         await db.execute(
-            select(func.count(Reply.id))
-            .join(User, Reply.user_id == User.id)
+            select(func.count(func.distinct(Reply.id)))
             .join(Product, Reply.product_id == Product.id)
+            .join(User, Reply.user_id == User.id)
             .where(
                 Reply.product_id == product_id,
-                ~Product.is_deleted,
+                Product.is_deleted.is_(False),
                 Reply.review_id == review_id,
-                User.is_active,
+                User.is_active.is_(True),
             )
         )
     ).scalar() or 0
@@ -159,53 +167,57 @@ async def view_replies(product_id, review_id, page, limit, db):
             status="success", message="no replies available", data=None
         )
     reply_ids = [rep.id for rep in reply]
-    all__summaries = await react_summary(
+    all_summaries = await react_summary(
         db, reply_ids, React.reply_id, Reply, Reply.product_id == product_id
     )
     items = []
     for rep in reply:
         rep_response = ReplyResponse.model_validate(rep)
-        rep_response.reactions = all__summaries.get(rep.id, ReactionsSummary())
+        rep_response.reactions = all_summaries.get(rep.id, ReactionsSummary())
         items.append(rep_response)
     data = PaginatedMetadata[ReplyResponse](
         items=items,
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = StandardResponse(status="success", message="replies", data=data)
-    await cached(cache_key, response, ttl=36000)
+    await cached(cache_key, response, ttl=30)
     logger.info("search for replies successfully returned data")
     return response
 
 
-async def update(reply, db, payload):
+async def update(reply, background_task, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at edit reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = (
-        select(Reply)
-        .where(
-            Reply.user_id == user_id,
-            Reply.product_id == reply.product_id,
-            Reply.id == reply.id,
-        )
-        .with_for_update()
-    )
-    db_reply = (await db.execute(stmt)).scalar_one_or_none()
-    if not db_reply:
-        logger.error("user: %s, tried editing a non-existent reply", user_id)
-        raise HTTPException(status_code=404, detail="reply not found")
-    has_changed = False
-    if reply.reply_text is not None and db_reply.reply_text != reply.reply_text:
-        logger.info("user %s, is updating their reply text", user_id)
-        db_reply.reply_text = reply.reply_text
-        has_changed = True
-    if not has_changed:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
     try:
+        stmt = (
+            select(Reply)
+            .join(Product, Reply.product_id == Product.id)
+            .where(
+                Reply.user_id == user_id,
+                Reply.product_id == reply.product_id,
+                Reply.id == reply.id,
+                Product.is_deleted.is_(False),
+            )
+            .with_for_update()
+        )
+        db_reply = (await db.execute(stmt)).scalar_one_or_none()
+        if not db_reply:
+            logger.error("user: %s, tried editing a non-existent reply", user_id)
+            raise HTTPException(status_code=404, detail="reply not found")
+        has_changed = False
+        if reply.reply_text is not None and db_reply.reply_text != reply.reply_text:
+            logger.info("user %s, is updating their reply text", user_id)
+            db_reply.reply_text = reply.reply_text
+            has_changed = True
+        if not has_changed:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
         db_reply.edited = True
         await db.commit()
-        await product_reply_invalidation(reply.product_id)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error occurred while editing reply user: %s", user_id)
@@ -214,37 +226,44 @@ async def update(reply, db, payload):
         await db.rollback()
         logger.exception("error occurred while editing reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
+    background_task.add_task(product_reply_invalidation, reply.product_id)
+    background_task.add_task(product_review_invalidation, reply.product_id)
     logger.info("reply update by user '%s' successfully saved in database", user_id)
     return StandardResponse(
         status="success", message="reply successfully edited", data=None
     )
 
 
-async def delete_reply(reply, db, payload):
+async def delete_reply(reply_id, review_id, background_task, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at delete_reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = (
-        select(Reply)
-        .options(selectinload(Reply.review))
-        .where(
-            Reply.user_id == user_id,
-            Reply.product_id == reply.product_id,
-            Reply.id == reply.id,
-        )
-    )
-    db_reply = (await db.execute(stmt)).scalar_one_or_none()
-    if not db_reply:
-        logger.error("user: %s, tried deleting a non-existent reply", user_id)
-        raise HTTPException(status_code=404, detail="reply not found")
+    product_id = None
     try:
+        stmt = (
+            select(Reply)
+            .options(selectinload(Reply.review))
+            .where(
+                Reply.user_id == user_id,
+                Reply.review_id == review_id,
+                Reply.id == reply_id,
+            )
+            .with_for_update()
+        )
+        db_reply = (await db.execute(stmt)).scalar_one_or_none()
+        if not db_reply:
+            logger.error("user: %s, tried deleting a non-existent reply", user_id)
+            raise HTTPException(status_code=404, detail="reply not found")
+        product_id = db_reply.product_id
         db_reply.review.product_reply_count = max(
             0, (db_reply.review.product_reply_count or 0) - 1
         )
         await db.delete(db_reply)
         await db.commit()
-        await product_reply_invalidation(reply.product_id)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error occurred while deleting reply user: %s", user_id)
@@ -253,5 +272,7 @@ async def delete_reply(reply, db, payload):
         await db.rollback()
         logger.exception("error occurred while deleting reply user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
+    background_task.add_task(product_reply_invalidation, product_id)
+    background_task.add_task(product_review_invalidation, product_id)
     logger.info("user '%s' successfully deleted their reply", user_id)
     return StandardResponse(status="success", message="deleted reply", data=None)
