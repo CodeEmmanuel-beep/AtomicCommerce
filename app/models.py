@@ -270,6 +270,7 @@ class Reply(Base):
     store_reply_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     time_of_post = Column(DateTime(timezone=True), server_default=func.now())
 
+    __table_args__ = (UniqueConstraint("review_id", name="unique_reply"),)
     user = relationship("User", back_populates="replies")
     review = relationship("Review", back_populates="replies")
     product = relationship("Product", back_populates="replies")
@@ -543,8 +544,6 @@ class Review(Base):
     ratings = Column(Integer)
     product_reply_count: Mapped[int] = mapped_column(Integer, default=0)
     store_reply_count: Mapped[int] = mapped_column(Integer, default=0)
-    product_review_count: Mapped[int] = mapped_column(Integer, default=0)
-    store_review_count: Mapped[int] = mapped_column(Integer, default=0)
     product_review_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     store_review_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     edited = Column(Boolean, default=False)
@@ -580,14 +579,10 @@ class React(Base):
     type: Mapped[ReactionType] = mapped_column(SQLEnum(ReactionType), nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
     reply_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("reply.id", ondelete="CASCADE"),
-        index=True,
+        Integer, ForeignKey("reply.id", ondelete="CASCADE"), index=True, nullable=True
     )
     review_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("review.id", ondelete="CASCADE"),
-        index=True,
+        Integer, ForeignKey("review.id", ondelete="CASCADE"), index=True, nullable=True
     )
     time_of_reaction: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), index=True
