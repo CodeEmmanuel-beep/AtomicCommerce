@@ -174,8 +174,8 @@ async def add_image(
         .join(Product, Store.id == Product.store_id)
         .where(
             Store.id == store_id,
-            ~Store.is_deleted,
-            ~Product.is_deleted,
+            Store.is_deleted.is_(False),
+            Product.is_deleted.is_(False),
             Product.id == product_id,
         )
     )
@@ -313,7 +313,7 @@ async def product_change(
         .where(
             Product.store_id == store_id,
             Product.id == product_id,
-            ~Product.is_deleted,
+            Product.is_deleted.is_(False),
         )
         .with_for_update()
     )
@@ -447,7 +447,7 @@ async def list_products(
         stmt = (
             select(Product)
             .options(selectinload(Product.inventory))
-            .where(~Product.is_deleted)
+            .where(Product.is_deleted.is_(False))
             .order_by(func.md5(func.concat(cast(Product.id, String), str(seed))))
         )
         products = (
@@ -504,7 +504,7 @@ async def search_product(
         select(Product)
         .join(Category, Product.category_id == Category.id)
         .join(SubCategory, Product.sub_category_id == SubCategory.id)
-        .where(~Product.is_deleted)
+        .where(Product.is_deleted.is_(False))
     )
     if product_name is not None:
         logger.info("filtering products by product name %s", product_name)
@@ -551,7 +551,7 @@ async def delete_one(store_id, product_id, background_task, db, payload, get_sup
         .where(
             Product.store_id == store_id,
             Product.id == product_id,
-            ~Product.is_deleted,
+            Product.is_deleted.is_(False),
         )
         .with_for_update()
     )
