@@ -29,11 +29,15 @@ async def product_review(review, background_task, ratings, db, payload):
         logger.warning("unauthorized attempt to access product_review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
     purchase_check_stmt = select(
-        exists().where(
-            OrderItem.product_id == review.product_id,
-            Order.id == OrderItem.order_id,
-            Order.user_id == user_id,
-            Order.status.in_([OrderStatus.processing, OrderStatus.delivered]),
+        exists(
+            select(1)
+            .select_from(OrderItem)
+            .join(Order, OrderItem.order_id == Order.id)
+            .where(
+                OrderItem.product_id == review.product_id,
+                Order.user_id == user_id,
+                Order.status.in_((OrderStatus.processing, OrderStatus.delivered)),
+            )
         )
     )
     has_purchased = await db.scalar(purchase_check_stmt)
@@ -157,7 +161,7 @@ async def view_reviews(product_id, page, limit, db):
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = StandardResponse(status="success", message="reviews", data=data)
-    await cached(cache_key, response, ttl=36000)
+    await cached(cache_key, response, ttl=30)
     logger.info("search for reviews successfully returned data")
     return response
 
