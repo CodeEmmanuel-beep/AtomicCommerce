@@ -364,10 +364,8 @@ class StoreResponse(BaseModel):
     category_name: str
     sub_category: List[str]
     store_previous_name: str | None = None
-    store_contact: str | None = None
-    store_email: str | None = None
-    avg_rating: Decimal = Field(default=Decimal(str(("0.00"))))
     review_count: int = Field(default=0)
+    avg_rating: Decimal = Field(default=Decimal(str(("0.00"))))
     motto: str | None = None
     featured_product: List[ProductRes] | ProductRes = Field(default_factory=list)
     shipping_fee: Decimal
@@ -447,8 +445,8 @@ class StoreReviewResponse(BaseModel):
     id: int
     user: ProfileResponse
     edited: bool = Field(default=False)
-    review_text: str
     ratings: int
+    review_text: str
     store_reply_count: int = Field(default=0)
     store_review_reaction_count: int = Field(default=0)
     reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
