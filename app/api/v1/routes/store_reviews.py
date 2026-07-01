@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,14 +13,24 @@ from app.api.v1.schemas import (
 router = APIRouter(prefix="/store_reviews", tags=["Store_Reviews"])
 
 
-@router.post("/post_store_review")
+@router.post(
+    "/post_store_review",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def create_store_review(
     review: Review,
+    background_task: BackgroundTasks,
+    ratings: int = Query(0, le=5),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await store_reviews_service.store_review(
-        review=review, db=db, payload=payload
+        review=review,
+        background_task=background_task,
+        ratings=ratings,
+        db=db,
+        payload=payload,
     )
 
 
@@ -41,7 +51,11 @@ async def store_review_list(
     )
 
 
-@router.put("/edit_store_review")
+@router.put(
+    "/edit_store_review",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def store_reviews_update(
     review: Review,
     db: AsyncSession = Depends(get_db),
@@ -52,7 +66,11 @@ async def store_reviews_update(
     )
 
 
-@router.delete("/store_review_delete")
+@router.delete(
+    "/store_review_delete",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_store_review(
     store_id: int,
     db: AsyncSession = Depends(get_db),
