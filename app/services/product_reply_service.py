@@ -212,6 +212,7 @@ async def update(reply, background_task, db, payload):
             db_reply.reply_text = reply.reply_text
             has_changed = True
         if not has_changed:
+            await db.rollback()
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         db_reply.edited = True
         await db.commit()
