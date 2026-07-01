@@ -6,61 +6,84 @@ from app.api.v1.schemas import (
     PaginatedResponse,
     ReactionsSummary,
 )
-from app.models import Review, Store, Reply, React, User
+from app.models import Review, Store, Reply, React, User, Order, OrderStatus
 from app.utils.helper import react_summary
 from fastapi import HTTPException, Response, status
 from sqlalchemy import select, func, exists, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
-from app.utils.redis import store_review_invalidation, cache, cache_version, cached
+from app.utils.redis import (
+    store_review_invalidation,
+    cache,
+    cache_version,
+    cached,
+    store_invalidation_global,
+)
 
 logger = get_logger("store_reviews")
 
 
-async def store_review(review, db, payload):
+async def store_review(review, ratings, background_task, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at create_review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = select(
-        Store,
-        exists().where(Review.user_id == user_id, Review.store_id == review.store_id),
-    ).where(Store.id == review.store_id, ~Store.is_deleted)
-    row = (await db.execute(stmt)).first()
-    if not row:
-        logger.warning(
-            "user %s, tried making a review for a store that is not on the shelf",
-            user_id,
-        )
-        raise HTTPException(status_code=404, detail="store not found")
-    target, limit = row
-    if limit:
-        logger.error(
-            "user: %s, tried posting two reviews on a particular store", user_id
-        )
-        raise HTTPException(
-            status_code=400, detail="can not make more that one review per store"
-        )
-    if not (0 <= review.ratings <= 5):
-        logger.error(
-            "user %s, tried inputing an invalid value for review ratings", user_id
-        )
-        raise HTTPException(status_code=400, detail="Rating must be between 0 and 5")
-    new_review = Review(
-        user_id=user_id,
-        store_id=review.store_id,
-        review_text=review.review_text,
-        ratings=review.ratings,
-    )
     try:
+        stmt = (
+            select(
+                Store,
+                exists().where(
+                    Order.user_id == user_id,
+                    Order.store_id == review.store_id,
+                    Order.status.in_((OrderStatus.processing, OrderStatus.delivered)),
+                ),
+                exists().where(
+                    Review.user_id == user_id, Review.store_id == review.store_id
+                ),
+            )
+            .where(Store.id == review.store_id, Store.is_deleted.is_(False))
+            .with_for_update(of=Store)
+        )
+        row = (await db.execute(stmt)).fetchone()
+        if not row:
+            logger.warning(
+                "user %s, tried making a review for a store that is not on the shelf",
+                user_id,
+            )
+            raise HTTPException(status_code=404, detail="store not found")
+        target, patronage, limit = row
+        if not patronage:
+            logger.warning(
+                "user %s, tried making a review for a store they have not patronized",
+                user_id,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="can not make review for a store you have not patronized",
+            )
+        if limit:
+            logger.error(
+                "user: %s, tried posting two reviews on a particular store", user_id
+            )
+            raise HTTPException(
+                status_code=400, detail="can not make more that one review per store"
+            )
+        new_review = Review(
+            user_id=user_id,
+            store_id=review.store_id,
+            review_text=review.review_text,
+            ratings=ratings,
+        )
         db.add(new_review)
         current_avg = target.avg_rating or 0
         current_count = target.review_count or 0
         target.review_count = current_count + 1
-        new_avg = (current_avg * current_count + review.ratings) / (current_count + 1)
+        new_avg = (current_avg * current_count + ratings) / (current_count + 1)
         target.avg_rating = new_avg
         await db.commit()
-        await store_review_invalidation(review.store_id)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error occurred while making review user: %s", user_id)
@@ -70,7 +93,11 @@ async def store_review(review, db, payload):
         logger.exception("error occurred while making review user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("review successfully saved in database reviewer: %s", user_id)
-    return {"message": "review generated successfully"}
+    background_task.add_task(store_review_invalidation, review.store_id)
+    background_task.add_task(store_invalidation_global)
+    return StandardResponse(
+        status="success", message="review generated successfully", data=None
+    )
 
 
 async def view_reviews(store_id, page, limit, db):
@@ -121,7 +148,7 @@ async def view_reviews(store_id, page, limit, db):
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = StandardResponse(status="success", message="reviews", data=data)
-    await cached(cache_key, response, ttl=36000)
+    await cached(cache_key, response, ttl=30)
     logger.info("search for reviews successfully returned data")
     return response
 
@@ -160,7 +187,9 @@ async def update_review(review, db, payload):
         logger.exception("error occurred while editing review user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("review successfully saved in database reviewer: %s", user_id)
-    return {"message": "review edited successfully"}
+    return StandardResponse(
+        status="success", message="review edited successfully", data=None
+    )
 
 
 async def delete_review(store_id, db, payload):
@@ -210,4 +239,4 @@ async def delete_review(store_id, db, payload):
         logger.exception("error occurred while deleting review user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("user '%s' review successfully deleted", user_id)
-    return {"message": "review deleted"}
+    return StandardResponse(status="success", message="review deleted", data=None)

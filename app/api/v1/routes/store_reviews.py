@@ -58,11 +58,17 @@ async def store_review_list(
 )
 async def store_reviews_update(
     review: Review,
+    background_task: BackgroundTasks,
+    ratings: int = Query(0, le=5),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await store_reviews_service.update_review(
-        review=review, db=db, payload=payload
+        review=review,
+        background_task=background_task,
+        ratings=ratings,
+        db=db,
+        payload=payload,
     )
 
 
@@ -73,9 +79,10 @@ async def store_reviews_update(
 )
 async def delete_store_review(
     store_id: int,
+    background_task: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await store_reviews_service.delete_review(
-        store_id=store_id, db=db, payload=payload
+        store_id=store_id, background_task=background_task, db=db, payload=payload
     )
