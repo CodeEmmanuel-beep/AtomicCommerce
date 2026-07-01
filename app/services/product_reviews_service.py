@@ -197,6 +197,7 @@ async def update_review(review, ratings, background_task, db, payload):
             db_review.review_text = review.review_text
             has_changed = True
         if not has_changed and db_review.ratings == ratings:
+            await db.rollback()
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         db_review.edited = True
         if db_review.ratings != ratings:
