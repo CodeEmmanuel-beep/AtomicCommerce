@@ -12,10 +12,21 @@ A heavy-duty, service-oriented FastAPI backend architected for enterprise-scale 
 
 ## 📈 System Metrics & Scale
 
-*   **100+ REST Endpoints**: Fully versioned, clean API paths covering multi-tenant vendor marketplaces, products, shopping carts, checkout logic, and advanced stock administration.
+*   **100+ REST Endpoints**: Fully versioned, clean API paths covering multi-tenant billing portals, vendor marketplaces, shopping carts, checkout logic, and advanced stock administration.
 *   **20+ Service Modules**: Fully isolated domain modules following Service-Oriented Architecture (SOA) principles to eliminate circular imports and enforce a clear separation of concerns.
 *   **20+ Database Tables**: A robust PostgreSQL relational schema complete with optimized composite indexes, explicit cascading parameters, and foreign key boundaries.
-*   **10+ Strict Enums**: Rigid state-machine tracking via Python/SQLAlchemy Enums (e.g., Order states, Transaction statuses, Account tiers) ensuring type-safe processing at every interface.
+*   **10+ Strict Enums**: Rigid state-machine tracking via Python/SQLAlchemy Enums (e.g., Subscription Status, Order states, Payment states, Account tiers) ensuring type-safe processing at every interface.
+
+---
+
+## 💳 Enterprise Billing & Stripe Lifecycle Engine
+
+The platform implements a production-grade, asynchronous financial ledger engine driven by a deeply integrated **Stripe API architecture** handling complex B2B/B2C payment lifecycles:
+
+*   **Idempotent Webhook Processing**: A bulletproof webhook listening architecture protecting against duplicate events. State synchronization is guarded by unique event ledger validation to prevent double-processing.
+*   **Comprehensive Subscription Lifecycles**: Fully handles automated provision state updates covering subscription creation, trial periods, grace periods, and clean sync on cancellations.
+*   **Mid-Billing Cycle Tier Upgrades/Downgrades**: Formulated accurate proration charging structures, calculating immediate usage shifts and credit adjustments midway through subscription intervals seamlessly.
+*   **One-Time Payments & Partial/Full Refunds**: Isolated transactional service endpoints engineered to settle explicit one-time order payments alongside secure refund handling logic that enforces programmatic ledger balance rollbacks.
 
 ---
 
@@ -31,8 +42,7 @@ A heavy-duty, service-oriented FastAPI backend architected for enterprise-scale 
 
 ```json
 // Example Structured Performance Log
-{"level": "INFO", "service": "inventory-v1", "event": "atomic_transaction_success", "latency_ms": 72.4}
-
+{"level": "INFO", "service": "billing-webhook", "event": "stripe_subscription_proration_success", "latency_ms": 48.2}
 ## 📁 Modular Service Architecture (SOA)
 The system is divided into **20+ Domain-Specific Services**, ensuring zero circular dependencies and high maintainability for a 12,000+ line codebase.
 
