@@ -34,7 +34,7 @@ A heavy-duty, service-oriented FastAPI backend architected for enterprise-scale 
 {"level": "INFO", "service": "inventory-v1", "event": "atomic_transaction_success", "latency_ms": 72.4}
 
 ## 📁 Modular Service Architecture (SOA)
-The system is divided into **17+ Domain-Specific Services**, ensuring zero circular dependencies and high maintainability for a 10,000+ line codebase.
+The system is divided into **20+ Domain-Specific Services**, ensuring zero circular dependencies and high maintainability for a 12,000+ line codebase.
 
 ```text
 .
