@@ -17,7 +17,11 @@ from decimal import Decimal
 router = APIRouter(prefix="/store", tags=["store"])
 
 
-@router.post("/create")
+@router.post(
+    "/create",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def create_store(
     store_photo: UploadFile = File(...),
     store_name: str = Form(...),
@@ -44,7 +48,11 @@ async def create_store(
     )
 
 
-@router.put("/update/{store_id}")
+@router.put(
+    "/update/{store_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def update_store(
     store_id: int,
     update_type: str = Query("add", enum=["add", "replace"]),
@@ -81,14 +89,22 @@ async def update_store(
     )
 
 
-@router.put("/approve_store")
+@router.put(
+    "/approve_store",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def store_approval(
     slug: str, db: AsyncSession = Depends(get_db), payload: dict = Depends(verify_token)
 ):
     return await store_service.approve_stores(slug=slug, db=db, payload=payload)
 
 
-@router.put("/onboard_owner_staff")
+@router.put(
+    "/onboard_owner_staff",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def onboard_owner_staff(
     store_id: int,
     owner_id: int | None = None,
@@ -160,7 +176,11 @@ async def view_stores_global(
     )
 
 
-@router.delete("/delete_staff/{store_id}/{staff_id}")
+@router.delete(
+    "/delete_staff/{store_id}/{staff_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_staff_by_id(
     store_id: int,
     staff_id: int,
@@ -172,7 +192,11 @@ async def delete_staff_by_id(
     )
 
 
-@router.delete("/delete_store/{store_id}")
+@router.delete(
+    "/delete_store/{store_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_store_by_id(
     store_id: int,
     db: AsyncSession = Depends(get_db),
