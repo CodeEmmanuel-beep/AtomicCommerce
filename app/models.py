@@ -270,7 +270,6 @@ class Reply(Base):
     store_reply_reaction_count: Mapped[int] = mapped_column(Integer, default=0)
     time_of_post = Column(DateTime(timezone=True), server_default=func.now())
 
-    __table_args__ = (UniqueConstraint("review_id", name="unique_reply"),)
     user = relationship("User", back_populates="replies")
     review = relationship("Review", back_populates="replies")
     product = relationship("Product", back_populates="replies")
