@@ -143,7 +143,7 @@ async def view_replies(product_id, review_id, page, limit, db):
         )
         .order_by(
             priority_case,
-            Reply.time_of_post.desc(),
+            Reply.time_of_post.asc(),
         )
     )
     total = (
@@ -190,30 +190,28 @@ async def update(reply, background_task, db, payload):
     if not user_id:
         logger.warning("unauthorized attempt at edit reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    try:
-        stmt = (
-            select(Reply)
-            .join(Product, Reply.product_id == Product.id)
-            .where(
-                Reply.user_id == user_id,
-                Reply.product_id == reply.product_id,
-                Reply.id == reply.id,
-                Product.is_deleted.is_(False),
-            )
-            .with_for_update()
+    stmt = (
+        select(Reply)
+        .join(Product, Reply.product_id == Product.id)
+        .where(
+            Reply.user_id == user_id,
+            Reply.product_id == reply.product_id,
+            Reply.id == reply.id,
+            Product.is_deleted.is_(False),
         )
-        db_reply = (await db.execute(stmt)).scalar_one_or_none()
-        if not db_reply:
-            logger.error("user: %s, tried editing a non-existent reply", user_id)
-            raise HTTPException(status_code=404, detail="reply not found")
-        has_changed = False
-        if reply.reply_text is not None and db_reply.reply_text != reply.reply_text:
-            logger.info("user %s, is updating their reply text", user_id)
-            db_reply.reply_text = reply.reply_text
-            has_changed = True
-        if not has_changed:
-            await db.rollback()
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
+    )
+    db_reply = (await db.execute(stmt)).scalar_one_or_none()
+    if not db_reply:
+        logger.error("user: %s, tried editing a non-existent reply", user_id)
+        raise HTTPException(status_code=404, detail="reply not found")
+    has_changed = False
+    if reply.reply_text is not None and db_reply.reply_text != reply.reply_text:
+        logger.info("user %s, is updating their reply text", user_id)
+        db_reply.reply_text = reply.reply_text
+        has_changed = True
+    if not has_changed:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    try:
         db_reply.edited = True
         await db.commit()
     except HTTPException:
