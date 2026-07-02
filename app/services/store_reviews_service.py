@@ -116,7 +116,11 @@ async def view_reviews(store_id, page, limit, db):
             selectinload(Review.user),
             selectinload(Review.replies).selectinload(Reply.user),
         )
-        .where(Review.store_id == store_id, ~Store.is_deleted, User.is_active)
+        .where(
+            Review.store_id == store_id,
+            Store.is_deleted.is_(False),
+            User.is_active.is_(True),
+        )
         .order_by(Review.time_of_post.desc())
     )
     total = (
@@ -124,7 +128,11 @@ async def view_reviews(store_id, page, limit, db):
             select(func.count(Review.id))
             .join(User, Review.user_id == User.id)
             .join(Store, Store.id == Review.store_id)
-            .where(Review.store_id == store_id, ~Store.is_deleted, User.is_active)
+            .where(
+                Review.store_id == store_id,
+                Store.is_deleted.is_(False),
+                User.is_active.is_(True),
+            )
         )
     ).scalar() or 0
     logger.info("total reviews for store %s, is: %s", store_id, total)
@@ -153,31 +161,57 @@ async def view_reviews(store_id, page, limit, db):
     return response
 
 
-async def update_review(review, db, payload):
+async def update_review(review, ratings, background_task, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at update review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = select(Review).where(
-        Review.user_id == user_id,
-        Review.id == review.id,
-        Review.store_id == review.store_id,
-    )
-    db_review = (await db.execute(stmt)).scalar_one_or_none()
-    if not db_review:
-        logger.error("user %s, tried updating a non existent review", user_id)
-        raise HTTPException(status_code=404, detail="review not found")
-    has_changed = False
-    if review.review_text is not None and db_review.review_text != review.review_text:
-        logger.info("user %s, is updating their review text", user_id)
-        db_review.review_text = review.review_text
-        has_changed = True
-    if not has_changed:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
     try:
+        stmt = (
+            select(Review, Store)
+            .join(Store, Review.store_id == Store.id)
+            .where(
+                Review.user_id == user_id,
+                Store.is_deleted.is_(False),
+                Review.id == review.id,
+                Review.store_id == review.store_id,
+            )
+            .with_for_update(of=Store)
+        )
+        row = (await db.execute(stmt)).fetchone()
+        if not row:
+            logger.error("user %s, tried updating a non existent review", user_id)
+            raise HTTPException(status_code=404, detail="review not found")
+        db_review, target = row
+        has_changed = False
+        if (
+            review.review_text is not None
+            and db_review.review_text != review.review_text
+        ):
+            logger.info("user %s, is updating their review text", user_id)
+            db_review.review_text = review.review_text
+            has_changed = True
+        if not has_changed and db_review.ratings == ratings:
+            await db.rollback()
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
         db_review.edited = True
+        if db_review.ratings != ratings:
+            former_rating = db_review.ratings
+            db_review.ratings = ratings
+            current_avg = target.avg_rating or 0
+            current_count = target.review_count or 0
+            if current_count > 0:
+                new_avg = (
+                    (current_avg * current_count) - former_rating + ratings
+                ) / current_count
+                target.avg_rating = max(0.0, new_avg)
+            else:
+                target.avg_rating = ratings or 0.0
+                target.review_count = 1
         await db.commit()
-        await store_review_invalidation(review.store_id)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error occurred while editing review user: %s", user_id)
@@ -186,50 +220,47 @@ async def update_review(review, db, payload):
         await db.rollback()
         logger.exception("error occurred while editing review user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
+    background_task.add_task(store_review_invalidation, review.store_id)
+    background_task.add_task(store_invalidation_global)
     logger.info("review successfully saved in database reviewer: %s", user_id)
     return StandardResponse(
         status="success", message="review edited successfully", data=None
     )
 
 
-async def delete_review(store_id, db, payload):
+async def delete_review(store_id, background_task, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt at delete_review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    stmt = (
-        select(Review, Store)
-        .join(Store, Review.store_id == Store.id)
-        .where(
-            Review.user_id == user_id,
-            Review.store_id == store_id,
-        )
-    )
-    row = (await db.execute(stmt)).first()
-    if not row:
-        logger.error("user %s, tried deleting a non existent review", user_id)
-        raise HTTPException(status_code=404, detail="review not found")
-    review, store = row
     try:
+        stmt = (
+            select(Review, Store)
+            .join(Store, Review.store_id == Store.id)
+            .where(
+                Review.user_id == user_id,
+                Review.store_id == store_id,
+            )
+            .with_for_update(of=Store)
+        )
+        row = (await db.execute(stmt)).fetchone()
+        if not row:
+            logger.error("user %s, tried deleting a non existent review", user_id)
+            raise HTTPException(status_code=404, detail="review not found")
+        review, store = row
         await db.delete(review)
         current_avg = store.avg_rating or 0
         current_count = store.review_count or 0
-        if current_count > 1:
-            new_avg = (current_avg * current_count - review.ratings) / (
-                current_count - 1
-            )
+        new_total = max(0, (current_count or 0) - 1)
+        if new_total > 0:
+            new_avg = ((current_avg * current_count) - review.ratings) / new_total
+            new_avg = max(0.0, new_avg)
+            store.avg_rating = new_avg
+            store.review_count = new_total
         else:
-            new_avg = 0
-        await db.execute(
-            update(Store)
-            .where(Store.id == store_id)
-            .values(
-                avg_rating=new_avg,
-                review_count=func.greatest(0, (current_count or 0) - 1),
-            )
-        )
+            store.avg_rating = 0.0
+            store.review_count = 0
         await db.commit()
-        await store_review_invalidation(store.id)
     except IntegrityError:
         await db.rollback()
         logger.error("database error occurred while deleting review user: %s", user_id)
@@ -238,5 +269,7 @@ async def delete_review(store_id, db, payload):
         await db.rollback()
         logger.exception("error occurred while deleting review user: %s", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
+    background_task.add_task(store_review_invalidation, store_id)
+    background_task.add_task(store_invalidation_global)
     logger.info("user '%s' review successfully deleted", user_id)
     return StandardResponse(status="success", message="review deleted", data=None)
