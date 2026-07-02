@@ -1,4 +1,4 @@
-from fastapi import HTTPException
+from fastapi import HTTPException, Response, status
 from app.models import (
     Store,
     Category,
@@ -224,7 +224,7 @@ async def store_creation(
         logger.exception("error while creating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("store: %s, created successfully", new_store.id)
-    return {"message": "store created"}
+    return StandardResponse(status="success", message="store created", data=None)
 
 
 async def store_update(
@@ -399,7 +399,9 @@ async def store_update(
                 )
             await store_invalidation(user_id)
             await store_invalidation_global()
-            return {"message": "store updated"}
+            return StandardResponse(
+                status="success", message="store updated", data=None
+            )
     except HTTPException:
         if filename_link:
             await cleaned_up(
@@ -420,7 +422,7 @@ async def store_update(
             )
         logger.error("database error while updating store for user '%s'", user_id)
         raise HTTPException(status_code=400, detail="database error")
-    except Exception as e:
+    except Exception:
         await db.rollback()
         if filename_link:
             await cleaned_up(
@@ -429,12 +431,11 @@ async def store_update(
                 context_1="error removing orphaned store photo",
                 context_2="successfully removed orphaned store photo",
             )
-        if isinstance(e, HTTPException):
-            raise e
         logger.exception("error while updating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("store: %s, updated successfully", store_map.id)
-    return {"message": "no changes detected, store not updated"}
+    await db.rollback()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 async def approve_stores(slug, db, payload):
@@ -464,7 +465,7 @@ async def approve_stores(slug, db, payload):
         logger.exception("error while approving store '%s'", slug)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("store: %s, approved successfully", slug)
-    return {"message": "store approved"}
+    return StandardResponse(status="success", message="store approved", data=None)
 
 
 async def view_store(position, db, payload):
@@ -780,7 +781,7 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("personnel added to store: %s", store_id)
-    return {"message": "personnel added"}
+    return StandardResponse(status="success", message="personnel added", data=None)
 
 
 async def view_store_owners_staffs(store_id, view, page, limit, db, payload):
@@ -932,7 +933,7 @@ async def remove_staff(store_id, staff_id, db, payload):
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("staff '%s', removed from store: %s", staff_id, store_id)
-    return {"message": "personnel deleted"}
+    return StandardResponse(status="success", message="personnel deleted", data=None)
 
 
 async def remove_store(store_id, db, payload, get_supabase):
@@ -1021,4 +1022,4 @@ async def remove_store(store_id, db, payload, get_supabase):
             context_2="successfully removed orphaned product images from storage",
         )
     logger.info("store '%s', deleted", store_id)
-    return {"message": "store deleted"}
+    return StandardResponse(status="success", message="store deleted", data=None)
