@@ -202,8 +202,9 @@ class ReplyResponse(BaseModel):
 
 class Reply(BaseModel):
     id: int | None = None
-    product_id: int
-    review_id: int
+    store_id: int | None = None
+    product_id: int | None = None
+    review_id: int | None = None
     reply_text: str
 
 
