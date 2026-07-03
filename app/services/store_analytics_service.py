@@ -9,11 +9,14 @@ from app.models import (
     CartItem,
     OrderItem,
     Inventory,
+    store_owners,
 )
 from app.utils.redis import cache, cached
-from sqlalchemy import cast, Float, Date, select, func, desc, asc, Integer
+from sqlalchemy import cast, Float, Date, select, func, desc, asc, Integer, exists
+from typing import cast as typing_cast
 from fastapi import HTTPException
 from app.logs.logger import get_logger
+from app.api.v1.schemas import StandardResponse
 from datetime import date, datetime, timezone
 from dateutil.relativedelta import relativedelta
 
@@ -25,21 +28,22 @@ async def view_performanc_helper(slug, context, db, payload):
     if not user_id:
         logger.warning(f"unauthorized attempt at the {context} endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
-    cache_key = f"{context}:{slug}"
-    cached_data = await cache(cache_key)
-    if cached_data:
-        logger.info(f"cache hit at the {context} endpoint for store: %s", slug)
-        return cached_data
-    target_store = (
+    row = (
         await db.execute(
-            select(Store).where(
+            select(
+                Store,
+                exists().where(
+                    store_owners.c.users_id == user_id,
+                    store_owners.c.stores_id == Store.id,
+                ),
+            ).where(
                 Store.slug == slug,
-                Store.user_owners.any(User.id == user_id),
-                Store.approved,
+                Store.approved.is_(True),
             )
         )
-    ).scalar_one_or_none()
-    if not target_store:
+    ).fetchone()
+    target_store, is_owner = row or (None, None)
+    if not target_store or not is_owner:
         logger.warning(
             "user %s attempted to access %s for store %s without permission or store not found",
             user_id,
@@ -47,6 +51,11 @@ async def view_performanc_helper(slug, context, db, payload):
             slug,
         )
         raise HTTPException(status_code=403, detail="restricted access")
+    cache_key = f"{context}:{slug}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info(f"cache hit at the {context} endpoint for store: %s", slug)
+        return StandardResponse(**cached_data)
     return user_id, cache_key, target_store
 
 
@@ -55,63 +64,49 @@ async def view_store_data(slug, db):
     cached_data = await cache(cache_key)
     if cached_data:
         logger.info("cache hit at view store data endpoint for store %s", slug)
-        return cached_data
-    store_exists = (
-        await db.execute(select(Store).where(Store.slug == slug, Store.approved))
+        return StandardResponse(**cached_data)
+    store_id = (
+        await db.execute(
+            select(Store.id).where(Store.slug == slug, Store.approved.is_(True))
+        )
     ).scalar_one_or_none()
-    if not store_exists:
+    if not store_id:
         logger.error("user tried accessing an unvailable store: %s", slug)
         raise HTTPException(status_code=404, detail="store not found")
-    target_store = select(
-        func.count(Order.id)
-        .where(Order.store_id == store_exists.id)
-        .scalar_subquery()
-        .label("store_orders"),
-        select(func.max(Order.created_at))
-        .where(Order.store_id == store_exists.id)
-        .scalar_subquery()
-        .label("last_order"),
-        select(func.count(Review.ratings))
-        .where(Review.store_id == store_exists.id)
-        .scalar_subquery()
-        .label("total_ratings"),
-        select(func.avg(cast(Review.ratings, Float)))
-        .where(Review.store_id == store_exists.id)
-        .scalar_subquery()
-        .label("avg_ratings"),
+    target_store = select(func.count(Order.id), func.max(Order.created_at)).where(
+        Order.store_id == store_id
     )
     result = await db.execute(target_store)
-    row = result.first()
-    (
-        store_orders,
-        last_order,
-        store_total_ratings,
-        store_average_ratings,
-    ) = row
-    data = {
-        "store_total_orders": store_orders or 0,
-        "last_order": last_order,
-        "store_total_ratings": store_total_ratings or 0,
-        "store_average_ratings": round(float(store_average_ratings or 0), 2),
-    }
-    await cached(cache_key, data, ttl=300)
+    row = result.fetchone()
+    store_orders, last_order = row
+    data = {"store_total_orders": store_orders or 0, "last_order": last_order}
     logger.info("data returned at view store data endpoint for store: %s", slug)
-    return data
+    full_response = StandardResponse(
+        status="success", message="store data successfully retrieved", data=data
+    )
+    await cached(cache_key, full_response, ttl=300)
+    return full_response
 
 
 async def view_overall_performance(slug, db, payload):
     result = await view_performanc_helper(slug, "view_overall_performance", db, payload)
     if isinstance(result, dict):
-        return result
-    user_id, cache_key, target_store = result
+        return StandardResponse(**result)
+    if not result:
+        raise HTTPException(status_code=404, detail="store not found")
+    user_id, c_key, target_ = result
     today = date.today()
+    cache_key = typing_cast(str, c_key)
+    target_store = typing_cast(Store, target_)
     if today < target_store.founded + relativedelta(months=1):
-        return {
-            "message": "performance statistics are revealed one month after onboarding"
-        }
+        return StandardResponse(
+            status="success",
+            message="performance statistics are revealed one month after onboarding",
+            data=None,
+        )
     total_gross_sales = (
         await db.execute(
-            select(func.sum(Payment.amount_paid))
+            select(func.sum(Payment.total_amount))
             .join(Order, Order.id == Payment.order_id)
             .where(
                 Order.store_id == target_store.id, Payment.payment_status == "success"
@@ -122,12 +117,12 @@ async def view_overall_performance(slug, db, payload):
     daily_sales = (
         select(
             cast(Payment.payment_date, Date).label("day"),
-            func.sum(Payment.amount_paid).label("daily_sale"),
+            func.sum(Payment.total_amount).label("daily_sale"),
         )
         .join(Order, Payment.order_id == Order.id)
         .where(
             Order.store_id == target_store.id,
-            Payment.payment_status == PaymentStatus.SUCCESS,
+            Payment.payment_status == PaymentStatus.SUCCESS.value,
         )
         .group_by(cast(Payment.payment_date, Date))
         .cte("daily_turnover")
@@ -136,15 +131,15 @@ async def view_overall_performance(slug, db, payload):
     average_sales = (await db.execute(avg_daily)).scalar() or 0
     average_sales_per_day = round(float(average_sales or 0), 2)
     extreme_sale_row = (
-        select(Payment.payment_date, Payment.amount_paid)
+        select(Payment.payment_date, Payment.total_amount)
         .join(Order, Order.id == Payment.order_id)
         .where(
             Order.store_id == target_store.id,
-            Payment.payment_status == PaymentStatus.SUCCESS,
+            Payment.payment_status == PaymentStatus.SUCCESS.value,
         )
     )
     lowest_sale_row = (
-        await db.execute(extreme_sale_row.order_by(Payment.amount_paid.asc()).limit(1))
+        await db.execute(extreme_sale_row.order_by(Payment.total_amount.asc()).limit(1))
     ).first()
     lowest_sale = (
         {"date": lowest_sale_row[0], "sales": float(lowest_sale_row[1])}
@@ -152,7 +147,9 @@ async def view_overall_performance(slug, db, payload):
         else None
     )
     highest_sale_row = (
-        await db.execute(extreme_sale_row.order_by(Payment.amount_paid.desc()).limit(1))
+        await db.execute(
+            extreme_sale_row.order_by(Payment.total_amount.desc()).limit(1)
+        )
     ).first()
     highest_sale = (
         {"date": highest_sale_row[0], "sales": float(highest_sale_row[1])}
@@ -169,11 +166,14 @@ async def view_overall_performance(slug, db, payload):
         "average_sales_per_week": average_sales_per_week or 0,
         "average_sales_per_month": average_sales_per_month or 0,
     }
-    await cached(cache_key, data, ttl=300)
+    full_response = StandardResponse(
+        status="success", message="overall performance", data=data
+    )
+    await cached(cache_key, full_response, ttl=300)
     logger.info(
         "data returned at view overall performance endpoint for store: %s", slug
     )
-    return data
+    return full_response
 
 
 async def view_current_performance(slug, db, payload):
@@ -181,39 +181,41 @@ async def view_current_performance(slug, db, payload):
         slug, "view_ccurrent_performance", db, payload
     )
     if isinstance(result, dict):
-        return result
-    user_id, cache_key, target_store = result
+        return StandardResponse(**result)
+    user_id, c_key, t_store = result
+    cache_key = typing_cast(str, c_key)
+    target_store = typing_cast(Store, t_store)
     today = date.today()
     gross_sales_this_month = (
         await db.execute(
-            select(func.sum(Payment.amount_paid))
+            select(func.sum(Payment.total_amount))
             .join(Order, Payment.order_id == Order.id)
             .where(
                 Order.store_id == target_store.id,
-                Payment.payment_status == PaymentStatus.SUCCESS,
+                Payment.payment_status == PaymentStatus.SUCCESS.value,
                 Payment.payment_date >= today.replace(day=1),
             )
         ).scalar()
         or 0
     )
     extreme_sale_row = (
-        select(Payment.payment_date, Payment.amount_paid)
+        select(Payment.payment_date, Payment.total_amount)
         .join(Order, Order.id == Payment.order_id)
         .where(
             Order.store_id == target_store.id,
-            Payment.payment_status == PaymentStatus.SUCCESS,
+            Payment.payment_status == PaymentStatus.SUCCESS.value,
             Payment.payment_date >= today.replace(day=1),
         )
     )
     turnover = (
         select(
             cast(Payment.payment_date, Date),
-            func.sum(Payment.amount_paid).label("daily_sum"),
+            func.sum(Payment.total_amount).label("daily_sum"),
         )
         .join(Order, Payment.order_id == Order.id)
         .where(
             Order.store_id == target_store.id,
-            Payment.payment_status == PaymentStatus.SUCCESS,
+            Payment.payment_status == PaymentStatus.SUCCESS.value,
             Payment.payment_date >= today.replace(day=1),
         )
         .group_by(cast(Payment.payment_date, Date))
@@ -222,7 +224,7 @@ async def view_current_performance(slug, db, payload):
     result = select(func.avg(cast(turnover.c.daily_sum, Float)))
     daily_avg = (await db.execute(result)).scalar() or 0
     lowest_sale_row = (
-        await db.execute(extreme_sale_row.order_by(Payment.amount_paid.asc()).limit(1))
+        await db.execute(extreme_sale_row.order_by(Payment.total_amount.asc()).limit(1))
     ).first()
     lowest_sale = (
         {"date": lowest_sale_row[0], "sales": float(lowest_sale_row[1])}
@@ -230,7 +232,9 @@ async def view_current_performance(slug, db, payload):
         else None
     )
     highest_sale_row = (
-        await db.execute(extreme_sale_row.order_by(Payment.amount_paid.desc()).limit(1))
+        await db.execute(
+            extreme_sale_row.order_by(Payment.total_amount.desc()).limit(1)
+        )
     ).first()
     highest_sale = (
         {"date": highest_sale_row[0], "sales": float(highest_sale_row[1])}
@@ -278,11 +282,14 @@ async def view_current_performance(slug, db, payload):
         "lowest_sales": lowest_sale,
         "daily_average": round(float(daily_avg or 0), 2),
     }
-    await cached(cache_key, data, ttl=300)
+    full_response = StandardResponse(
+        status="success", message="current performance", data=data
+    )
+    await cached(cache_key, full_response, ttl=300)
     logger.info(
         "data returned at view current performance endpoint for store: %s", slug
     )
-    return data
+    return full_response
 
 
 async def products_stats(slug, ranking, time_frame, db, payload):
@@ -294,7 +301,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     cached_data = await cache(cache_key)
     if cached_data:
         logger.info("cache hit at the product_statistics endpoint for store: %s", slug)
-        return cached_data
+        return StandardResponse(**cached_data)
     target_store = (
         await db.execute(
             select(Store).where(
@@ -321,20 +328,20 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     }
     time_period = time_map.get(time_frame)
     if not time_period:
-        return {
-            "status": "error",
-            "message": "invalid time frame selected",
-        }
+        raise HTTPException(
+            status_code=400,
+            detail="invalid time frame selected",
+        )
     if target_store.founded > time_period:
-        return {
-            "status": "error",
-            "message": f"store's existence is below {time_frame}",
-        }
+        raise HTTPException(
+            status_code=400,
+            detail=f"store's existence is below {time_frame}",
+        )
     if ranking not in ["top_product", "least_product"]:
-        return {
-            "status": "error",
-            "message": "this endpoint is only ranked by 'top_product' or 'least_product'",
-        }
+        raise HTTPException(
+            status_code=400,
+            detail="this endpoint is only ranked by 'top_product' or 'least_product'",
+        )
     order_count = desc if ranking == "top_product" else asc
     product_sales = func.sum(OrderItem.quantity).label("total_quantity")
     products = (
@@ -350,7 +357,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
             .join(Order, OrderItem.order_id == Order.id)
             .join(Payment, Order.id == Payment.order_id)
             .where(
-                Payment.payment_status == PaymentStatus.SUCCESS,
+                Payment.payment_status == PaymentStatus.SUCCESS.value,
                 Order.created_at >= time_period,
                 Store.slug == slug,
             )
@@ -382,18 +389,17 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     ).all()
     if not products and not product_ratings:
         logger.warning("user: %s product stats returned null", user_id)
-        return {
-            "status": "success",
-            "message": f"no available product statistics within {time_frame}",
-        }
+        return StandardResponse(
+            status="success",
+            message=f"no available product statistics within {time_frame}",
+            data=None,
+        )
     message = (
         "most sold products and most rated products in descending order"
         if ranking == "top_product"
         else "least sold products and least rated products in ascending order"
     )
     data = {
-        "status": "success",
-        "message": message,
         "product_sales": [
             {"product_name": name, "product_size": size, "quantity": int(qty)}
             for name, size, qty in products
@@ -403,8 +409,9 @@ async def products_stats(slug, ranking, time_frame, db, payload):
             for name, size, rts in product_ratings
         ],
     }
-    await cached(cache_key, data, ttl=600)
-    return data
+    full_response = StandardResponse(status="success", message=message, data=data)
+    await cached(cache_key, full_response, ttl=600)
+    return full_response
 
 
 async def inventory_stats(slug, stock_range, db, payload):
@@ -418,7 +425,7 @@ async def inventory_stats(slug, stock_range, db, payload):
         logger.info(
             "cache hit at the inventory_statistics endpoint for store: %s", slug
         )
-        return cached_data
+        return StandardResponse(**cached_data)
     target_store = (
         await db.execute(
             select(Store).where(
@@ -446,10 +453,7 @@ async def inventory_stats(slug, stock_range, db, payload):
     }
     ranges = s_range.get(stock_range)
     if not ranges:
-        return {
-            "status": "error",
-            "message": "invalid stock range selected",
-        }
+        raise HTTPException(status_code=400, detail="invalid stock range selected")
     equator = ">" if stock_range == "above_fifty" else "<="
     inventories = (
         await db.execute(
@@ -464,17 +468,21 @@ async def inventory_stats(slug, stock_range, db, payload):
     ).all()
     if not inventories:
         logger.warning("user: %s inventory stats returned null", user_id)
-        return {
-            "status": "success",
-            "message": f"No products found within the {stock_range} range.",
-        }
+        return StandardResponse(
+            status="success",
+            message=f"No products found within the {stock_range} range.",
+            data=None,
+        )
     data = {
-        "status": "success",
-        "data_type": "inventory levels",
         "inventory": [
             {"product_name": name, "Product_size": size, "stock_quantity": qty}
             for name, size, qty in inventories
         ],
     }
-    await cached(cache_key, data, ttl=600)
-    return data
+    full_response = StandardResponse(
+        status="success",
+        message=f"inventory statistics for {stock_range} range",
+        data=data,
+    )
+    await cached(cache_key, full_response, ttl=600)
+    return full_response
