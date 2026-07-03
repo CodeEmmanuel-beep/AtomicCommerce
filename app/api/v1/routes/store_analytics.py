@@ -1,18 +1,27 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.get import get_db
 from app.auth.verify_jwt import verify_token
+from app.api.v1.schemas import StandardResponse
 from fastapi import Depends, APIRouter, Query
 from app.services import store_analytics_service
 
 router = APIRouter(prefix="/store_analytics", tags=["Store_Analytics"])
 
 
-@router.get("/store_public_dashboard/{store_id}")
+@router.get(
+    "/store_public_dashboard/{store_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def store_dashboard(slug: str, db: AsyncSession = Depends(get_db)):
     return await store_analytics_service.view_store_data(slug=slug, db=db)
 
 
-@router.get("/store_entire_performance/{slug}")
+@router.get(
+    "/store_entire_performance/{slug}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def view_store_entire_performance(
     slug: str, db: AsyncSession = Depends(get_db), payload: dict = Depends(verify_token)
 ):
@@ -21,7 +30,11 @@ async def view_store_entire_performance(
     )
 
 
-@router.get("/store_performance_in_current_month/{slug}")
+@router.get(
+    "/store_performance_in_current_month/{slug}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def view_store_monthly_performance(
     slug: str, db: AsyncSession = Depends(get_db), payload: dict = Depends(verify_token)
 ):
@@ -30,7 +43,11 @@ async def view_store_monthly_performance(
     )
 
 
-@router.get("/product_statistics")
+@router.get(
+    "/product_statistics",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def get_products_statistics(
     slug: str,
     ranking: str = Query("top_product", enum=["top_product", "least_product"]),
@@ -45,7 +62,11 @@ async def get_products_statistics(
     )
 
 
-@router.get("/inventory_statistics")
+@router.get(
+    "/inventory_statistics",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def get_inventory_statistics(
     slug: str,
     stock_range: str = Query(
