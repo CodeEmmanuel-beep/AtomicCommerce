@@ -5,6 +5,7 @@ from app.models import (
     Store,
     User,
     PaymentStatus,
+    OrderStatus,
     Product,
     CartItem,
     OrderItem,
@@ -12,7 +13,7 @@ from app.models import (
     store_owners,
 )
 from app.utils.redis import cache, cached
-from sqlalchemy import cast, Float, Date, select, func, desc, asc, Integer, exists
+from sqlalchemy import cast, Float, select, func, desc, asc, Integer, exists
 from typing import cast as typing_cast
 from fastapi import HTTPException
 from app.logs.logger import get_logger
@@ -55,8 +56,8 @@ async def view_performanc_helper(slug, context, db, payload):
     cached_data = await cache(cache_key)
     if cached_data:
         logger.info(f"cache hit at the {context} endpoint for store: %s", slug)
-        return StandardResponse(**cached_data)
-    return user_id, cache_key, target_store
+        return cached_data
+    return cache_key, target_store
 
 
 async def view_store_data(slug, db):
@@ -92,10 +93,8 @@ async def view_overall_performance(slug, db, payload):
     result = await view_performanc_helper(slug, "view_overall_performance", db, payload)
     if isinstance(result, dict):
         return StandardResponse(**result)
-    if not result:
-        raise HTTPException(status_code=404, detail="store not found")
-    user_id, c_key, target_ = result
-    today = date.today()
+    c_key, target_ = result
+    today = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc)
     cache_key = typing_cast(str, c_key)
     target_store = typing_cast(Store, target_)
     if today < target_store.founded + relativedelta(months=1):
@@ -104,34 +103,24 @@ async def view_overall_performance(slug, db, payload):
             message="performance statistics are revealed one month after onboarding",
             data=None,
         )
-    total_gross_sales = (
+    days = (today - target_store.founded).days
+    row = (
         await db.execute(
-            select(func.sum(Payment.total_amount))
+            select(func.sum(Payment.total_amount), func.sum(Payment.shipping_fee))
             .join(Order, Order.id == Payment.order_id)
             .where(
-                Order.store_id == target_store.id, Payment.payment_status == "success"
+                Order.store_id == target_store.id,
+                Payment.payment_status == PaymentStatus.SUCCESS.value,
             )
-        ).scalar()
-        or 0
-    )
-    daily_sales = (
-        select(
-            cast(Payment.payment_date, Date).label("day"),
-            func.sum(Payment.total_amount).label("daily_sale"),
         )
-        .join(Order, Payment.order_id == Order.id)
-        .where(
-            Order.store_id == target_store.id,
-            Payment.payment_status == PaymentStatus.SUCCESS.value,
-        )
-        .group_by(cast(Payment.payment_date, Date))
-        .cte("daily_turnover")
-    )
-    avg_daily = select(func.avg(cast(daily_sales.c.daily_sale, Float)))
-    average_sales = (await db.execute(avg_daily)).scalar() or 0
-    average_sales_per_day = round(float(average_sales or 0), 2)
+    ).fetchone()
+    total_amount, shipping_fees = row if row else (0, 0)
+    total_amount = total_amount or 0
+    shipping_fees = shipping_fees or 0
+    total_gross_sales = total_amount - shipping_fees
+    average_sales_per_day = round(float(total_gross_sales / days), 2)
     extreme_sale_row = (
-        select(Payment.payment_date, Payment.total_amount)
+        select(Payment.payment_date, Payment.total_amount, Payment.shipping_fee)
         .join(Order, Order.id == Payment.order_id)
         .where(
             Order.store_id == target_store.id,
@@ -140,31 +129,36 @@ async def view_overall_performance(slug, db, payload):
     )
     lowest_sale_row = (
         await db.execute(extreme_sale_row.order_by(Payment.total_amount.asc()).limit(1))
-    ).first()
-    lowest_sale = (
-        {"date": lowest_sale_row[0], "sales": float(lowest_sale_row[1])}
-        if lowest_sale_row
-        else None
-    )
+    ).fetchone()
+    if lowest_sale_row:
+        lowest_sale_date, lowest_sale_total, lowest_sale_shipping = lowest_sale_row or (
+            0,
+            0,
+            0,
+        )
+        l_sale = lowest_sale_total - lowest_sale_shipping
+        lowest_sale = {"date": lowest_sale_date, "sales": float(l_sale)}
     highest_sale_row = (
         await db.execute(
             extreme_sale_row.order_by(Payment.total_amount.desc()).limit(1)
         )
-    ).first()
-    highest_sale = (
-        {"date": highest_sale_row[0], "sales": float(highest_sale_row[1])}
-        if highest_sale_row
-        else None
-    )
-    average_sales_per_week = round(average_sales_per_day * 7, 2)
-    average_sales_per_month = round(average_sales_per_day * 30, 2)
+    ).fetchone()
+    if highest_sale_row:
+        highest_sale_date, highest_sale_total, highest_sale_shipping = (
+            highest_sale_row
+            or (
+                0,
+                0,
+                0,
+            )
+        )
+        h_sale = highest_sale_total - highest_sale_shipping
+        highest_sale = {"date": highest_sale_date, "sales": float(h_sale)}
     data = {
         "total_gross_sales": round(float(total_gross_sales or 0), 2),
         "highest_sales": highest_sale,
         "lowest_sales": lowest_sale,
         "average_sales_per_day": average_sales_per_day or 0,
-        "average_sales_per_week": average_sales_per_week or 0,
-        "average_sales_per_month": average_sales_per_month or 0,
     }
     full_response = StandardResponse(
         status="success", message="overall performance", data=data
@@ -182,95 +176,85 @@ async def view_current_performance(slug, db, payload):
     )
     if isinstance(result, dict):
         return StandardResponse(**result)
-    user_id, c_key, t_store = result
+    c_key, t_store = result
     cache_key = typing_cast(str, c_key)
     target_store = typing_cast(Store, t_store)
-    today = date.today()
-    gross_sales_this_month = (
+    first_of_the_month = date.today().replace(day=1)
+    days = date.today().day
+    row = (
         await db.execute(
-            select(func.sum(Payment.total_amount))
+            select(func.sum(Payment.total_amount), func.sum(Payment.shipping_fee))
             .join(Order, Payment.order_id == Order.id)
             .where(
                 Order.store_id == target_store.id,
                 Payment.payment_status == PaymentStatus.SUCCESS.value,
-                Payment.payment_date >= today.replace(day=1),
+                Payment.payment_date >= first_of_the_month,
             )
-        ).scalar()
-        or 0
-    )
+        )
+    ).fetchone()
+    total_amount, shipping_fees_this_month = row if row else (0, 0)
+    total_amount = total_amount or 0
+    shipping_fees_this_month = shipping_fees_this_month or 0
+    gross_sales_this_month = total_amount - shipping_fees_this_month
+    daily_avg = gross_sales_this_month / days if days > 0 else 0
     extreme_sale_row = (
-        select(Payment.payment_date, Payment.total_amount)
+        select(Payment.payment_date, Payment.total_amount, Payment.shipping_fee)
         .join(Order, Order.id == Payment.order_id)
         .where(
             Order.store_id == target_store.id,
             Payment.payment_status == PaymentStatus.SUCCESS.value,
-            Payment.payment_date >= today.replace(day=1),
+            Payment.payment_date >= first_of_the_month,
         )
     )
-    turnover = (
-        select(
-            cast(Payment.payment_date, Date),
-            func.sum(Payment.total_amount).label("daily_sum"),
+    net_sales = Payment.total_amount - Payment.shipping_fee
+    lowest_sale_row = (
+        await db.execute(extreme_sale_row.order_by(net_sales.asc()).limit(1))
+    ).fetchone()
+    if lowest_sale_row:
+        lowest_sale_date, lowest_sale_total, lowest_sale_shipping = lowest_sale_row or (
+            0,
+            0,
+            0,
         )
-        .join(Order, Payment.order_id == Order.id)
+        l_sale = lowest_sale_total - lowest_sale_shipping
+        lowest_sale = {"date": lowest_sale_date, "sales": float(l_sale)}
+    highest_sale_row = (
+        await db.execute(extreme_sale_row.order_by(net_sales.desc()).limit(1))
+    ).fetchone()
+    if highest_sale_row:
+        highest_sale_date, highest_sale_total, highest_sale_shipping = (
+            highest_sale_row or (0, 0, 0)
+        )
+        h_sale = highest_sale_total - highest_sale_shipping
+        highest_sale = {"date": highest_sale_date, "sales": float(h_sale)}
+    ratings_orders_check = select(
+        select(func.count(Order.id))
         .where(
             Order.store_id == target_store.id,
-            Payment.payment_status == PaymentStatus.SUCCESS.value,
-            Payment.payment_date >= today.replace(day=1),
+            Order.created_at >= first_of_the_month,
+            Order.status.in_((OrderStatus.processing, OrderStatus.delivered)),
         )
-        .group_by(cast(Payment.payment_date, Date))
-        .cte("monthly_average")
-    )
-    result = select(func.avg(cast(turnover.c.daily_sum, Float)))
-    daily_avg = (await db.execute(result)).scalar() or 0
-    lowest_sale_row = (
-        await db.execute(extreme_sale_row.order_by(Payment.total_amount.asc()).limit(1))
-    ).first()
-    lowest_sale = (
-        {"date": lowest_sale_row[0], "sales": float(lowest_sale_row[1])}
-        if lowest_sale_row
-        else None
-    )
-    highest_sale_row = (
-        await db.execute(
-            extreme_sale_row.order_by(Payment.total_amount.desc()).limit(1)
-        )
-    ).first()
-    highest_sale = (
-        {"date": highest_sale_row[0], "sales": float(highest_sale_row[1])}
-        if highest_sale_row
-        else None
-    )
-    today = date.today()
-    ratings_orders__check = select(
-        (
-            select(func.count(Order.id))
-            .where(
-                Order.store_id == target_store.id,
-                Order.created_at >= today.replace(day=1),
-            )
-            .scalar_subquery()
-        ),
+        .scalar_subquery(),
         select(func.max(Order.created_at))
         .where(
-            Order.store_id == target_store.id, Order.created_at >= today.replace(day=1)
+            Order.store_id == target_store.id, Order.created_at >= first_of_the_month
         )
         .scalar_subquery(),
         select(func.count(Review.ratings))
         .where(
             Review.store_id == target_store.id,
-            Review.date_of_review >= today.replace(day=1),
+            Review.time_of_post >= first_of_the_month,
         )
         .scalar_subquery(),
         select(func.avg(cast(Review.ratings, Float)))
         .where(
             Review.store_id == target_store.id,
-            Review.date_of_review >= today.replace(day=1),
+            Review.time_of_post >= first_of_the_month,
         )
         .scalar_subquery(),
     )
-    result_check = await db.execute(ratings_orders__check)
-    row = result_check.first()
+    result_check = await db.execute(ratings_orders_check)
+    row = result_check.fetchone()
     orders, last_order, ratings, avg_ratings = row
     data = {
         "orders_this_month": orders,
@@ -302,16 +286,22 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     if cached_data:
         logger.info("cache hit at the product_statistics endpoint for store: %s", slug)
         return StandardResponse(**cached_data)
-    target_store = (
+    row = (
         await db.execute(
-            select(Store).where(
+            select(
+                Store,
+                exists().where(
+                    store_owners.c.users_id == user_id,
+                    store_owners.c.stores_id == Store.id,
+                ),
+            ).where(
                 Store.slug == slug,
-                Store.user_owners.any(User.id == user_id),
-                Store.approved,
+                Store.approved.is_(True),
             )
         )
-    ).scalar_one_or_none()
-    if not target_store:
+    ).fetchone()
+    target_store, is_owner = row or (None, None)
+    if not target_store or not is_owner:
         logger.warning(
             "user %s attempted to access product_statistics endpoint for store %s without permission or store not found",
             user_id,
@@ -352,8 +342,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
                 cast(func.coalesce(product_sales, 0), Integer),
             )
             .join(Store, Product.store_id == Store.id)
-            .join(CartItem, Product.id == CartItem.product_id)
-            .join(OrderItem, OrderItem.cartitem_id == CartItem.id)
+            .join(OrderItem, OrderItem.product_id == Product.id)
             .join(Order, OrderItem.order_id == Order.id)
             .join(Payment, Order.id == Payment.order_id)
             .where(
@@ -380,7 +369,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
             .join(Review, Product.id == Review.product_id)
             .join(Store, Product.store_id == Store.id)
             .where(
-                Review.date_of_review >= time_period,
+                Review.time_of_post >= time_period,
                 Store.slug == slug,
             )
             .group_by(Product.product_name, Product.product_size)
