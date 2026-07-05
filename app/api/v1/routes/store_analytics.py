@@ -70,14 +70,15 @@ async def get_products_statistics(
 async def get_inventory_statistics(
     slug: str,
     stock_range: str = Query(
-        "below_ten",
+        "ten_below",
         enum=[
-            "below_thirty",
-            "below_five",
-            "below_fifty",
+            "thirty_below",
+            "five_below",
+            "twenty_below",
+            "fifty_below",
             "out_of_stock",
             "above_fifty",
-            "below_ten",
+            "ten_below",
         ],
     ),
     db: AsyncSession = Depends(get_db),
