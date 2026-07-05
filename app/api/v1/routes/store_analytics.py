@@ -44,13 +44,30 @@ async def view_store_monthly_performance(
 
 
 @router.get(
+    "/select_product_statistics",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
+async def product_statistics(
+    slug: str,
+    product_id: int,
+    statistics: str = Query("product_sales", enum=["product_ratings", "product_sales"]),
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await store_analytics_service.select_products_stats(
+        slug=slug, product_id=product_id, stats=statistics, db=db, payload=payload
+    )
+
+
+@router.get(
     "/product_statistics",
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
 async def get_products_statistics(
     slug: str,
-    ranking: str = Query("top_product", enum=["top_product", "least_product"]),
+    ranking: str = Query("top_product", enum=["least_product", "top_product"]),
     time_frame: str = Query(
         "1 week", enum=["1 month", "3 months", "6 months", "1 year", "1 week"]
     ),
