@@ -77,26 +77,72 @@ async def view_store_data(slug, db):
     if cached_data:
         logger.info("cache hit at view store data endpoint for store %s", slug)
         return StandardResponse(**cached_data)
-    store_id = (
-        await db.execute(
-            select(Store.id).where(Store.slug == slug, Store.approved.is_(True))
-        )
-    ).scalar_one_or_none()
-    if not store_id:
-        logger.error("user tried accessing an unvailable store: %s", slug)
-        raise HTTPException(status_code=404, detail="store not found")
-    target_store = select(func.count(Order.id), func.max(Order.created_at)).where(
-        Order.store_id == store_id
+    target_store = (
+        select(Store.id, func.count(Order.id), func.max(Order.created_at))
+        .outerjoin(Order, Store.id == Order.store_id)
+        .where(Store.slug == slug, Store.approved.is_(True))
+        .group_by(Store.id)
     )
     result = await db.execute(target_store)
     row = result.fetchone()
-    store_orders, last_order = row
-    data = {"store_total_orders": store_orders or 0, "last_order": last_order}
-    logger.info("data returned at view store data endpoint for store: %s", slug)
+    store_id, store_orders, last_order = row or (None, 0, None)
+    product_sales = func.sum(OrderItem.quantity).label("total_quantity")
+    if not store_id:
+        logger.error("user tried accessing an unvailable store: %s", slug)
+        raise HTTPException(status_code=404, detail="store not found")
+    if not store_orders or store_orders == 0:
+        logger.warning("store %s has no orders yet", slug)
+        empty_response = StandardResponse(
+            status="success",
+            message="store has no orders yet",
+            data=None,
+        )
+        await cached(cache_key, empty_response.model_dump(), ttl=300)
+        return empty_response
+    product = (
+        await db.execute(
+            select(
+                Product.primary_image,
+                Product.product_name,
+                Product.product_size,
+                cast(func.coalesce(product_sales, 0), Integer),
+            )
+            .join(Store, Product.store_id == Store.id)
+            .join(OrderItem, OrderItem.product_id == Product.id)
+            .join(Order, OrderItem.order_id == Order.id)
+            .join(Payment, Order.id == Payment.order_id)
+            .where(
+                Payment.payment_status == PaymentStatus.SUCCESS.value,
+                Store.slug == slug,
+            )
+            .group_by(
+                Product.primary_image,
+                Product.product_name,
+                Product.product_size,
+            )
+            .order_by(product_sales.desc())
+            .limit(1)
+        )
+    ).fetchone()
+    top_product_data = None
+    if product:
+        img, name, size, qty = product
+        top_product_data = {
+            "image": get_public_url(img),
+            "product_name": name,
+            "product_size": size,
+            "quantity_sold": int(qty),
+        }
+    data = {
+        "store_total_orders": int(store_orders),
+        "last_order": last_order if last_order else None,
+        "top_performing_product": top_product_data,
+    }
     full_response = StandardResponse(
         status="success", message="store data successfully retrieved", data=data
     )
     await cached(cache_key, full_response, ttl=300)
+    logger.info("data returned at view store data endpoint for store: %s", slug)
     return full_response
 
 
@@ -412,7 +458,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     return full_response
 
 
-async def select_product_stats(slug, product_id, stats, db, payload):
+async def select_products_stats(slug, product_id, stats, db, payload):
     result = await view_performance_helper(
         slug=slug,
         context="select_products_stats",
