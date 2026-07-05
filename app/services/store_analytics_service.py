@@ -3,11 +3,9 @@ from app.models import (
     Order,
     Review,
     Store,
-    User,
     PaymentStatus,
     OrderStatus,
     Product,
-    CartItem,
     OrderItem,
     Inventory,
     store_owners,
@@ -17,6 +15,7 @@ from sqlalchemy import cast, Float, select, func, desc, asc, Integer, exists
 from typing import cast as typing_cast
 from fastapi import HTTPException
 from app.logs.logger import get_logger
+from app.utils.supabase_url import get_public_url
 from app.api.v1.schemas import StandardResponse
 from datetime import date, datetime, timezone
 from dateutil.relativedelta import relativedelta
@@ -24,7 +23,14 @@ from dateutil.relativedelta import relativedelta
 logger = get_logger("store_analytics")
 
 
-async def view_performanc_helper(slug, context, db, payload):
+async def view_performance_helper(
+    slug,
+    context,
+    db,
+    payload,
+    context_1: str | None = None,
+    context_2: str | None = None,
+):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning(f"unauthorized attempt at the {context} endpoint")
@@ -52,7 +58,10 @@ async def view_performanc_helper(slug, context, db, payload):
             slug,
         )
         raise HTTPException(status_code=403, detail="restricted access")
-    cache_key = f"{context}:{slug}"
+    if context_1 and context_2:
+        cache_key = f"{slug}:{context}:{context_1}:{context_2}"
+    else:
+        cache_key = f"{context}:{slug}"
     cached_data = await cache(cache_key)
     if cached_data:
         logger.info(f"cache hit at the {context} endpoint for store: %s", slug)
@@ -90,7 +99,9 @@ async def view_store_data(slug, db):
 
 
 async def view_overall_performance(slug, db, payload):
-    result = await view_performanc_helper(slug, "view_overall_performance", db, payload)
+    result = await view_performance_helper(
+        slug=slug, context="view_overall_performance", db=db, payload=payload
+    )
     if isinstance(result, dict):
         return StandardResponse(**result)
     c_key, target_ = result
@@ -171,8 +182,8 @@ async def view_overall_performance(slug, db, payload):
 
 
 async def view_current_performance(slug, db, payload):
-    result = await view_performanc_helper(
-        slug, "view_ccurrent_performance", db, payload
+    result = await view_performance_helper(
+        slug=slug, context="view_current_performance", db=db, payload=payload
     )
     if isinstance(result, dict):
         return StandardResponse(**result)
@@ -277,37 +288,19 @@ async def view_current_performance(slug, db, payload):
 
 
 async def products_stats(slug, ranking, time_frame, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt at the product_statistics endpoint")
-        raise HTTPException(status_code=401, detail="unauthorized access")
-    cache_key = f"product_statistics:{slug}:{ranking}:{time_frame}"
-    cached_data = await cache(cache_key)
-    if cached_data:
-        logger.info("cache hit at the product_statistics endpoint for store: %s", slug)
-        return StandardResponse(**cached_data)
-    row = (
-        await db.execute(
-            select(
-                Store,
-                exists().where(
-                    store_owners.c.users_id == user_id,
-                    store_owners.c.stores_id == Store.id,
-                ),
-            ).where(
-                Store.slug == slug,
-                Store.approved.is_(True),
-            )
-        )
-    ).fetchone()
-    target_store, is_owner = row or (None, None)
-    if not target_store or not is_owner:
-        logger.warning(
-            "user %s attempted to access product_statistics endpoint for store %s without permission or store not found",
-            user_id,
-            slug,
-        )
-        raise HTTPException(status_code=403, detail="restricted access")
+    result = await view_performance_helper(
+        slug=slug,
+        context="products_stats",
+        context_1=ranking,
+        context_2=time_frame,
+        db=db,
+        payload=payload,
+    )
+    if isinstance(result, dict):
+        return StandardResponse(**result)
+    c_key, target_ = result
+    cache_key = typing_cast(str, c_key)
+    target_store = typing_cast(Store, target_)
     now = datetime.now(timezone.utc)
     time_map = {
         "1 year": now - relativedelta(years=1),
@@ -337,6 +330,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     products = (
         await db.execute(
             select(
+                Product.primary_image,
                 Product.product_name,
                 Product.product_size,
                 cast(func.coalesce(product_sales, 0), Integer),
@@ -351,6 +345,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
                 Store.slug == slug,
             )
             .group_by(
+                Product.primary_image,
                 Product.product_name,
                 Product.product_size,
             )
@@ -362,6 +357,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     product_ratings = (
         await db.execute(
             select(
+                Product.primary_image,
                 Product.product_name,
                 Product.product_size,
                 cast(func.coalesce(avg_ratings, 0), Float),
@@ -372,12 +368,13 @@ async def products_stats(slug, ranking, time_frame, db, payload):
                 Review.time_of_post >= time_period,
                 Store.slug == slug,
             )
-            .group_by(Product.product_name, Product.product_size)
+            .group_by(Product.primary_image, Product.product_name, Product.product_size)
             .order_by(order_count(avg_ratings))
-        ).limit(5)
+            .limit(5)
+        )
     ).all()
     if not products and not product_ratings:
-        logger.warning("user: %s product stats returned null", user_id)
+        logger.warning("product stats returned null")
         return StandardResponse(
             status="success",
             message=f"no available product statistics within {time_frame}",
@@ -390,12 +387,22 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     )
     data = {
         "product_sales": [
-            {"product_name": name, "product_size": size, "quantity": int(qty)}
-            for name, size, qty in products
+            {
+                "image": get_public_url(img),
+                "product_name": name,
+                "product_size": size,
+                "quantity_sold": int(qty),
+            }
+            for img, name, size, qty in products
         ],
         "product_ratings": [
-            {"name": name, "product_size": size, "ratings": float(rts)}
-            for name, size, rts in product_ratings
+            {
+                "image": get_public_url(img),
+                "name": name,
+                "product_size": size,
+                "ratings": float(rts),
+            }
+            for img, name, size, rts in product_ratings
         ],
     }
     full_response = StandardResponse(status="success", message=message, data=data)
@@ -404,33 +411,14 @@ async def products_stats(slug, ranking, time_frame, db, payload):
 
 
 async def inventory_stats(slug, stock_range, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt at the inventory_statistics endpoint")
-        raise HTTPException(status_code=401, detail="unauthorized access")
-    cache_key = f"inventory_statistics:{slug}:{stock_range}"
-    cached_data = await cache(cache_key)
-    if cached_data:
-        logger.info(
-            "cache hit at the inventory_statistics endpoint for store: %s", slug
-        )
-        return StandardResponse(**cached_data)
-    target_store = (
-        await db.execute(
-            select(Store).where(
-                Store.slug == slug,
-                Store.user_owners.any(User.id == user_id),
-                Store.approved,
-            )
-        )
-    ).scalar_one_or_none()
-    if not target_store:
-        logger.warning(
-            "user %s attempted to access inventory_statistics endpoint for store %s without permission or store not found",
-            user_id,
-            slug,
-        )
-        raise HTTPException(status_code=403, detail="restricted access")
+    result = await view_performance_helper(
+        slug=slug, context=stock_range, db=db, payload=payload
+    )
+    if isinstance(result, dict):
+        return StandardResponse(**result)
+    c_key, target_ = result
+    cache_key = typing_cast(str, c_key)
+    target_store = typing_cast(Store, target_)
     s_range = {
         "out_of_stock": 0,
         "five_below": 5,
@@ -441,22 +429,48 @@ async def inventory_stats(slug, stock_range, db, payload):
         "above_fifty": 50,
     }
     ranges = s_range.get(stock_range)
-    if not ranges:
+    if not ranges and ranges != 0:
         raise HTTPException(status_code=400, detail="invalid stock range selected")
-    equator = ">" if stock_range == "above_fifty" else "<="
-    inventories = (
-        await db.execute(
-            select(Product.product_name, Product.product_size, Inventory.stock_quantity)
-            .join(Inventory, Product.id == Inventory.product_id)
-            .where(
-                Product.store_id == target_store.id,
-                Inventory.stock_quantity.op(equator)(ranges),
-            )
-            .order_by(Inventory.stock_quantity.desc())
+    inventories_stmt = (
+        select(
+            Product.primary_image,
+            Product.product_name,
+            Product.product_size,
+            Inventory.stock_quantity,
         )
-    ).all()
+        .join(Inventory, Product.id == Inventory.product_id)
+        .where(
+            Product.store_id == target_store.id,
+        )
+        .order_by(Inventory.stock_quantity.desc())
+    )
+    if stock_range == "above_fifty":
+        inventories_stmt = inventories_stmt.where(Inventory.stock_quantity > ranges)
+    elif stock_range == "out_of_stock":
+        inventories_stmt = inventories_stmt.where(Inventory.stock_quantity == ranges)
+    elif stock_range == "ten_below":
+        inventories_stmt = inventories_stmt.where(
+            Inventory.stock_quantity <= ranges, Inventory.stock_quantity > 5
+        )
+    elif stock_range == "five_below":
+        inventories_stmt = inventories_stmt.where(
+            Inventory.stock_quantity <= ranges, Inventory.stock_quantity > 0
+        )
+    elif stock_range == "twenty_below":
+        inventories_stmt = inventories_stmt.where(
+            Inventory.stock_quantity <= ranges, Inventory.stock_quantity > 10
+        )
+    elif stock_range == "thirty_below":
+        inventories_stmt = inventories_stmt.where(
+            Inventory.stock_quantity <= ranges, Inventory.stock_quantity > 10
+        )
+    elif stock_range == "fifty_below":
+        inventories_stmt = inventories_stmt.where(
+            Inventory.stock_quantity <= ranges, Inventory.stock_quantity > 30
+        )
+    inventories = (await db.execute(inventories_stmt)).all()
     if not inventories:
-        logger.warning("user: %s inventory stats returned null", user_id)
+        logger.warning("inventory stats returned null")
         return StandardResponse(
             status="success",
             message=f"No products found within the {stock_range} range.",
@@ -464,8 +478,13 @@ async def inventory_stats(slug, stock_range, db, payload):
         )
     data = {
         "inventory": [
-            {"product_name": name, "Product_size": size, "stock_quantity": qty}
-            for name, size, qty in inventories
+            {
+                "image": get_public_url(img),
+                "product_name": name,
+                "Product_size": size,
+                "stock_quantity": qty,
+            }
+            for img, name, size, qty in inventories
         ],
     }
     full_response = StandardResponse(
