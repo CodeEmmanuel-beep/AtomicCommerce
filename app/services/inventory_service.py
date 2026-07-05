@@ -77,30 +77,39 @@ async def create(store_id: int, product_id: int, stock_quantity: int, db, payloa
 async def read(store_id, inventory_id, db, payload):
     user_id = await store_auth(store_id, db, payload)
     stmt = store_inventory(store_id, inventory_id)
+    cache_key = f"inventory:{store_id}:{inventory_id}"
+    inventory_cache = await cache(cache_key)
+    if inventory_cache:
+        logger.info(
+            "inventory cache hit for store_id: %s, inventory_id: %s",
+            store_id,
+            inventory_id,
+        )
+        return StandardResponse(**inventory_cache)
     result = (await db.execute(stmt)).scalar_one_or_none()
     if not result:
         logger.warning("user: %s, tried fetching a non existent inventory", user_id)
         raise HTTPException(status_code=404, detail="inventory not found")
     logger.info("read function returned data for user %s", user_id)
-    return StandardResponse(
-        status="success",
-        message="inventory",
-        data={
-            "stock_quantity": result.stock_quantity,
-            "time_of_stock": result.last_updated,
-        },
+    data = InventoryResponse.model_validate(result)
+    response = StandardResponse(status="success", message="inventory", data=data)
+    await cached(cache_key, response, ttl=30)
+    logger.info(
+        "inventory data returned for user_id: %s, store_id: %s, inventory_id: %s",
+        user_id,
+        store_id,
+        inventory_id,
     )
+    return response
 
 
 async def read_all(store_id, page, limit, db, payload):
     user_id = await store_auth(store_id, db, payload)
     offset = (page - 1) * limit
-    cache_key = f"inventory:{user_id}:{store_id}:{page}:{limit}"
+    cache_key = f"inventory_list:{store_id}:{page}:{limit}"
     inventory_cache = await cache(cache_key)
     if inventory_cache:
-        logger.info(
-            "inventory cache hit for user_id: %s, store_id: %s", user_id, store_id
-        )
+        logger.info("inventory cache hit for store_id: %s", store_id)
         return StandardResponse(**inventory_cache)
     stmt = store_inventory(store_id)
     results = (
@@ -130,7 +139,7 @@ async def read_all(store_id, page, limit, db, payload):
     full_response = StandardResponse(
         status="success", message="store inventory", data=data
     )
-    await cached(cache_key, full_response, ttl=600)
+    await cached(cache_key, full_response, ttl=60)
     logger.info("read_all function returned data for user %s", user_id)
     return full_response
 
