@@ -60,6 +60,8 @@ async def view_performance_helper(
         raise HTTPException(status_code=403, detail="restricted access")
     if context_1 and context_2:
         cache_key = f"{slug}:{context}:{context_1}:{context_2}"
+    elif context_1:
+        cache_key = f"{slug}:{context}:{context_1}"
     else:
         cache_key = f"{context}:{slug}"
     cached_data = await cache(cache_key)
@@ -407,6 +409,102 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     }
     full_response = StandardResponse(status="success", message=message, data=data)
     await cached(cache_key, full_response, ttl=600)
+    return full_response
+
+
+async def select_product_stats(slug, product_id, stats, db, payload):
+    result = await view_performance_helper(
+        slug=slug,
+        context="select_products_stats",
+        context_1=product_id,
+        context_2=stats,
+        db=db,
+        payload=payload,
+    )
+    if isinstance(result, dict):
+        return StandardResponse(**result)
+    c_key, _ = result
+    cache_key = typing_cast(str, c_key)
+    if stats not in ["product_sales", "product_ratings"]:
+        raise HTTPException(
+            status_code=400,
+            detail="this endpoint is only ranked by 'product_sales' or 'product_ratings'",
+        )
+    products = None
+    product_ratings = None
+    if stats == "product_sales":
+        product_sales = func.sum(OrderItem.quantity).label("total_quantity")
+        products = (
+            await db.execute(
+                select(
+                    Product.primary_image,
+                    Product.product_name,
+                    Product.product_size,
+                    cast(func.coalesce(product_sales, 0), Integer),
+                )
+                .join(Store, Product.store_id == Store.id)
+                .join(OrderItem, OrderItem.product_id == Product.id)
+                .join(Order, OrderItem.order_id == Order.id)
+                .join(Payment, Order.id == Payment.order_id)
+                .where(
+                    Store.slug == slug,
+                    Product.id == product_id,
+                    Payment.payment_status == PaymentStatus.SUCCESS.value,
+                )
+                .group_by(
+                    Product.primary_image,
+                    Product.product_name,
+                    Product.product_size,
+                )
+            )
+        ).fetchone()
+    else:
+        avg_ratings = func.avg(Review.ratings).label("average_ratings")
+        product_ratings = (
+            await db.execute(
+                select(
+                    Product.primary_image,
+                    Product.product_name,
+                    Product.product_size,
+                    cast(func.coalesce(avg_ratings, 0), Float),
+                )
+                .join(Review, Product.id == Review.product_id)
+                .join(Store, Product.store_id == Store.id)
+                .where(
+                    Store.slug == slug,
+                    Product.id == product_id,
+                )
+                .group_by(
+                    Product.primary_image, Product.product_name, Product.product_size
+                )
+            )
+        ).fetchone()
+    if not products and not product_ratings:
+        logger.warning("product stats returned null")
+        return StandardResponse(
+            status="success",
+            message=f"no available {stats} found for product: {product_id}",
+            data=None,
+        )
+    message = "product sales" if stats == "product_sales" else "product ratings"
+    if stats == "product_sales" and products:
+        img, name, size, qty = products
+        data = {
+            "image": get_public_url(img),
+            "product_name": name,
+            "product_size": size,
+            "quantity_sold": int(qty),
+        }
+    elif stats == "product_ratings" and product_ratings:
+        img, name, size, rts = product_ratings
+        data = {
+            "image": get_public_url(img),
+            "name": name,
+            "product_size": size,
+            "ratings": float(rts),
+        }
+    full_response = StandardResponse(status="success", message=message, data=data)
+    await cached(cache_key, full_response, ttl=60)
     return full_response
 
 
