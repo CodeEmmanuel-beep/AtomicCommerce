@@ -150,10 +150,14 @@ async def store_auth(store_id, db, payload):
 
 
 def store_inventory(store_id, inventory_id: int | None = None):
-    base_filter = [Inventory.store_id == store_id, ~Inventory.is_deleted]
+    base_filter = [Inventory.store_id == store_id, Inventory.is_deleted.is_(False)]
     if inventory_id:
         base_filter.append(Inventory.id == inventory_id)
-        stmt = select(Inventory).where(*base_filter)
+        stmt = (
+            select(Inventory)
+            .options(selectinload(Inventory.product))
+            .where(*base_filter)
+        )
     else:
         stmt = (
             select(Inventory)
