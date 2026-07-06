@@ -1,12 +1,31 @@
 from fastapi import Request
 from app.logs.logger import get_logger
 from app.database.config import settings
+from typing import List
 
 logger = get_logger("supabase_urls")
 
 
 def _supabase(request: Request):
     return request.app.state.supabase
+
+
+async def create_signed_urls(file: List[str], expires, context, get_supabase):
+    if not file:
+        return None
+    try:
+        render = await get_supabase.storage.from_(settings.BUCKET1).create_signed_urls(
+            file, expires
+        )
+        datas = render["data"] if isinstance(render, dict) else render
+        result = {}
+        for data in datas:
+            signed = data.get("signedURL") or data.get("signedUrl")
+            result[data["path"]] = signed
+        return result
+    except Exception:
+        logger.exception("failed generating signed urls for %s", context)
+        return None
 
 
 def get_public_url(filename: str | None):
