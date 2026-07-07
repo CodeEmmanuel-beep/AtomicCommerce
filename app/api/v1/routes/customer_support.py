@@ -9,10 +9,14 @@ from app.utils.supabase_url import _supabase
 router = APIRouter(prefix="/customer_service", tags=["Customer Service"])
 
 
-@router.post("/message_support")
+@router.post(
+    "/message_support",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def send_message(
     subject: str,
-    message: str,
+    message: str | None = None,
     picure: UploadFile = File(None),
     store_id: int | None = None,
     db: AsyncSession = Depends(get_db),
@@ -30,7 +34,11 @@ async def send_message(
     )
 
 
-@router.post("/customer_support_thread")
+@router.post(
+    "/customer_support_thread",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def customer_support_chat(
     ticket_id: int,
     message: str,
@@ -70,7 +78,7 @@ async def get_ticket_messages(
 
 @router.get(
     "/view_tickets_conversations",
-    response_model=StandardResponse[PaginatedMetadata[Chat]],
+    response_model=StandardResponse,
     response_model_exclude_defaults=True,
     response_model_exclude_none=True,
 )
@@ -80,13 +88,23 @@ async def get_tickets_conversations(
     limit: int = Query(10, le=100),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
+    get_supabase=Depends(_supabase),
 ):
     return await customer_support_service.customer_support_conversations(
-        views=views, page=page, limit=limit, db=db, payload=payload
+        views=views,
+        page=page,
+        limit=limit,
+        db=db,
+        payload=payload,
+        get_supabase=get_supabase,
     )
 
 
-@router.put("/customer_resolve_ticket")
+@router.put(
+    "/customer_resolve_ticket/{ticket_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def customer_close_ticket(
     ticket_id: int,
     db: AsyncSession = Depends(get_db),
@@ -97,7 +115,11 @@ async def customer_close_ticket(
     )
 
 
-@router.put("/support_resolve_ticket")
+@router.put(
+    "/support_resolve_ticket/{ticket_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def support_close_ticket(
     ticket_id: int,
     db: AsyncSession = Depends(get_db),
@@ -108,7 +130,11 @@ async def support_close_ticket(
     )
 
 
-@router.delete("/delete_message")
+@router.delete(
+    "/delete_message/{ticket_id}/{message_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_one_message(
     ticket_id: int,
     message_id: int,
@@ -120,7 +146,11 @@ async def delete_one_message(
     )
 
 
-@router.delete("/delete_conversation")
+@router.delete(
+    "/delete_conversation/{ticket_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_one_conversation(
     ticket_id: int,
     agent: str = Query("customer_view", enum=["support_view", "customer_view"]),
