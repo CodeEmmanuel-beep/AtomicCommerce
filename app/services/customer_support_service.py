@@ -12,6 +12,7 @@ from app.models import (
     store_staffs,
     store_owners,
 )
+from app.database.config import settings
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
 from datetime import timezone, datetime, timedelta
@@ -19,11 +20,8 @@ from app.logs.logger import get_logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, or_, func, and_, update, case, exists
 from app.utils.redis import cache, cached
-from app.utils.supabase_url import cleaned_up
-from app.database.config import settings
-from io import BytesIO
-from werkzeug.utils import secure_filename
-import uuid
+from app.utils.supabase_url import cleaned_up, create_signed_urls
+from app.utils.helper import upload_photo_helper
 
 logger = get_logger("chat_support")
 
@@ -36,14 +34,20 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
     allowed_roles = ["Owner", "customer_care"]
     if store_id:
         store_exist = (
-            await db.execute(exists().where(Store.id == store_id, ~Store.is_deleted))
-        ).scalar_one_or_none()
+            await db.execute(
+                select(
+                    exists().where(Store.id == store_id, Store.is_deleted.is_(False))
+                )
+            )
+        ).scalar()
         if not store_exist:
-            raise HTTPException(status_code=404, detail="store_not_found")
-    ticket_exist = await db.execute(
-        select(
-            exists().where(
-                Ticket.user_id == user_id, Ticket.status != TicketStatus.closed
+            raise HTTPException(status_code=404, detail="store not found")
+    ticket_exist = (
+        await db.execute(
+            select(
+                exists().where(
+                    Ticket.user_id == user_id, Ticket.status != TicketStatus.closed
+                )
             )
         )
     ).scalar()
@@ -73,7 +77,7 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
         stmt = (
             stmt.where(
                 domain_check,
-                User.is_active,
+                User.is_active.is_(True),
             )
             .group_by(User.id, subq.c.cnt)
             .order_by(func.coalesce(subq.c.cnt, 0).asc(), User.id)
@@ -90,58 +94,9 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
         logger.info(f"Message send failed: empty message from user '{user_id}'.")
         raise HTTPException(status_code=400, detail="can not send empty messages")
     if pics:
-        filename = None
-        max_size = 5 * 1024 * 1024
-        allowed_types = ["image/jpeg", "image/webp", "image/png"]
-        total_size = 0
-        file_byte = b""
-        with BytesIO() as buffer:
-            try:
-                if pics.content_type not in allowed_types:
-                    logger.warning(
-                        "user '%s', tried uploading an invalid file type: %s",
-                        user_id,
-                        pics.content_type,
-                    )
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
-                    )
-                filename = f"{uuid.uuid4()}_{secure_filename(pics.filename)}"
-                while chunk := await pics.read(1024 * 1024):
-                    total_size += len(chunk)
-                    if total_size > max_size:
-                        logger.warning(
-                            "user: %s, tried uploading a file larger than file limit, file size '%s'",
-                            user_id,
-                            total_size,
-                        )
-                        raise HTTPException(
-                            status_code=400, detail="File too large. Max 5MB."
-                        )
-                    buffer.write(chunk)
-                file_byte = buffer.getvalue()
-                upload_photo = await get_supabase.storage.from_(settings.BUCKET).upload(
-                    filename, file_byte, {"content-type": pics.content_type}
-                )
-                if hasattr(upload_photo, "error"):
-                    logger.error("error uploading photo %s", upload_photo)
-                    raise HTTPException(
-                        status_code=500, detail="error uploading store photo"
-                    )
-            except Exception as e:
-                await db.rollback()
-                if filename:
-                    await cleaned_up(
-                        get_supabase,
-                        filename,
-                        context_1="error removing orphaned photo",
-                        context_2="successfully removed orphaned photo",
-                    )
-                    if isinstance(e, HTTPException):
-                        raise e
-                    logger.exception("error saving photo")
-                    raise HTTPException(status_code=500, detail="error saving photo")
+        filename = await upload_photo_helper(
+            pics, payload, get_supabase, settings.BUCKET1
+        )
     logger.info(f"User '{user_id}' is sending a message to 'customer support'.")
     new_ticket = Ticket(
         user_id=user_id,
@@ -185,7 +140,9 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
         logger.exception("error at text_support endpoint")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Message successfully sent from '{user_id}' to customer support.")
-    return {"success": "message successfully sent to customer support"}
+    return StandardResponse(
+        status="success", message="successfully sent to customer support", data=None
+    )
 
 
 async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
@@ -195,58 +152,9 @@ async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
         raise HTTPException(status_code=401, detail="not a valid user")
     filename = None
     if pics:
-        filename = None
-        max_size = 5 * 1024 * 1024
-        allowed_types = ["image/jpeg", "image/webp", "image/png"]
-        total_size = 0
-        file_byte = b""
-        with BytesIO() as buffer:
-            try:
-                if pics.content_type not in allowed_types:
-                    logger.warning(
-                        "user '%s', tried uploading an invalid file type: %s",
-                        user_id,
-                        pics.content_type,
-                    )
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
-                    )
-                filename = f"{uuid.uuid4()}_{secure_filename(pics.filename)}"
-                while chunk := await pics.read(1024 * 1024):
-                    total_size += len(chunk)
-                    if total_size > max_size:
-                        logger.warning(
-                            "user: %s, tried uploading a file larger than file limit, file size '%s'",
-                            user_id,
-                            total_size,
-                        )
-                        raise HTTPException(
-                            status_code=400, detail="File too large. Max 5MB."
-                        )
-                    buffer.write(chunk)
-                file_byte = buffer.getvalue()
-                upload_photo = await get_supabase.storage.from_(settings.BUCKET).upload(
-                    filename, file_byte, {"content-type": pics.content_type}
-                )
-                if hasattr(upload_photo, "error"):
-                    logger.error("error uploading photo %s", upload_photo)
-                    raise HTTPException(
-                        status_code=500, detail="error uploading store photo"
-                    )
-            except Exception as e:
-                await db.rollback()
-                if filename:
-                    await cleaned_up(
-                        get_supabase,
-                        filename,
-                        context_1="error removing orphaned photo",
-                        context_2="successfully removed orphaned photo",
-                    )
-                    if isinstance(e, HTTPException):
-                        raise e
-                    logger.exception("error saving store photo")
-                    raise HTTPException(status_code=500, detail="error saving photo")
+        filename = await upload_photo_helper(
+            pics, payload, get_supabase, settings.BUCKET1
+        )
     ticket = (
         await db.execute(
             select(Ticket)
@@ -314,7 +222,9 @@ async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
     logger.info(
         f"Message successfully sent from '{user_id}' to '{receiver}', ticket_id:{ticket.id}"
     )
-    return {"success": "message sent successfully"}
+    return StandardResponse(
+        status="success", message="message sent successfully", data=None
+    )
 
 
 async def customer_support_messages(
@@ -329,10 +239,6 @@ async def customer_support_messages(
     if not user_id:
         logger.warning("Unauthorized attempt at the customer_view_messages endpoint")
         raise HTTPException(status_code=401, detail="not a valid user")
-    if page < 1 or limit < 1:
-        raise HTTPException(
-            status_code=400, detail="page number and limit must be greater than 0"
-        )
     offset = (page - 1) * limit
     view = view.lower().strip()
     if view not in {"customer_view", "support_view"}:
@@ -358,12 +264,12 @@ async def customer_support_messages(
         and_(
             Messaging.ticket_id == ticket_id,
             Messaging.user_id == user_id,
-            ~Messaging.sender_deleted,
+            Messaging.sender_deleted.is_(False),
         ),
         and_(
             Messaging.ticket_id == ticket_id,
             role_filter,
-            ~Messaging.receiver_deleted,
+            Messaging.receiver_deleted.is_(False),
         ),
     )
     stmt = (
@@ -380,7 +286,7 @@ async def customer_support_messages(
         logger.info(
             "user: %s, search for customer support messages returned null", user_id
         )
-        return {"status": "success", "message": "no messages"}
+        return StandardResponse(status="success", message="no messages", data=None)
     if view == "customer_view":
         msg_ids_to_mark = [
             m.id
@@ -406,7 +312,7 @@ async def customer_support_messages(
     if msg_ids_to_mark:
         await db.execute(
             update(Messaging)
-            .where(Messaging.id.in_(msg_ids_to_mark), ~Messaging.delivered)
+            .where(Messaging.id.in_(msg_ids_to_mark), Messaging.delivered.is_(False))
             .values(delivered=True, seen=True)
         )
         await db.commit()
@@ -432,23 +338,13 @@ async def customer_support_messages(
     return full_response
 
 
-async def customer_support_conversations(
-    views,
-    page,
-    limit,
-    db,
-    payload,
-):
+async def customer_support_conversations(views, page, limit, db, payload, get_supabase):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning(
             "Unauthorized access attempt at customer_support_conversations endpoint"
         )
         raise HTTPException(status_code=403, detail="not a valid user")
-    if page < 1 or limit < 1:
-        raise HTTPException(
-            status_code=400, detail="page number and limit must be greater than 0"
-        )
     offset = (page - 1) * limit
     views = views.lower().strip()
     if views not in {"customer_view", "support_view"}:
@@ -463,7 +359,7 @@ async def customer_support_conversations(
     conversation_key = func.concat(
         func.least(Messaging.customer_id, Messaging.support_id),
         ":",
-        func.greatest(Messaging.support_id, Messaging.customer_id),
+        func.greatest(Messaging.customer_id, Messaging.support_id),
     )
     filters = (
         Messaging.customer_id == user_id
@@ -473,11 +369,11 @@ async def customer_support_conversations(
     base_filter = or_(
         and_(
             Messaging.user_id == user_id,
-            ~Messaging.sender_deleted,
+            Messaging.sender_deleted.is_(False),
         ),
         and_(
             filters,
-            ~Messaging.receiver_deleted,
+            Messaging.receiver_deleted.is_(False),
         ),
     )
     subq = (
@@ -503,64 +399,76 @@ async def customer_support_conversations(
         .options(selectinload(Messaging.user))
         .order_by(subq.c.latest_time.desc())
     )
-    total = (
-        await db.execute(
-            select(func.count(func.distinct((conversation_key)))).where(base_filter)
-        )
-    ).scalar() or 0
+    total = (await db.execute(select(func.count()).select_from(subq))).scalar() or 0
     logger.info(f"Total conversations found for user '{user_id}': {total}")
     view_result = (await db.execute(stmt.offset(offset).limit(limit))).all()
     if not view_result:
         logger.info(
             "user: %s, search for customer support conversations returned null", user_id
         )
-        return {"status": "success", "message": "no messages"}
+        return StandardResponse(status="success", message="no messages", data=None)
     if views == "customer_view":
         msg_ids_to_mark = [
             m.id
-            for m, _ in view_result
+            for m, _, _, _ in view_result
             if m.customer_id == user_id and m.user_id != user_id and not m.delivered
         ]
-        other_ids = [m.support_id for m, _ in view_result]
-        if not other_ids:
-            raise HTTPException(status_code=409, detail="can not access support")
     elif views == "support_view":
         msg_ids_to_mark = [
             m.id
-            for m, _ in view_result
+            for m, _, _, _ in view_result
             if m.support_id == user_id and m.user_id != user_id and not m.delivered
         ]
-        other_ids = [m.customer_id for m, _ in view_result if m.customer_id]
-        if not other_ids:
-            raise HTTPException(status_code=409, detail="can not access customer")
     if msg_ids_to_mark:
         await db.execute(
             update(Messaging)
-            .where(Messaging.id.in_(msg_ids_to_mark), ~Messaging.delivered)
+            .where(Messaging.id.in_(msg_ids_to_mark), Messaging.delivered.is_(False))
             .values(delivered=True)
         )
         await db.commit()
+    other_ids = []
+    cus_ids = [m.customer_id for m, _, _, _ in view_result]
+    other_ids.extend(cus_ids)
+    sup_ids = [m.support_id for m, _, _, _ in view_result if m.customer_id]
+    other_ids.extend(sup_ids)
     other = await db.execute(select(User).where(User.id.in_(other_ids)))
     id_map = {c.id: c for c in other.scalars().all()}
+    message_pic = {}
+    photos = [msg.photo for msg, _, _, _ in view_result]
+    if photos:
+        message_pic = (
+            await create_signed_urls(
+                photos, 7200, "customer_support_convo", get_supabase
+            )
+            or {}
+        )
     conversations = {}
-    for msg, conv_id in view_result:
-        other_id = msg.support_id if msg.customer_id == user_id else msg.customer_id
+    for msg, conv_id, _, _ in view_result:
         chat_data = Chat.model_validate(msg)
-        other_obj = id_map.get(other_id)
-        if views == "customer_view":
-            chat_data.customer_support = other_obj.name if other_obj else None
-        elif views == "support_view":
-            chat_data.customer = (c := other_obj) and c.name
-        conversations.setdefault(conv_id, []).append(chat_data)
+        if chat_data.photo:
+            chat_data.photo = message_pic.get(chat_data.photo)
+        customer_obj = id_map.get(msg.customer_id)
+        support_obj = id_map.get(msg.support_id)
+        sender = "customer" if msg.user_id == msg.customer_id else "customer_support"
+        chat_data.sender = sender
+        chat_data.customer_support = (
+            f"{support_obj.first_name} {support_obj.surname}" if support_obj else None
+        )
+        chat_data.customer = (c := customer_obj) and f"{c.first_name} {c.surname}"
+        conversations[conv_id] = chat_data
+    conversations_list = [
+        {"conversation_id": conv_id, "last_message": msgs}
+        for conv_id, msgs in conversations.items()
+    ]
     data = {
-        "conversations": conversations,
+        "conversations": conversations_list,
         "pagination": PaginatedResponse(page=page, limit=limit, total=total),
     }
     logger.info(f"Fetched conversations for user '{user_id}' (page={page}).")
     full_response = StandardResponse(
         status="success", message="your messages", data=data
     )
-    await cached(cache_key, full_response, ttl=20)
+    await cached(cache_key, full_response, ttl=10)
     return full_response
 
 
@@ -586,7 +494,9 @@ async def mark_as_resolved(ticket_id, db, payload):
         )
         raise HTTPException(status_code=404, detail="ticket not found")
     if ticket.status == TicketStatus.closed:
-        return {"status": "success", "message": "ticket already resolved"}
+        return StandardResponse(
+            status="success", message="ticket already resolved", data=None
+        )
     ticket.status = TicketStatus.closed
     try:
         await db.commit()
@@ -599,7 +509,7 @@ async def mark_as_resolved(ticket_id, db, payload):
         logger.exception(f"Failed to update ticket status foor ticket '{ticket_id}'.")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"ticket '{ticket_id}' closed by user '{user_id}'.")
-    return {"status": "success", "message": "ticket status update"}
+    return StandardResponse(status="success", message="ticket status update", data=None)
 
 
 async def close_ticket(ticket_id, db, payload):
@@ -621,7 +531,9 @@ async def close_ticket(ticket_id, db, payload):
     if ticket.updated_at > datetime.now(timezone.utc) - timedelta(days=2):
         raise HTTPException(status_code=400, detail="ticket cannot be closed yet")
     if ticket.status == TicketStatus.closed:
-        return {"status": "success", "message": "ticket already resolved"}
+        return StandardResponse(
+            status="success", message="ticket already resolved", data=None
+        )
     ticket.status = TicketStatus.closed
     try:
         await db.commit()
@@ -634,7 +546,9 @@ async def close_ticket(ticket_id, db, payload):
         logger.exception(f"Failed to update ticket status foor ticket '{ticket_id}'.")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"ticket '{ticket_id}' closed by user '{user_id}'.")
-    return {"status": "success", "message": "ticket closed due to inactivity"}
+    return StandardResponse(
+        status="success", message="ticket closed due to inactivity", data=None
+    )
 
 
 async def remove_message(
@@ -697,7 +611,11 @@ async def remove_message(
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"Message ID '{message_id}' deleted by user '{user_id}'.")
-    return {"success": f"message ID {message_id} successfully deleted"}
+    return StandardResponse(
+        status="success",
+        message=f"message ID {message_id} successfully deleted",
+        data=None,
+    )
 
 
 async def clear_conversation(
@@ -769,4 +687,6 @@ async def clear_conversation(
         logger.exception(f"Failed to clear conversation with ticket '{ticket_id}'")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"All messages with ticket '{ticket_id}' deleted by user '{user_id}'.")
-    return {"success": "all messages successfully deleted"}
+    return StandardResponse(
+        status="success", message="all messages successfully deleted", data=None
+    )
