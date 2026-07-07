@@ -46,7 +46,7 @@ async def react_summary(
     return result
 
 
-async def upload_photo_helper(photo, payload, get_supabase):
+async def upload_photo_helper(photo, payload, get_supabase, bucket: str | None = None):
     user_id = payload.get("user_id")
     filename = None
     max_size = 5 * 1024 * 1024
@@ -79,16 +79,24 @@ async def upload_photo_helper(photo, payload, get_supabase):
                     )
                 buffer.write(chunk)
             file_byte = buffer.getvalue()
-            upload_photo = await get_supabase.storage.from_(settings.BUCKET).upload(
+            storage_bucket = bucket if bucket else settings.BUCKET
+            upload_photo = await get_supabase.storage.from_(storage_bucket).upload(
                 filename, file_byte, {"content-type": photo.content_type}
             )
             if hasattr(upload_photo, "error"):
                 logger.error("error uploading photo %s", upload_photo)
                 raise HTTPException(status_code=500, detail="error uploading photo")
             return filename
-        except Exception as e:
-            if isinstance(e, HTTPException):
-                raise e
+        except HTTPException:
+            if filename:
+                await cleaned_up(
+                    get_supabase,
+                    filename,
+                    context_1="error removing orphaned photo",
+                    context_2="successfully removed orphaned photo",
+                )
+            raise
+        except Exception:
             if filename:
                 await cleaned_up(
                     get_supabase,
