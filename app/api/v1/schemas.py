@@ -209,14 +209,15 @@ class Reply(BaseModel):
 
 
 class Chat(BaseModel):
+    id: int
     customer: Optional[str] = Field(default_factory=str)
     customer_support: Optional[str] = Field(default_factory=str)
+    sender: Optional[str] = Field(default_factory=str)
+    photo: str | None = None
     message: str | None = None
-    pics: str | None = None
     delivered: bool = Field(default=False)
     seen: bool = Field(default=False)
     time_of_chat: Optional[datetime]
-    conversation_id: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
