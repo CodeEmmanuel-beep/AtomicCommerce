@@ -76,18 +76,20 @@ class User(Base):
 
 class Messaging(Base):
     __tablename__ = "message"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("user.id"), index=True)
-    ticket_id = Column(Integer, ForeignKey("ticket.id"), index=True)
-    support_id = Column(Integer, index=True)
-    customer_id = Column(Integer, index=True)
-    message = Column(String, nullable=True)
-    pics = Column(String, nullable=True)
-    delivered = Column(Boolean, default=False)
-    seen = Column(Boolean, default=False)
-    sender_deleted = Column(Boolean, default=False, index=True)
-    receiver_deleted = Column(Boolean, default=False, index=True)
-    time_of_chat = Column(DateTime(timezone=True), server_default=func.now())
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
+    ticket_id: Mapped[int] = mapped_column(Integer, ForeignKey("ticket.id"), index=True)
+    support_id: Mapped[int] = mapped_column(Integer, index=True)
+    customer_id: Mapped[int] = mapped_column(Integer, index=True)
+    message: Mapped[str] = mapped_column(String, nullable=True)
+    photo: Mapped[str] = mapped_column(String, nullable=True)
+    delivered: Mapped[bool] = mapped_column(Boolean, default=False)
+    seen: Mapped[bool] = mapped_column(Boolean, default=False)
+    sender_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    receiver_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    time_of_chat: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
     user = relationship("User", back_populates="messages")
     ticket = relationship("Ticket", back_populates="messages")
@@ -105,7 +107,6 @@ class Ticket(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[TicketStatus] = mapped_column(
         SQLEnum(TicketStatus), default=TicketStatus.open.value, index=True
     )
