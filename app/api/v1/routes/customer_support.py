@@ -15,10 +15,10 @@ router = APIRouter(prefix="/customer_service", tags=["Customer Service"])
     response_model_exclude_none=True,
 )
 async def send_message(
+    store_id: int,
     subject: str,
     message: str | None = None,
     picure: UploadFile = File(None),
-    store_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
     get_supabase=Depends(_supabase),
@@ -59,7 +59,7 @@ async def customer_support_chat(
 
 @router.get(
     "/view_ticket_messages",
-    response_model=StandardResponse[PaginatedMetadata[Chat]],
+    response_model=StandardResponse,
     response_model_exclude_defaults=True,
     response_model_exclude_none=True,
 )
@@ -70,9 +70,16 @@ async def get_ticket_messages(
     limit: int = Query(10, le=100),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
+    get_supabase=Depends(_supabase),
 ):
     return await customer_support_service.customer_support_messages(
-        ticket_id=ticket_id, view=view, page=page, limit=limit, db=db, payload=payload
+        ticket_id=ticket_id,
+        view=view,
+        page=page,
+        limit=limit,
+        db=db,
+        payload=payload,
+        get_supabase=get_supabase,
     )
 
 
