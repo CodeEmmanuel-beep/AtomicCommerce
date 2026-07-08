@@ -32,16 +32,13 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
         logger.warning("Unauthorized attempt at the text_support endpoint")
         raise HTTPException(status_code=401, detail="not a valid user")
     allowed_roles = ["Owner", "customer_care"]
-    if store_id:
-        store_exist = (
-            await db.execute(
-                select(
-                    exists().where(Store.id == store_id, Store.is_deleted.is_(False))
-                )
-            )
-        ).scalar()
-        if not store_exist:
-            raise HTTPException(status_code=404, detail="store not found")
+    store_exist = (
+        await db.execute(
+            select(exists().where(Store.id == store_id, Store.is_deleted.is_(False)))
+        )
+    ).scalar()
+    if not store_exist:
+        raise HTTPException(status_code=404, detail="store not found")
     ticket_exist = (
         await db.execute(
             select(
@@ -101,6 +98,7 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
     new_ticket = Ticket(
         user_id=user_id,
         subject=subject,
+        store_id=store_id,
         assigned_to=receive,
     )
     db.add(new_ticket)
@@ -108,7 +106,6 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
     new_message = Messaging(
         user_id=user_id,
         photo=filename,
-        store_id=store_id,
         message=message,
         customer_id=user_id,
         support_id=receive,
@@ -180,7 +177,6 @@ async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
     new_message = Messaging(
         user_id=user_id,
         ticket_id=ticket.id,
-        store_id=ticket.store_id,
         photo=filename,
         support_id=ticket.assigned_to,
         customer_id=ticket.user_id,
@@ -225,12 +221,7 @@ async def ticket_thread(message, ticket_id, pics, db, payload, get_supabase):
 
 
 async def customer_support_messages(
-    ticket_id,
-    view,
-    page,
-    limit,
-    db,
-    payload,
+    ticket_id, view, page, limit, db, payload, get_supabase
 ):
     user_id = payload.get("user_id")
     if not user_id:
@@ -257,25 +248,32 @@ async def customer_support_messages(
         if view == "customer_view"
         else Messaging.support_id == user_id
     )
-    base_filter = or_(
-        and_(
-            Messaging.ticket_id == ticket_id,
-            Messaging.user_id == user_id,
-            Messaging.sender_deleted.is_(False),
-        ),
-        and_(
-            Messaging.ticket_id == ticket_id,
-            role_filter,
-            Messaging.receiver_deleted.is_(False),
+    base_filter = (
+        role_filter,
+        or_(
+            and_(
+                Messaging.ticket_id == ticket_id,
+                Messaging.user_id == user_id,
+                Messaging.sender_deleted.is_(False),
+            ),
+            and_(
+                Messaging.ticket_id == ticket_id,
+                Messaging.user_id != user_id,
+                Messaging.receiver_deleted.is_(False),
+            ),
         ),
     )
     stmt = (
         select(Messaging, conversation_key.label("conversation_id"))
-        .where(base_filter)
+        .options(
+            selectinload(Messaging.user),
+            selectinload(Messaging.ticket).selectinload(Ticket.store),
+        )
+        .where(*base_filter)
         .order_by(Messaging.time_of_chat.desc())
     )
     total = (
-        await db.execute(select(func.count(Messaging.id)).where(base_filter))
+        await db.execute(select(func.count(Messaging.id)).where(*base_filter))
     ).scalar() or 0
     logger.info(f"Total messages found with customer support: {total}")
     view_result = (await db.execute(stmt.offset(offset).limit(limit))).all()
@@ -283,46 +281,98 @@ async def customer_support_messages(
         logger.info(
             "user: %s, search for customer support messages returned null", user_id
         )
-        return StandardResponse(status="success", message="no messages", data=None)
+        response = StandardResponse(status="success", message="no messages", data={})
+        await cached(cache_key, response, ttl=7)
+        return response
     if view == "customer_view":
         msg_ids_to_mark = [
             m.id
             for m, _ in view_result
-            if m.customer_id == user_id and m.user_id != user_id and not m.delivered
+            if m.customer_id == user_id and m.user_id != user_id and not m.seen
         ]
-        support_id = next((m.support_id for m, _ in view_result if m.support_id), None)
-        if support_id is None:
-            raise HTTPException(status_code=409, detail="can not access support")
-        support_obj = await db.get(User, support_id)
     elif view == "support_view":
         msg_ids_to_mark = [
             m.id
             for m, _ in view_result
-            if m.support_id == user_id and m.user_id != user_id and not m.delivered
+            if m.support_id == user_id and m.user_id != user_id and not m.seen
         ]
-        customer_id = next(
-            (m.customer_id for m, _ in view_result if m.customer_id), None
-        )
-        if customer_id is None:
-            raise HTTPException(status_code=409, detail="can not access customer")
-        customer_obj = await db.get(User, customer_id)
     if msg_ids_to_mark:
         await db.execute(
             update(Messaging)
-            .where(Messaging.id.in_(msg_ids_to_mark), Messaging.delivered.is_(False))
-            .values(delivered=True, seen=True)
+            .where(Messaging.id.in_(msg_ids_to_mark), Messaging.seen.is_(False))
+            .values(seen=True, delivered=True)
         )
         await db.commit()
+    photo = {}
+    photos = [m.photo for m, _ in view_result]
+    if photos:
+        photo = (
+            await create_signed_urls(
+                photos, 7200, "customer_support_messages", get_supabase
+            )
+            or {}
+        )
+    customer_ids = [m.customer_id for m, _ in view_result]
+    support_ids = [m.support_id for m, _ in view_result if m.customer_id]
+    total_ids = list(set(customer_ids + support_ids))
+    user_obj = (
+        (await db.execute(select(User).where(User.id.in_(total_ids)))).scalars().all()
+    )
+    user_map = {u.id: u for u in user_obj}
     conversations = {}
     for msg, conv_id in view_result:
+        support_obj = user_map.get(msg.support_id)
+        customer_obj = user_map.get(msg.customer_id)
         chat_data = Chat.model_validate(msg)
-        if view == "customer_view":
-            chat_data.customer_support = support_obj.name
-        elif view == "support_view":
-            chat_data.customer = customer_obj.name
+        if chat_data.photo:
+            chat_data.photo = photo.get(chat_data.photo)
+        sender = "customer_support" if msg.user_id == msg.support_id else "customer"
+        chat_data.sender = sender
+        chat_data.ticket_status = msg.ticket.status if msg.ticket else None
+        chat_data.customer_photo = (
+            get_public_url(msg.user.profile_picture)
+            if msg.user and msg.user.profile_picture
+            else None
+        )
+        chat_data.store_photo = (
+            msg.ticket.store.store_photo if msg.ticket and msg.ticket.store else None
+        )
+        chat_data.customer_support = (
+            s := support_obj
+        ) and f"{s.first_name} {s.surname}"
+        chat_data.customer = (c := customer_obj) and f"{c.first_name} {c.surname}"
         conversations.setdefault(conv_id, []).append(chat_data)
+    conversation_list = []
+    for conv_id, msg_list in conversations.items():
+        parent = msg_list[0]
+        conversation_list.append(
+            {
+                "conversation_id": conv_id,
+                "store_photo": getattr(parent, "store_photo", None),
+                "customer_photo": getattr(parent, "customer_photo", None),
+                "customer_support": getattr(parent, "customer_support", None),
+                "customer": getattr(parent, "customer", None),
+                "ticket_id": getattr(parent, "ticket_id", None),
+                "ticket_status": getattr(parent, "ticket_status", None),
+                "messages": [
+                    m.model_dump(
+                        exclude_none=True,
+                        exclude_defaults=True,
+                        exclude={
+                            "customer_support",
+                            "customer",
+                            "ticket_id",
+                            "ticket_status",
+                            "store_photo",
+                            "customer_photo",
+                        },
+                    )
+                    for m in msg_list
+                ],
+            }
+        )
     data = {
-        "conversations": conversations,
+        "conversations": conversation_list,
         "pagination": PaginatedResponse(page=page, limit=limit, total=total),
     }
     logger.info(
@@ -331,7 +381,7 @@ async def customer_support_messages(
     full_response = StandardResponse(
         status="success", message="your messages", data=data
     )
-    await cached(cache_key, full_response, ttl=30)
+    await cached(cache_key, full_response, ttl=3)
     return full_response
 
 
