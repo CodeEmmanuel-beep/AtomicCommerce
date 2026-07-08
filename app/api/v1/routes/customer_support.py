@@ -41,7 +41,7 @@ async def send_message(
 )
 async def customer_support_chat(
     ticket_id: int,
-    message: str,
+    message: str | None = None,
     photo: UploadFile = File(None),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
