@@ -210,7 +210,12 @@ class Reply(BaseModel):
 
 class Chat(BaseModel):
     id: int
+    ticket_id: int
+    ticket_status: Optional[str] = Field(default_factory=str)
+    unread_count: Optional[int] = Field(default_factory=int)
+    customer_photo: Optional[str] = Field(default_factory=str)
     customer: Optional[str] = Field(default_factory=str)
+    store_photo: Optional[str] = Field(default_factory=str)
     customer_support: Optional[str] = Field(default_factory=str)
     sender: Optional[str] = Field(default_factory=str)
     photo: str | None = None
