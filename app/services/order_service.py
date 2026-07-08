@@ -310,8 +310,9 @@ async def view_orders(store_id, page, limit, db, payload):
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     logger.info(f"Orders retrieved successfully for user_id: {user_id}")
-    await cached(order_key, data, ttl=18000)
-    return StandardResponse(status="success", message="orders", data=data)
+    full_response = StandardResponse(status="success", message="orders", data=data)
+    await cached(order_key, full_response, ttl=3600)
+    return full_response
 
 
 async def view_order(store_id, order_id, page, limit, db, payload):
@@ -362,7 +363,7 @@ async def view_order(store_id, order_id, page, limit, db, payload):
     full_response = StandardResponse(
         status="success", message="order retrieved successfully", data=response
     )
-    await cached(order_key, full_response, ttl=7200)
+    await cached(order_key, full_response, ttl=3600)
     logger.info(f"Order details retrieved successfully for order_id: {order_id}")
     return full_response
 
