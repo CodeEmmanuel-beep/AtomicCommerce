@@ -106,6 +106,9 @@ class Ticket(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
+    store_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("store.id"), nullable=False
+    )
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[TicketStatus] = mapped_column(
         SQLEnum(TicketStatus), default=TicketStatus.open.value, index=True
@@ -120,6 +123,7 @@ class Ticket(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    store = relationship("Store", back_populates="tickets")
     creator = relationship(
         "User", foreign_keys=[user_id], back_populates="created_tickets"
     )
@@ -162,6 +166,7 @@ class Store(Base):
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     founded: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    tickets = relationship("Ticket", back_populates="store")
     user_owners = relationship("User", secondary=store_owners, back_populates="owners")
     user_staffs = relationship("User", secondary=store_staffs, back_populates="staffs")
     category = relationship("Category", back_populates="stores")
