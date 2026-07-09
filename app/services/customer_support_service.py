@@ -13,7 +13,7 @@ from app.models import (
     store_owners,
 )
 from app.database.config import settings
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, contains_eager
 from fastapi import HTTPException
 from datetime import timezone, datetime, timedelta
 from app.logs.logger import get_logger
@@ -165,15 +165,30 @@ async def ticket_thread(message, store_id, ticket_id, pics, db, payload, get_sup
         )
     ).scalar_one_or_none()
     if not ticket:
-        raise HTTPException(status_code=403, detail="restricted service")
+        logger.warning(
+            "user: %s, tried conversing on the wrong ticket, store_id: %s, ticket_id: %s",
+            user_id,
+            store_id,
+            ticket_id,
+        )
+        raise HTTPException(status_code=404, detail="ticket not found")
     if ticket.status == TicketStatus.closed:
+        logger.warning(
+            "user: %s, tried conversing on a closed ticket, store_id: %s, ticket_id: %s",
+            user_id,
+            store_id,
+            ticket_id,
+        )
         raise HTTPException(status_code=400, detail="ticket already closed")
     if not message and not pics:
-        logger.info(f"Message send failed: empty message from user '{user_id}'.")
+        logger.info("Message send failed: empty message from user '%s'", user_id)
         raise HTTPException(status_code=400, detail="can not send empty messages")
     receiver = ticket.assigned_to if user_id == ticket.user_id else ticket.user_id
     logger.info(
-        f"User '{user_id}' is sending a message to '{receiver}', ticket_id: {ticket.id}"
+        "User '%s' is sending a message to '%s', ticket_id: %s",
+        user_id,
+        receiver,
+        ticket.id,
     )
     new_message = Messaging(
         user_id=user_id,
@@ -595,6 +610,12 @@ async def mark_as_resolved(store_id, ticket_id, db, payload):
             )
             raise HTTPException(status_code=404, detail="ticket not found")
         if ticket.status == TicketStatus.closed:
+            logger.warning(
+                "user: %s, tried closing a ticket, already closed, store_id: %s, ticket_id: %s",
+                user_id,
+                store_id,
+                ticket_id,
+            )
             return StandardResponse(
                 status="success", message="ticket already resolved", data=None
             )
@@ -639,15 +660,33 @@ async def close_ticket(store_id, ticket_id, db, payload):
             )
             raise HTTPException(status_code=404, detail="ticket not found")
         if ticket.status == TicketStatus.closed:
+            logger.warning(
+                "user: %s, tried closing a ticket, already closed, store_id: %s, ticket_id: %s",
+                user_id,
+                store_id,
+                ticket_id,
+            )
             return StandardResponse(
                 status="success", message="ticket already resolved", data=None
             )
         if ticket.status == TicketStatus.open:
+            logger.warning(
+                "user: %s, tried closing a ticket, not attended to, store_id: %s, ticket_id: %s",
+                user_id,
+                store_id,
+                ticket_id,
+            )
             raise HTTPException(
                 status_code=400,
                 detail="ticket cannot be closed yet, attend to the customer first",
             )
         if ticket.updated_at > datetime.now(timezone.utc) - timedelta(days=2):
+            logger.warning(
+                "user: %s, tried closing a ticket, too earkly, store_id: %s, ticket_id: %s",
+                user_id,
+                store_id,
+                ticket_id,
+            )
             raise HTTPException(status_code=400, detail="ticket cannot be closed yet")
         ticket.status = TicketStatus.closed
         await db.commit()
@@ -669,6 +708,7 @@ async def close_ticket(store_id, ticket_id, db, payload):
 
 
 async def remove_message(
+    store_id,
     ticket_id,
     message_id,
     db,
@@ -678,45 +718,49 @@ async def remove_message(
     if not user_id:
         logger.warning("Unauthorized access attempt at the remove_message endpoint")
         raise HTTPException(status_code=403, detail="not a valid user")
-    is_sender = Messaging.user_id == user_id
-    is_customer = Messaging.customer_id == user_id
-    ticket_check = (
-        await db.execute(
-            select(Ticket).where(
-                Ticket.id == ticket_id,
-                Ticket.user_id == user_id,
-                Ticket.status != TicketStatus.closed,
-            )
-        )
-    ).scalar_one_or_none()
-    if not ticket_check:
-        logger.warning(
-            "user: %s, tried clearing the messages of a ticket not validated with ticket_id: %s",
-            user_id,
-            ticket_id,
-        )
-    updates = await db.execute(
-        update(Messaging)
-        .where(
-            Messaging.id == message_id,
-            or_(is_sender, is_customer),
-        )
-        .values(
-            sender_deleted=case((is_sender, True), else_=Messaging.sender_deleted),
-            receiver_deleted=case(
-                (
-                    and_(~is_sender, is_customer),
-                    True,
-                ),
-                else_=Messaging.receiver_deleted,
-            ),
-        )
-    )
-    if updates.rowcount == 0:
-        logger.info(f"Delete failed: Message {message_id} not found or unauthorized.")
-        raise HTTPException(status_code=404, detail="Message not found")
     try:
+        message = (
+            await db.execute(
+                select(Messaging)
+                .join(Ticket, Messaging.ticket_id == Ticket.id)
+                .options(contains_eager(Messaging.ticket))
+                .where(
+                    Ticket.store_id == store_id,
+                    Ticket.id == ticket_id,
+                    Messaging.id == message_id,
+                    Ticket.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not message:
+            logger.warning(
+                "user: %s, tried deleting a non existent message of store_id: %s, ticket_id: %s,",
+                user_id,
+                store_id,
+                ticket_id,
+            )
+            raise HTTPException(status_code=400, detail="message not found")
+        is_sender = message.user_id == user_id
+        is_receiver = message.customer_id == user_id
+        if message.ticket.status != TicketStatus.closed:
+            logger.warning(
+                "user: %s, tried deleting messages from a ticket not closed yet, store_id: %s, ticket_id: %s",
+                user_id,
+                store_id,
+                ticket_id,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="you can only delete messages from a closed ticket",
+            )
+        if is_sender:
+            message.sender_deleted = True
+        elif not is_sender and is_receiver:
+            message.receiver_deleted = True
         await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error at remove_message endpoint")
@@ -730,13 +774,14 @@ async def remove_message(
     logger.info(f"Message ID '{message_id}' deleted by user '{user_id}'.")
     return StandardResponse(
         status="success",
-        message=f"message ID {message_id} successfully deleted",
+        message=f"message ID '{message_id}' successfully deleted",
         data=None,
     )
 
 
 async def clear_conversation(
     agent,
+    store_id,
     ticket_id,
     db,
     payload,
@@ -747,7 +792,7 @@ async def clear_conversation(
         raise HTTPException(status_code=403, detail="not a valid user")
     if agent not in ["customer", "support"]:
         raise HTTPException(
-            status_code=409, detail="agent must be either customer or support"
+            status_code=409, detail="agent must be either 'customer' or 'support'"
         )
     ticket_filter = (
         and_(
@@ -761,40 +806,52 @@ async def clear_conversation(
         if agent == "customer"
         else Messaging.support_id == user_id
     )
-    ticket_check = (
-        await db.execute(select(Ticket).where(Ticket.id == ticket_id, ticket_filter))
-    ).scalar_one_or_none()
-    if not ticket_check:
-        logger.warning(
-            "user: %s, tried clearing the messages of a ticket not validated with ticket_id: %s",
-            user_id,
-            ticket_id,
-        )
-        raise HTTPException(status_code=409, detail="invalid request")
-    clear = await db.execute(
-        update(Messaging)
-        .where(
-            Messaging.ticket_id == ticket_id,
-            or_(Messaging.user_id == user_id, role_filter),
-        )
-        .values(
-            sender_deleted=case(
-                (Messaging.user_id == user_id, True), else_=Messaging.sender_deleted
-            ),
-            receiver_deleted=case(
-                (
-                    and_(role_filter, Messaging.user_id != user_id),
-                    True,
-                ),
-                else_=Messaging.receiver_deleted,
-            ),
-        )
-    )
-    if clear.rowcount == 0:
-        logger.info(f"No messages found with ticket '{ticket_id}'")
-        raise HTTPException(status_code=404, detail="no messages found to delete")
     try:
+        ticket_check = (
+            await db.execute(
+                select(Ticket)
+                .where(
+                    Ticket.store_id == store_id, Ticket.id == ticket_id, ticket_filter
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if not ticket_check:
+            logger.warning(
+                "user: %s, tried clearing the messages of a ticket not validated with ticket_id: %s",
+                user_id,
+                ticket_id,
+            )
+            raise HTTPException(status_code=409, detail="invalid request")
+        clear = await db.execute(
+            update(Messaging)
+            .where(
+                Messaging.ticket_id == ticket_id,
+                or_(Messaging.user_id == user_id, role_filter),
+            )
+            .values(
+                sender_deleted=case(
+                    (Messaging.user_id == user_id, True), else_=Messaging.sender_deleted
+                ),
+                receiver_deleted=case(
+                    (
+                        and_(role_filter, Messaging.user_id != user_id),
+                        True,
+                    ),
+                    else_=Messaging.receiver_deleted,
+                ),
+            )
+            .returning(Messaging.id)
+        )
+        if not clear.scalar():
+            logger.info(f"No messages found with ticket '{ticket_id}'")
+            raise HTTPException(status_code=404, detail="no messages found to delete")
+        if agent == "customer" and ticket_check.status != TicketStatus.closed:
+            ticket_check.status = TicketStatus.closed
         await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error at clear_conversation endpoint")
@@ -805,5 +862,5 @@ async def clear_conversation(
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(f"All messages with ticket '{ticket_id}' deleted by user '{user_id}'.")
     return StandardResponse(
-        status="success", message="all messages successfully deleted", data=None
+        status="success", message="conversation successfully cleared", data=None
     )
