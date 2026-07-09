@@ -1,6 +1,6 @@
 from fastapi import Depends, APIRouter, File, UploadFile, Query
 from app.services import customer_support_service
-from app.api.v1.schemas import Chat, StandardResponse, PaginatedMetadata
+from app.api.v1.schemas import StandardResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.get import get_db
 from app.auth.verify_jwt import verify_token
@@ -40,6 +40,7 @@ async def send_message(
     response_model_exclude_none=True,
 )
 async def customer_support_chat(
+    store_id: int,
     ticket_id: int,
     message: str | None = None,
     photo: UploadFile = File(None),
@@ -49,6 +50,7 @@ async def customer_support_chat(
 ):
     return await customer_support_service.ticket_thread(
         ticket_id=ticket_id,
+        store_id=store_id,
         message=message,
         pics=photo,
         db=db,
@@ -58,12 +60,13 @@ async def customer_support_chat(
 
 
 @router.get(
-    "/view_ticket_messages",
+    "/view_ticket_messages/{store_id}/{ticket_id}",
     response_model=StandardResponse,
     response_model_exclude_defaults=True,
     response_model_exclude_none=True,
 )
 async def get_ticket_messages(
+    store_id: int,
     ticket_id: int,
     view: str = Query("customer_view", enum=["support_view", "customer_view"]),
     page: int = Query(1, ge=1),
@@ -73,6 +76,7 @@ async def get_ticket_messages(
     get_supabase=Depends(_supabase),
 ):
     return await customer_support_service.customer_support_messages(
+        store_id=store_id,
         ticket_id=ticket_id,
         view=view,
         page=page,
@@ -108,32 +112,34 @@ async def get_tickets_conversations(
 
 
 @router.put(
-    "/customer_resolve_ticket/{ticket_id}",
+    "/customer_resolve_ticket/{store_id}/{ticket_id}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
 async def customer_close_ticket(
+    store_id: int,
     ticket_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await customer_support_service.mark_as_resolved(
-        ticket_id=ticket_id, db=db, payload=payload
+        store_id=store_id, ticket_id=ticket_id, db=db, payload=payload
     )
 
 
 @router.put(
-    "/support_resolve_ticket/{ticket_id}",
+    "/support_resolve_ticket/{store_id}/{ticket_id}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
 async def support_close_ticket(
+    store_id: int,
     ticket_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await customer_support_service.close_ticket(
-        ticket_id=ticket_id, db=db, payload=payload
+        store_id=store_id, ticket_id=ticket_id, db=db, payload=payload
     )
 
 
