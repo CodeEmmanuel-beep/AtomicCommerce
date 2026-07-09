@@ -144,32 +144,38 @@ async def support_close_ticket(
 
 
 @router.delete(
-    "/delete_message/{ticket_id}/{message_id}",
+    "/delete_message/{store_id}/{ticket_id}/{message_id}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
 async def delete_one_message(
+    store_id: int,
     ticket_id: int,
     message_id: int,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await customer_support_service.remove_message(
-        ticket_id=ticket_id, message_id=message_id, db=db, payload=payload
+        store_id=store_id,
+        ticket_id=ticket_id,
+        message_id=message_id,
+        db=db,
+        payload=payload,
     )
 
 
 @router.delete(
-    "/delete_conversation/{ticket_id}",
+    "/delete_conversation/{store_id}/{ticket_id}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
 async def delete_one_conversation(
+    store_id: int,
     ticket_id: int,
-    agent: str = Query("customer_view", enum=["support_view", "customer_view"]),
+    agent: str = Query("customer", enum=["support", "customer"]),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await customer_support_service.clear_conversation(
-        ticket_id=ticket_id, agent=agent, db=db, payload=payload
+        store_id=store_id, ticket_id=ticket_id, agent=agent, db=db, payload=payload
     )
