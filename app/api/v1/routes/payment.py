@@ -50,7 +50,7 @@ async def update_plan(
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def get_payment_list(
+async def get_store_payment_list(
     store_id: int,
     payment_status: str = Query(
         "approved", enum=["failed", "pending", "refunds", "approved"]
@@ -103,11 +103,31 @@ async def get_personal_payment_list(
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
-    return await payment_service.get_personal_payment_list(
+    return await payment_service.get_personal_receipt_list(
         store_id=store_id,
         payment_status=payment_status,
         page=page,
         limit=limit,
+        db=db,
+        payload=payload,
+    )
+
+
+@router.get(
+    "/personal_payment/{store_id}/{order_id}",
+    response_model=StandardResponse[PaymentResponse],
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
+async def get_personal_payment(
+    store_id: int,
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await payment_service.get_personal_receipt(
+        store_id=store_id,
+        order_id=order_id,
         db=db,
         payload=payload,
     )
