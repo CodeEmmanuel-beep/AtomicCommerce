@@ -69,7 +69,7 @@ async def get_products_statistics(
     slug: str,
     ranking: str = Query("top_product", enum=["least_product", "top_product"]),
     time_frame: str = Query(
-        "1 week", enum=["1 month", "3 months", "6 months", "1 year", "1 week"]
+        "1 week", enum=["1 month", "3 months", "6 months", "1 year", "total", "1 week"]
     ),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
