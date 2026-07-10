@@ -351,6 +351,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     target_store = typing_cast(Store, target_)
     now = datetime.now(timezone.utc)
     time_map = {
+        "total": target_store.founded,
         "1 year": now - relativedelta(years=1),
         "6 months": now - relativedelta(months=6),
         "3 months": now - relativedelta(months=3),
