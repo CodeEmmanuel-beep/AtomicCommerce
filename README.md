@@ -116,6 +116,8 @@ The system is divided into **20+ Domain-Specific Services**, ensuring zero circu
 ├── alembic.ini                 # Migration Configuration
 └── requirements.txt            # Dependency Management
 
+```
+
 Domain Services
 
 ### 1. auth_service
