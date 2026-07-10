@@ -82,7 +82,9 @@ async def stripe_webhook(request, background_task):
     is_order_payment = type_metadata == "order_payment" and event["type"] in (
         VALID_SUCCESS_EVENTS or VALID_FAILURE_EVENTS
     )
-    is_order_refund = type_metadata == "order_refund" and event["type"] in (
+    is_order_refund = type_metadata in ("order_refund", "order_payment") and event[
+        "type"
+    ] in (
         "charge.refunded",
         "refund.updated",
     )
