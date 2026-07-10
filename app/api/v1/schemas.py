@@ -409,8 +409,9 @@ class PaymentResponse(BaseModel):
     order_id: int
     payment_method: str
     currency: str
-    total_amount: Decimal
     payment_status: str
+    total_amount: Decimal
+    total_refund: Optional[Decimal] = Field(default_factory=Decimal)
     shipping_fee: Decimal
     discount_amount: Decimal
     tax_amount: Decimal
