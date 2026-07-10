@@ -45,16 +45,18 @@ async def update_plan(
 
 
 @router.get(
-    "/payment_list/{store_id}",
+    "/payment_list",
     response_model=StandardResponse[PaginatedMetadata[PaymentResponse]],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
 async def get_payment_list(
     store_id: int,
-    payment_status: str = Query("approved", enum=["failed", "pending", "refunds"]),
+    payment_status: str = Query(
+        "approved", enum=["failed", "pending", "refunds", "approved"]
+    ),
     time_frame: str = Query(
-        "1 week", enum=["1 month", "3 months", "6 months", "1 year", "1 week"]
+        "1 week", enum=["1 month", "3 months", "6 months", "1 year", "1 week", "total"]
     ),
     page: int = Query(1, ge=1),
     limit: int = Query(10, le=100),
@@ -82,4 +84,30 @@ async def log_refund(
 ):
     return await payment_service.charge_refund(
         payment_id=payment_id, amount=amount, reason=reason, db=db, payload=payload
+    )
+
+
+@router.get(
+    "/personal_payment_list/{store_id}",
+    response_model=StandardResponse[PaginatedMetadata[PaymentResponse]],
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
+async def get_personal_payment_list(
+    store_id: int,
+    payment_status: str = Query(
+        "approved", enum=["failed", "pending", "refunds", "approved"]
+    ),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, le=100),
+    db: AsyncSession = Depends(get_db),
+    payload: dict = Depends(verify_token),
+):
+    return await payment_service.get_personal_payment_list(
+        store_id=store_id,
+        payment_status=payment_status,
+        page=page,
+        limit=limit,
+        db=db,
+        payload=payload,
     )
