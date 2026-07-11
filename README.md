@@ -139,9 +139,19 @@ Decoupled Asset Upload Pipeline: Profile picture uploading is explicitly separat
 
 * **Transactional Orphan Purging**: If a database transaction fails after a media payload has been written to the bucket, an automated cleanup helper (cleaned_up) intercepts the exception context, rolling back the database state and issuing a delete vector to the storage engine to keep the asset bucket zero-orphan compliant.
 
-### Screenshot
+### JSON Response
 
-<img width="1365" height="487" alt="image" src="https://github.com/user-attachments/assets/5884d204-ef5c-4b94-9979-c971cdf72fd4" />
+```jsonc
+{
+  "status": "success",
+  "message": "login successful",
+  "data": {
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiQ2VuYSIsInN1YiI6ImpheWNlZSIsInVzZXJfaWQiOjMsIm5hdGlvbmFsaXR5IjoiQW1lcmljYSIsInJvbGUiOiJ1c2VyIiwidHlwZSI6ImFjY2Vzc190b2tlbiIsImV4cCI6MTc4Mzc3NTQzN30.FdL6UEg5WqkcE-P6IrUsE_bq0_xv0eE8gqax2PK3Meo",
+    "token_type": "Bearer"
+  }
+}
+```
+
 
 ---
 
@@ -166,12 +176,91 @@ Manages active shopping cart lifecycles, item allocations, state synchronization
 
 * **Auto-Cleaning Sanitize Routines (`update_cart`)**: Features a localized self-healing pipeline that parses an active cart, detects items matching deleted products (`item.product.is_deleted`) or items exceeding current warehouse numbers (`stock_quantity < item.quantity`), and executes atomic bulk deletes (`delete(CartItem).where(CartItem.id.in_(...))`) to reconcile states prior to billing handoffs.
 
-### Screen Recording
+### JSON Response
 
 
-
-
-https://github.com/user-attachments/assets/76715055-35a3-498f-b72b-e706d4a866bd
+```jsonc
+{
+    "status": "success",
+    "message": "cart",
+    "data": {
+        "cart": {
+            "id": 13,
+            "total_quantity": 74.0,
+            "created_at": "2026-05-31T15:12:51.117996+00:00"
+        },
+        "cart_item": {
+            "items": [
+                {
+                    "id": 22,
+                    "product": {
+                        "id": 6,
+                        "product_name": "Infinix",
+                        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/939580eb-6b49-4c82-9829-b2880fecf540_Screenshot_2026-01-05_203517.png",
+                        "product_price": 950.0
+                    },
+                    "quantity": 7
+                },
+                {
+                    "id": 23,
+                    "product": {
+                        "id": 5,
+                        "product_name": "Samsung",
+                        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/ae73fe88-8972-4fc0-b68d-784a17a8d484_Screenshot_2026-01-05_203517.png",
+                        "product_price": 950.0
+                    },
+                    "quantity": 9
+                },
+                {
+                    "id": 24,
+                    "product": {
+                        "id": 4,
+                        "product_name": "Power Bank",
+                        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/bb87c9fb-bd60-4340-a6e5-ad2e6bfd82df_Screenshot_2026-01-05_203517.png",
+                        "product_price": 200.0
+                    },
+                    "quantity": 3
+                },
+                {
+                    "id": 25,
+                    "product": {
+                        "id": 3,
+                        "product_name": "i Pad",
+                        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/8b68b937-9d4f-4e56-8e7c-052efad399f3_Screenshot_2025-11-01_184102.png",
+                        "product_price": 1000.0
+                    },
+                    "quantity": 25
+                },
+                {
+                    "id": 26,
+                    "product": {
+                        "id": 2,
+                        "product_name": "Mac Book",
+                        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/309ee1aa-e2eb-4ed1-b960-74ee276d1ab1_Screenshot_2025-10-25_160322.png",
+                        "product_price": 1200.0
+                    },
+                    "quantity": 25
+                },
+                {
+                    "id": 27,
+                    "product": {
+                        "id": 1,
+                        "product_name": "HP Laptop",
+                        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/d94e1f63-a9b7-43cf-88a8-1dd6b0a845a6_project1.jpg",
+                        "product_price": 650.0
+                    },
+                    "quantity": 5
+                }
+            ],
+            "pagination": {
+                "page": 1,
+                "limit": 10,
+                "total": 6
+            }
+        }
+    }
+}
+```
 
 
 ---
@@ -284,6 +373,79 @@ $$func.coalesce(subq.c.cnt, 0).asc()$$
 * **Strict Concurrency Thread Fencing**: Intercepts ticket update threads by applying row-level locks (`with_for_update()`) on targeted parent rows. This layer blocks cross-concurrency edits, protects resolution status changes (`TicketStatus.closed`), maintains structural integrity across temporal updates (`ticket.updated_at`), and handles inactivity locks (blocking closures until 2 days post-interaction) securely.
 
 
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "your messages",
+  "data": {
+    "conversations": [
+      {
+        "conversation_id": "3:11",
+        "store_photo": "634e8496-7149-466e-98e3-d8e4bab86658_Screenshot_2025-11-25_140924.png",
+        "customer_photo": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/c7b4f5cd-11d4-45ae-b1f0-5159d1f4286d_passport_white_background.jpeg",
+        "customer_support": "John Cena",
+        "customer": "Calvin Klein",
+        "ticket_id": 1,
+        "ticket_status": "closed",
+        "messages": [
+          {
+            "id": 10,
+            "sender": "customer_support",
+            "message": "we await your patronage sir",
+            "delivered": true,
+            "seen": true,
+            "time_of_chat": "2026-07-08T17:36:07.062920Z"
+          },
+          {
+            "id": 9,
+            "sender": "customer",
+            "message": "okay, when I am ready, I will come ",
+            "delivered": true,
+            "seen": true,
+            "time_of_chat": "2026-07-08T17:28:35.411178Z"
+          },
+          {
+            "id": 7,
+            "sender": "customer_support",
+            "message": "sorry sir for the late reply, yes we do sell HP of the best quality! We await your patronage",
+            "delivered": true,
+            "seen": true,
+            "time_of_chat": "2026-07-07T14:01:30.750281Z"
+          },
+          {
+            "id": 6,
+            "sender": "customer",
+            "photo": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/sign/customer_support/b4400e0a-bc62-40e6-b1ab-c64fcca74a67_Screenshot_2026-07-07_143856.png?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV8xMjQ2ODE4MC0zMjBmLTQ1M2EtOWNmZS1kYjZkMDg4MTJiY2EiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJjdXN0b21lcl9zdXBwb3J0L2I0NDAwZTBhLWJjNjItNDBlNi1iMWFiLWM2NGZjY2E3NGE2N19TY3JlZW5zaG90XzIwMjYtMDctMDdfMTQzODU2LnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODM3NzE4OTksImV4cCI6MTc4Mzc3OTA5OX0.wiLtO4kBLQvv2Kp36ABHs3lOn4HLmMd4MfsWAHxc5Ao",
+            "message": "I have sent you a message for hours now and no reply, do well to reply me!",
+            "delivered": true,
+            "seen": true,
+            "time_of_chat": "2026-07-07T13:50:15.390699Z"
+          },
+          {
+            "id": 1,
+            "sender": "customer",
+            "photo": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/sign/customer_support/07cf2168-cabe-4546-bbb4-231dfb36c09c_project1.jpg?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV8xMjQ2ODE4MC0zMjBmLTQ1M2EtOWNmZS1kYjZkMDg4MTJiY2EiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJjdXN0b21lcl9zdXBwb3J0LzA3Y2YyMTY4LWNhYmUtNDU0Ni1iYmI0LTIzMWRmYjM2YzA5Y19wcm9qZWN0MS5qcGciLCJzY29wZSI6ImRvd25sb2FkIiwiaWF0IjoxNzgzNzcxODk5LCJleHAiOjE3ODM3NzkwOTl9.MpWacrFZHO0AVyI42hyZKPCVLu5FBO57TONNhb-Gaeg",
+            "message": "Please is your HP reliable, I dont want to purchase something I would later regret",
+            "delivered": true,
+            "seen": true,
+            "time_of_chat": "2026-07-06T15:27:03.803069Z"
+          }
+        ]
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 5
+    }
+  }
+}
+```
+
+---
+
 ### 5. Delivery Address Service
 
 Governs customer shipping coordinates, order-address bindings, strict active fulfillment constraints, and multi-tenant read-through cache topologies.
@@ -314,6 +476,40 @@ This decouples page offset slicing from structural matching rows to calculate ex
 * **Dual-Layer Mutation Rollbacks**: Encapsulates all transactional changes—such as setting logical delete indicators (`address.is_deleted = True`) or updating array fields (`order.delivery_address`)—inside explicit, error-trapped database blocks. Any constraint collision or backend driver failure triggers an immediate `await db.rollback()` to protect the underlying order tracking parameters from partial execution fragments.
 
 
+### JSON Response
+
+```jsonc
+{
+    "status": "success",
+    "message": "delivery addresses",
+    "data": {
+        "items": [
+            {
+                "id": 4,
+                "street": "zone 2, Wuse",
+                "city": "Abuja",
+                "state": "FCT",
+                "country": "Nigeria"
+            },
+            {
+                "id": 6,
+                "street": "Gwarinpa",
+                "city": "Abuja",
+                "state": "Federal Capital Territory",
+                "country": "Nigeria"
+            }
+        ],
+        "pagination": {
+            "page": 1,
+            "limit": 10,
+            "total": 2
+        }
+    }
+}
+```
+
+---
+
 ### 6. Inventory Service
 
 Governs warehouse stock counts, catalog item allocations, multi-tenant administrative permission checks, and product availability synchronizations.
@@ -335,6 +531,86 @@ Governs warehouse stock counts, catalog item allocations, multi-tenant administr
 
 * **Audit-Safe Purging Topology**: Enforces strict historical integrity across ledger transactions by overriding destructive SQL commands with a logical soft-delete marker (`inventory.is_deleted = True`). The execution flow wraps all database mutations inside explicit `try...except` contexts that issue immediate `await db.rollback()` invocations on intercepting `IntegrityError` or runtime exceptions to block data pollution.
 
+
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "store inventory",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "product": {
+          "id": 1,
+          "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/d94e1f63-a9b7-43cf-88a8-1dd6b0a845a6_project1.jpg",
+          "product_name": "HP Laptop"
+        },
+        "stock_quantity": 39,
+        "last_updated": "2026-07-03T16:59:18.004687Z"
+      },
+      {
+        "id": 2,
+        "product": {
+          "id": 2,
+          "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/309ee1aa-e2eb-4ed1-b960-74ee276d1ab1_Screenshot_2025-10-25_160322.png",
+          "product_name": "Mac Book"
+        },
+        "stock_quantity": 261,
+        "last_updated": "2026-07-03T16:59:18.004687Z"
+      },
+      {
+        "id": 3,
+        "product": {
+          "id": 3,
+          "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/8b68b937-9d4f-4e56-8e7c-052efad399f3_Screenshot_2025-11-01_184102.png",
+          "product_name": "i Pad"
+        },
+        "stock_quantity": 50,
+        "last_updated": "2026-06-27T14:02:03.431488Z"
+      },
+      {
+        "id": 4,
+        "product": {
+          "id": 4,
+          "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/bb87c9fb-bd60-4340-a6e5-ad2e6bfd82df_Screenshot_2026-01-05_203517.png",
+          "product_name": "Power Bank"
+        },
+        "stock_quantity": 0,
+        "last_updated": "2026-06-15T18:42:49.032282Z"
+      },
+      {
+        "id": 6,
+        "product": {
+          "id": 6,
+          "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/939580eb-6b49-4c82-9829-b2880fecf540_Screenshot_2026-01-05_203517.png",
+          "product_name": "Infinix"
+        },
+        "stock_quantity": 82,
+        "last_updated": "2026-06-15T18:42:49.032282Z"
+      },
+      {
+        "id": 5,
+        "product": {
+          "id": 5,
+          "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/ae73fe88-8972-4fc0-b68d-784a17a8d484_Screenshot_2026-01-05_203517.png",
+          "product_name": "Samsung"
+        },
+        "stock_quantity": 60,
+        "last_updated": "2026-06-07T20:49:05.250295Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 6
+    }
+  }
+}
+```
+
+---
 
 ### 7. Membership Service
 
@@ -364,6 +640,56 @@ Governs store loyalty memberships, payment plan tiers, cascading subscription up
 * **Polymorphic Purging Inversions**: Implements two separate logical erasure modes within a single endpoint. If executed with an administrative key, the filter targets explicit membership row records (`Membership.id == membership_id`); if called via a consumer context, it falls back to a tenant user match (`Membership.user_id == user_id`), updating historical markers (`delete_date`), clearing visibility properties, and queuing asynchronous out-of-band cache flushes securely.
 
 
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "active_members",
+  "data": {
+    "items": [
+      {
+        "user": {
+          "id": 8,
+          "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/733d0321-2858-4c36-80a0-dbd9017a0156_payment_terminal_logs.png",
+          "first_name": "Jacob",
+          "middle_name": "Glory",
+          "surname": "Israel"
+        },
+        "membership_type": "Premium",
+        "start_date": "2026-06-10T14:01:54.207191Z"
+      },
+      {
+        "user": {
+          "id": 7,
+          "first_name": "James",
+          "surname": "John"
+        },
+        "membership_type": "Premium",
+        "start_date": "2026-06-11T13:05:12.233872Z"
+      },
+      {
+        "user": {
+          "id": 9,
+          "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/31e443bd-07d8-419f-95c0-555a692ffdef_WIN_20250922_05_39_57_Pro.jpg",
+          "first_name": "Ben",
+          "surname": "Ek"
+        },
+        "membership_type": "Regular",
+        "start_date": "2026-06-19T16:51:51.122821Z"
+      }
+     ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 3
+    }
+  }
+}
+```
+
+---
+
 ### 8. Notification Service
 
 Governs user alerts, real-time Server-Sent Events (SSE) stream delivery, automated read-receipt synchronization, and context-aware messaging for active or soft-deleted stakeholders.
@@ -384,6 +710,253 @@ Governs user alerts, real-time Server-Sent Events (SSE) stream delivery, automat
 
 
 * **Implicit Commit Recovery**: Isolates relational joins and state-flag updates within protected execution blocks. Any unexpected database driver failure or mid-stream disconnection stops transaction processing before executing `await db.commit()`, keeping the primary unread counters accurate and consistent.
+
+
+### JSON RESPONSE
+
+```jsonc
+{
+  "status": "success",
+  "message": "notifications",
+  "data": [
+    {
+      "id": 473,
+      "notification": "New payment for order 27 by Jacob Israel",
+      "status": "REFUNDED",
+      "time_of_op": "2026-06-07T15:32:15.799288Z",
+      "created_at": "2026-07-10T13:00:37.823782Z"
+    },
+    {
+      "id": 471,
+      "notification": "New payment for order 27 by Jacob Israel",
+      "status": "REFUNDED",
+      "time_of_op": "2026-06-07T15:32:15.799288Z",
+      "created_at": "2026-07-10T12:31:27.405041Z"
+    },
+    {
+      "id": 469,
+      "notification": "New payment for order 27 by Jacob Israel",
+      "status": "REFUNDED",
+      "time_of_op": "2026-06-07T15:32:15.799288Z",
+      "created_at": "2026-07-10T12:27:47.301080Z"
+    },
+    {
+      "id": 467,
+      "notification": "New payment for order 27 by Jacob Israel",
+      "status": "REFUNDED",
+      "time_of_op": "2026-06-07T15:32:15.799288Z",
+      "created_at": "2026-07-10T12:24:40.880928Z"
+    },
+    {
+      "id": 465,
+      "notification": "New payment for order 35 by Sandra Eke",
+      "status": "SUCCESS",
+      "time_of_op": "2026-07-03T17:04:18.793700Z",
+      "created_at": "2026-07-03T17:08:44.806081Z"
+    },
+    {
+      "id": 463,
+      "notification": "New payment for order 35 by Sandra Eke",
+      "status": "PENDING",
+      "time_of_op": "2026-07-03T17:04:18.793700Z",
+      "created_at": "2026-07-03T17:04:25.292070Z"
+    },
+    {
+      "id": 461,
+      "notification": "New order by Sandra Eke",
+      "time_of_op": "2026-07-03T16:59:19.581017Z",
+      "created_at": "2026-07-03T16:59:24.332649Z"
+    },
+    {
+      "id": 458,
+      "notification": "New cart by Sandra Eke",
+      "time_of_op": "2026-07-03T16:58:15.940680Z",
+      "created_at": "2026-07-03T16:58:20.388747Z"
+    },
+    {
+      "id": 452,
+      "notification": "New review by James John",
+      "time_of_op": "2026-07-01T20:51:05.424142Z",
+      "created_at": "2026-07-01T20:51:06.936314Z"
+    },
+    {
+      "id": 449,
+      "notification": "New review by James John",
+      "time_of_op": "2026-07-01T20:41:56.194904Z",
+      "created_at": "2026-07-01T20:41:59.315063Z"
+    },
+    {
+      "id": 446,
+      "notification": "New review by Jacob Israel",
+      "time_of_op": "2026-07-01T13:22:40.508280Z",
+      "created_at": "2026-07-01T13:22:42.773756Z"
+    },
+    {
+      "id": 438,
+      "notification": "New payment for order 34 by James John",
+      "status": "SUCCESS",
+      "time_of_op": "2026-06-27T14:07:19.915800Z",
+      "created_at": "2026-06-27T14:09:47.248934Z"
+    },
+    {
+      "id": 436,
+      "notification": "New payment for order 34 by James John",
+      "status": "PENDING",
+      "time_of_op": "2026-06-27T14:07:19.915800Z",
+      "created_at": "2026-06-27T14:07:27.509337Z"
+    },
+    {
+      "id": 434,
+      "notification": "New order by James John",
+      "time_of_op": "2026-06-27T13:39:35.793526Z",
+      "created_at": "2026-06-27T13:39:41.009724Z"
+    },
+    {
+      "id": 431,
+      "notification": "New cart by James John",
+      "time_of_op": "2026-06-27T13:30:09.870785Z",
+      "created_at": "2026-06-27T13:30:14.071347Z"
+    },
+    {
+      "id": 428,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": true,
+      "is_deleted": true,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T18:25:02.277476Z"
+    },
+    {
+      "id": 425,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": true,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T18:14:08.184561Z"
+    },
+    {
+      "id": 422,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": false,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T18:13:42.936710Z"
+    },
+    {
+      "id": 419,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": true,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T18:04:09.681682Z"
+    },
+    {
+      "id": 416,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": false,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T18:01:40.030678Z"
+    },
+    {
+      "id": 413,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": true,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T17:45:46.961475Z"
+    },
+    {
+      "id": 410,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": false,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T17:45:19.563524Z"
+    },
+    {
+      "id": 407,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": true,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T17:42:15.867443Z"
+    },
+    {
+      "id": 404,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": true,
+      "is_deleted": false,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T17:41:43.411335Z"
+    },
+    {
+      "id": 401,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": true,
+      "is_deleted": true,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T17:25:00.848939Z"
+    },
+    {
+      "id": 398,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": true,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T17:19:28.276230Z"
+    },
+    {
+      "id": 395,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": false,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T17:14:29.385717Z"
+    },
+    {
+      "id": 392,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": true,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T16:59:01.366514Z"
+    },
+    {
+      "id": 389,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": true,
+      "is_deleted": false,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T16:25:00.652814Z"
+    },
+    {
+      "id": 386,
+      "notification": "New membership by Ngozi Eke",
+      "membership_type": "Premium",
+      "is_active": false,
+      "is_deleted": false,
+      "time_of_op": "2026-06-16T11:37:40.137671Z",
+      "created_at": "2026-06-25T16:24:50.564789Z"
+    }
+  ]
+}
+```
+
+---
 
 
 ### 9. Order Service
@@ -415,6 +988,151 @@ total\_amount = (subtotal + shipping\_fee + tax\_amount) - discount\_amount
 * **Dual-Perspective Cache Eviction Trees**: Protects data freshness by running explicit, out-of-band invalidation clusters (`order_invalidation`, `cart_invalidation`) inside concurrent event threads (`asyncio.gather`). It pairs these background steps with shared version tags (`cache_version("order_key")`) to render entire storefront cache fragments invalid instantly across global cluster profiles when structural changes occur.
 
 
+### JSON Response
+
+```jsonc
+{
+    "status": "success",
+    "message": "orders",
+    "data": {
+        "items": [
+            {
+                "user": {
+                    "id": 8,
+                    "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/733d0321-2858-4c36-80a0-dbd9017a0156_payment_terminal_logs.png",
+                    "first_name": "Jacob",
+                    "middle_name": "Glory",
+                    "surname": "Israel"
+                },
+                "id": 29,
+                "tax_rate": 7.5,
+                "tax_amount": "6506.25",
+                "shipping_fee": "2500.00",
+                "discount_amount": "0.00",
+                "total_quantity": 85.0,
+                "subtotal": "86750.00",
+                "total_amount": "95756.25",
+                "status": "processing",
+                "delivery_address": [
+                    "zone 2, Wuse",
+                    "Abuja",
+                    "FCT",
+                    "Nigeria"
+                ],
+                "created_at": "2026-06-05T14:00:53.281590Z"
+            },
+            {
+                "user": {
+                    "id": 8,
+                    "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/733d0321-2858-4c36-80a0-dbd9017a0156_payment_terminal_logs.png",
+                    "first_name": "Jacob",
+                    "middle_name": "Glory",
+                    "surname": "Israel"
+                },
+                "id": 30,
+                "tax_rate": 7.5,
+                "tax_amount": "3438.75",
+                "shipping_fee": "2500.00",
+                "discount_amount": "0.00",
+                "total_quantity": 68.0,
+                "subtotal": "45850.00",
+                "total_amount": "51788.75",
+                "status": "processing",
+                "delivery_address": [
+                    "Gwarinpa",
+                    "Abuja",
+                    "Federal Capital Territory",
+                    "Nigeria"
+                ],
+                "created_at": "2026-06-05T14:02:52.761004Z"
+            },
+            {
+                "user": {
+                    "id": 8,
+                    "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/733d0321-2858-4c36-80a0-dbd9017a0156_payment_terminal_logs.png",
+                    "first_name": "Jacob",
+                    "middle_name": "Glory",
+                    "surname": "Israel"
+                },
+                "id": 31,
+                "tax_rate": 7.5,
+                "tax_amount": "9750.00",
+                "shipping_fee": "2500.00",
+                "discount_amount": "0.00",
+                "total_quantity": 110.0,
+                "subtotal": "130000.00",
+                "total_amount": "142250.00",
+                "status": "processing",
+                "delivery_address": [
+                    "Gwarinpa",
+                    "Abuja",
+                    "Federal Capital Territory",
+                    "Nigeria"
+                ],
+                "created_at": "2026-06-06T16:02:37.429118Z"
+            },
+            {
+                "user": {
+                    "id": 8,
+                    "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/733d0321-2858-4c36-80a0-dbd9017a0156_payment_terminal_logs.png",
+                    "first_name": "Jacob",
+                    "middle_name": "Glory",
+                    "surname": "Israel"
+                },
+                "id": 27,
+                "tax_rate": 7.5,
+                "tax_amount": "5553.75",
+                "shipping_fee": "2500.00",
+                "discount_amount": "0.00",
+                "total_quantity": 74.0,
+                "subtotal": "74050.00",
+                "total_amount": "82103.75",
+                "status": "processing",
+                "delivery_address": [
+                    "zone 2, Wuse",
+                    "Abuja",
+                    "FCT",
+                    "Nigeria"
+                ],
+                "created_at": "2026-06-01T17:13:44.198419Z"
+            },
+            {
+                "user": {
+                    "id": 8,
+                    "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/733d0321-2858-4c36-80a0-dbd9017a0156_payment_terminal_logs.png",
+                    "first_name": "Jacob",
+                    "middle_name": "Glory",
+                    "surname": "Israel"
+                },
+                "id": 32,
+                "tax_rate": 7.5,
+                "tax_amount": "6656.25",
+                "shipping_fee": "2500.00",
+                "discount_amount": "887.50",
+                "total_quantity": 107.0,
+                "subtotal": "88750.00",
+                "total_amount": "97018.75",
+                "status": "processing",
+                "delivery_address": [
+                    "Gwarinpa",
+                    "Abuja",
+                    "Federal Capital Territory",
+                    "Nigeria"
+                ],
+                "created_at": "2026-06-15T17:26:05.845720Z"
+            }
+        ],
+        "pagination": {
+            "page": 1,
+            "limit": 10,
+            "total": 5
+        }
+    }
+}
+```
+
+---
+
 ### 10. Payment Service
 
 Governs global electronic transaction lifecycles, real-time external processor integrations, state-locked refund accounting, and role-segregated financial ledger validation.
@@ -440,6 +1158,31 @@ Governs global electronic transaction lifecycles, real-time external processor i
 
 * **Multi-Tenant Time-Slice Queries**: Optimizes lookups across store domains by matching requested filter strings against relative temporal maps (`1 year`, `6 months`, `3 months`, `1 month`, `1 week`). If a store's founding date is newer than the requested query window (`store.founded > time_period`), the search short-circuits with an error response, keeping data lookups efficient and within valid operational bounds.
 
+
+### JSON Response
+
+```jsonc
+{
+    "status": "success",
+    "message": "payment for order: '32",
+    "data": {
+        "id": 25,
+        "order_id": 32,
+        "payment_method": "card",
+        "currency": "usd",
+        "payment_status": "success",
+        "total_amount": "97018.75",
+        "shipping_fee": "2500.00",
+        "discount_amount": "887.50",
+        "tax_amount": "6656.25",
+        "reference_id": "cs_test_a1bIDEDh84cPymy8Rz1xM1JqoSW4PpOhVHkXB23dGjoClCooHhr5kbJLsA",
+        "transaction_id": "pi_3TigCc94kWAB11ZG1795DuQR",
+        "payment_date": "2026-06-15T19:00:39.997909Z"
+    }
+}
+```
+
+---
 
 ### 11. Product Reviews Service
 
@@ -474,6 +1217,62 @@ adjusted\_avg = \frac{(current\_avg \times current\_count) - former\_rating + ra
 
 
 * **Dual-Egress Background Eviction Tree**: Maximizes API read performance by serving requests from short-lived paginated cache keys (`ttl=30`) that are isolated by schema version numbers (`cache_version`). When a review is created, modified, or deleted, the service offloads cache clearing to separate worker threads (`background_task.add_task`), running both `product_review_invalidation` and `product_invalidation` to guarantee data consistency across dependent modules.
+
+
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "reviews",
+  "data": {
+    "items": [
+      {
+        "id": 4,
+        "user": {
+          "id": 7,
+          "first_name": "James",
+          "surname": "John"
+        },
+        "review_text": "This HP laptop is excellent. It boots up within seconds and handles multi-tasking effortlessly. The keyboard is very comfortable to type on, the battery life holds up well throughout the day, and it doesn't get hot or loud. If you're looking for a reliable, fast machine for work or everyday use, this is a great choice.",
+        "ratings": 4,
+        "product_review_reaction_count": 2,
+        "reactions": {
+          "love": 1,
+          "wow": 1
+        },
+        "time_of_post": "2026-06-27T14:18:13.748646Z"
+      },
+      {
+        "id": 3,
+        "user": {
+          "id": 8,
+          "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/733d0321-2858-4c36-80a0-dbd9017a0156_payment_terminal_logs.png",
+          "first_name": "Jacob",
+          "middle_name": "Glory",
+          "surname": "Israel"
+        },
+        "review_text": "I am really impressed with this HP product. It boots up incredibly fast, runs smoothly, and handles all my daily tasks without any lag. The screen is clear and the design feels solid. Great value for money and highly recommended!",
+        "ratings": 5,
+        "product_reply_count": 1,
+        "product_review_reaction_count": 2,
+        "reactions": {
+          "like": 1,
+          "love": 1
+        },
+        "time_of_post": "2026-06-27T13:11:38.901985Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 2
+    }
+  }
+}
+```
+
+---
 
 
 ### 12. Product Reply Service
@@ -514,6 +1313,40 @@ reply\_count_{new} = \max(0, reply\_count_{current} - 1)
 * **Hierarchical Cache Eviction Pipeline**: Optimizes high-traffic API listing routes through version-tagged Redis keys (`cache_version`). Any state modification (creation, editing, or deletion) immediately offloads cache invalidation requests to background worker threads (`background_task.add_task`), clearing both `product_reply_invalidation` and `product_review_invalidation` keys concurrently.
 
 
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "replies",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "user": {
+          "id": 7,
+          "first_name": "James",
+          "surname": "John"
+        },
+        "reply_text": "yea it is a good product, I rated it highly also",
+        "product_reply_reaction_count": 1,
+        "reactions": {
+          "like": 1
+        },
+        "time_of_post": "2026-06-29T13:58:41.300939Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 1
+    }
+  }
+}
+```
+
+---
+
 ### 13. Products Service
 
 Governs the digital marketplace catalog, secure multi-media asset provisioning, structured hierarchical taxonomy alignment, and conditional inventory suppression engines.
@@ -539,6 +1372,110 @@ Governs the digital marketplace catalog, secure multi-media asset provisioning, 
 * **Concurrent Global Invalidation Matrix**: Controls global cache consistency when catalog states change by running parallel non-blocking workers (`asyncio.gather`). Modifications instantly clear dependent caches, evicting stale data fragments simultaneously across three modules: `cart_global_invalidation`, `order_global_invalidation`, and `product_invalidation`.
 
 
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "products data",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "product_name": "HP Laptop",
+        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/d94e1f63-a9b7-43cf-88a8-1dd6b0a845a6_project1.jpg",
+        "product_type": "HP EliteBook 840 G6 TOUCHSCREEN intel Core i5-16GB RAM/512GB SSD",
+        "product_price": "650.00",
+        "avg_rating": "4.50",
+        "review_count": 2,
+        "product_size": "small",
+        "product_description": "The HP EliteBook 840 G6 is a premium 14‑inch business laptop designed for professionals, offering strong performance, advanced security features, and a slim aluminum design. It balances portability with enterprise‑grade reliability, making it ideal for office and mobile work",
+        "product_availability": "available",
+        "inventory": {
+          "stock_quantity": 39
+        }
+      },
+      {
+        "id": 3,
+        "product_name": "i Pad",
+        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/8b68b937-9d4f-4e56-8e7c-052efad399f3_Screenshot_2025-11-01_184102.png",
+        "product_type": "7 inch i Pad",
+        "product_price": "1000.00",
+        "avg_rating": "5.00",
+        "review_count": 1,
+        "product_size": "small",
+        "product_description": "premium product",
+        "product_availability": "available",
+        "inventory": {
+          "stock_quantity": 50
+        }
+      },
+      {
+        "id": 6,
+        "product_name": "Infinix",
+        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/939580eb-6b49-4c82-9829-b2880fecf540_Screenshot_2026-01-05_203517.png",
+        "product_type": "A 38",
+        "product_price": "950.00",
+        "product_size": "small",
+        "product_description": "premium product",
+        "product_availability": "available",
+        "inventory": {
+          "stock_quantity": 82
+        }
+      },
+      {
+        "id": 2,
+        "product_name": "Mac Book",
+        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/309ee1aa-e2eb-4ed1-b960-74ee276d1ab1_Screenshot_2025-10-25_160322.png",
+        "product_type": "Apple product",
+        "product_price": "1200.00",
+        "avg_rating": "3.00",
+        "review_count": 2,
+        "product_size": "small",
+        "product_description": "great innovation ",
+        "product_availability": "available",
+        "inventory": {
+          "stock_quantity": 261
+        }
+      },
+      {
+        "id": 4,
+        "product_name": "Power Bank",
+        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/bb87c9fb-bd60-4340-a6e5-ad2e6bfd82df_Screenshot_2026-01-05_203517.png",
+        "product_type": "50000 MaH",
+        "product_price": "200.00",
+        "product_size": "small",
+        "product_description": "premium product",
+        "product_availability": "out_of_stock",
+        "inventory": {
+          "stock_quantity": 0
+        }
+      },
+      {
+        "id": 5,
+        "product_name": "Samsung",
+        "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/ae73fe88-8972-4fc0-b68d-784a17a8d484_Screenshot_2026-01-05_203517.png",
+        "product_type": "A38",
+        "product_price": "950.00",
+        "product_size": "small",
+        "product_description": "premium product",
+        "product_availability": "available",
+        "inventory": {
+          "stock_quantity": 60
+        }
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 6
+    }
+  }
+}
+```
+
+---
+
 ### 14. Profile Service
 
 Governs identity lifecycle validation, strict role-segregated governance protocols, dynamic field synchronization, and soft-deactivation privacy walls.
@@ -554,6 +1491,29 @@ Governs identity lifecycle validation, strict role-segregated governance protoco
 * **Background Asset Resolvers**: Normalizes public profile outputs by resolving internal storage keys into full URLs. Read sequences route file path tokens through an external cloud asset engine (`get_public_url(profile.profile_picture)`), abstracting underlying asset topologies from client applications.
 
 
+### JSON Response
+
+```jsonc
+{
+    "status": "success",
+    "message": "profile",
+    "data": {
+        "id": 8,
+        "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/733d0321-2858-4c36-80a0-dbd9017a0156_payment_terminal_logs.png",
+        "first_name": "Jacob",
+        "middle_name": "Glory",
+        "surname": "Israel",
+        "username": "jayeye",
+        "phone_number": "+972784983",
+        "email": "jayglo@gmail.com",
+        "nationality": "Israel",
+        "address": "Tel Aviv"
+    }
+}
+```
+
+---
+
 ### 15. Reactions Service
 
 Governs the user engagement loop, polymorphic social reaction tracking, dynamic telemetry count management, and multi-tenant cache eviction across product and store review threads.
@@ -567,6 +1527,19 @@ Governs the user engagement loop, polymorphic social reaction tracking, dynamic 
 * **Enumerated Value Enforcement**: Safeguards data models against invalid inputs by routing incoming strings through standard verification types (`ReactionType(reaction_type)`). Any parsing failure triggers an execution catch block that yields a 400 Bad Request error, isolating the relational engine from corrupted inputs.
 * **Targeted Cache Eviction Worker Routing**: Orchestrates worker tasks based on mapped field outputs to clear relevant caches dynamically (`background_task.add_task`). Depending on the context, it invalidates cache engines across product reviews, store reviews, product replies, or store replies to keep consumer dashboards accurate and synchronous.
 
+### JSON Response
+
+```jsonc
+"reactions": {
+          "like": 1,
+          "love": 1,
+          "wow": 1,
+          "angry": 1,
+          "laugh": 1
+        }
+```
+
+---
 
 ### 16. Store Account and Address Service
 
@@ -592,6 +1565,75 @@ Governs multi-tenant vendor onboard banking lifecycles, asymmetric cryptography 
 
 * **Analytical Windows for Paginated Addresses**: Optimizes address lists across store regions by computing total matches within a windowed query execution block (`func.count(Address.id).over().label("total_count")`). This pattern isolates subtotal records directly alongside paginated offset blocks, enabling the caching engine (`ttl=300`) to store complete metadata packets without firing separate count queries.
 
+
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "store addresses retrieved",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "street": "157B Gidan Mangoro",
+        "city": "Abuja",
+        "state": "FCT",
+        "country": "Nigeria"
+      },
+      {
+        "id": 4,
+        "street": "zone 2, Wuse",
+        "city": "Abuja",
+        "state": "FCT",
+        "country": "Nigeria"
+      },
+      {
+        "id": 5,
+        "street": "Gwarimpa",
+        "city": "Abuja",
+        "state": "FCT",
+        "country": "Nigeria"
+      },
+      {
+        "id": 6,
+        "street": "Gwarinpa",
+        "city": "Abuja",
+        "state": "Federal Capital Territory",
+        "country": "Nigeria"
+      },
+      {
+        "id": 7,
+        "street": "Flat 2, CBN Quarters Karu",
+        "city": "Abuja",
+        "state": "FCT",
+        "country": "Nigeria"
+      },
+      {
+        "id": 8,
+        "street": "Gidan Mangoro",
+        "city": "Abuja",
+        "state": "Federal Capital Territory",
+        "country": "Nigeria"
+      },
+      {
+        "id": 9,
+        "street": "Green Lake",
+        "city": "Dallas",
+        "state": "Florida",
+        "country": "United States of America"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 7
+    }
+  }
+}
+```
+
+---
 
 ### 17. Store Analytics Service
 
@@ -623,6 +1665,72 @@ avg\_sales\_per\_day = \frac{gross\_sales}{today - store\_founded\_date}
 * **Context-Variant Analytical Key Tree**: Manages cache space efficiently by partitioning Redis entry footprints dynamically using signature string parameters. Tracking routes combine context flags, product IDs, and time boundaries into descriptive keys (`f"{slug}:{context}:{context_1}:{context_2}"`) to separate specific analytics views from general public storefront cache records.
 
 
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "most sold products and most rated products in descending order",
+  "data": {
+    "product_sales": [
+      {
+        "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/309ee1aa-e2eb-4ed1-b960-74ee276d1ab1_Screenshot_2025-10-25_160322.png",
+        "product_name": "Mac Book",
+        "product_size": "small",
+        "quantity_sold": 50
+      },
+      {
+        "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/8b68b937-9d4f-4e56-8e7c-052efad399f3_Screenshot_2025-11-01_184102.png",
+        "product_name": "i Pad",
+        "product_size": "small",
+        "quantity_sold": 31
+      },
+      {
+        "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/d94e1f63-a9b7-43cf-88a8-1dd6b0a845a6_project1.jpg",
+        "product_name": "HP Laptop",
+        "product_size": "small",
+        "quantity_sold": 27
+      },
+      {
+        "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/bb87c9fb-bd60-4340-a6e5-ad2e6bfd82df_Screenshot_2026-01-05_203517.png",
+        "product_name": "Power Bank",
+        "product_size": "small",
+        "quantity_sold": 20
+      },
+      {
+        "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/939580eb-6b49-4c82-9829-b2880fecf540_Screenshot_2026-01-05_203517.png",
+        "product_name": "Infinix",
+        "product_size": "small",
+        "quantity_sold": 10
+      }
+    ],
+    "product_ratings": [
+      {
+        "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/8b68b937-9d4f-4e56-8e7c-052efad399f3_Screenshot_2025-11-01_184102.png",
+        "name": "i Pad",
+        "product_size": "small",
+        "ratings": 5
+      },
+      {
+        "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/d94e1f63-a9b7-43cf-88a8-1dd6b0a845a6_project1.jpg",
+        "name": "HP Laptop",
+        "product_size": "small",
+        "ratings": 4.5
+      },
+      {
+        "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/309ee1aa-e2eb-4ed1-b960-74ee276d1ab1_Screenshot_2025-10-25_160322.png",
+        "name": "Mac Book",
+        "product_size": "small",
+        "ratings": 3
+      }
+    ]
+  }
+}
+```
+
+---
+
+
 ### 18. Core Store Management Service
 
 Governs the storefront registration lifecycles, configuration editing regimes, cross-role staff and owner permissions, and cascading hard/soft-deletion workflows.
@@ -644,6 +1752,55 @@ $$\text{Max Employed Stores Per Staff Member} \le 2$$
 * **Asynchronous Lateral Image Promotion**: Optimizes paginated global discovery feeds by combining a deterministic seed-based hashing mechanism (`func.md5(...)`) with a lateral subquery correlation loop. This structure surfaces exactly one prominent product profile alongside its primary storage link directly within the parent query scope, lowering processing overhead during random discovery queries.
 * **Cascading Dependency Demolition**: Executes sweeping database invalidation passes during store deletion routines by combining targeted soft-deletes with hard file purges. While parent relationships (Stores, Inventory records, Financial accounts, and Addresses) are safely toggled via soft flags (`is_deleted = True`), associated nested tracking nodes (`ProductImage`) are permanently dropped from relational schemas, triggering an external script to clear out orphan object storage artifacts.
 
+
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "available 'hp' stores",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "business_logo": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/325a35ac-2602-45d1-bed5-eef549ebd9a2_Screenshot_2025-11-14_023914.png",
+        "store_photo": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/634e8496-7149-466e-98e3-d8e4bab86658_Screenshot_2025-11-25_140924.png",
+        "store_name": "Emmanuel Electronics",
+        "category_name": "Electronics & Technology",
+        "sub_category": [
+          "Computers & Tablets",
+          "Mobile Phones & Accessories"
+        ],
+        "review_count": 2,
+        "avg_rating": "4.50",
+        "motto": "Powering Your World, One Innovation at a Time",
+        "featured_product": {
+          "id": 1,
+          "product_name": "HP Laptop",
+          "primary_image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/d94e1f63-a9b7-43cf-88a8-1dd6b0a845a6_project1.jpg",
+          "product_price": "650.00",
+          "product_availability": "available",
+          "avg_rating": "4.50",
+          "inventory": {
+            "stock_quantity": 39
+          }
+        },
+        "shipping_fee": "2500.00",
+        "store_description": "Welcome to TechDirect Online, your one‑stop destination for premium electronics. We specialize exclusively in computers, laptops, mobile phones, and accessories — delivering the latest technology at unbeatable value.",
+        "approved": true,
+        "founded": "2026-05-26T13:23:15.997733Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 1
+    }
+  }
+}
+```
+
+---
 
 ### 19. Store Reviews Service
 
@@ -678,6 +1835,57 @@ adjusted\_avg = \frac{(current\_avg \times current\_count) - former\_rating + ra
 
 
 * **Dual-Egress Background Eviction Tree**: Maximizes API read performance by serving requests from short-lived paginated cache keys (`ttl=30`) that are isolated by schema version numbers (`cache_version`). When a store review is created, modified, or deleted, the service offloads cache clearing to separate worker threads (`background_task.add_task`), running both `store_review_invalidation` and `store_invalidation` to guarantee data consistency across dependent modules.
+
+
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "reviews",
+  "data": {
+    "items": [
+      {
+        "id": 10,
+        "user": {
+          "id": 7,
+          "first_name": "James",
+          "surname": "John"
+        },
+        "ratings": 4,
+        "review_text": "Emmanuel Electronics is one of the most reliable sellers I’ve bought from on AtomicCommerce. My order was processed quickly, the product matched the description perfectly, and delivery was right on schedule. The packaging was secure, and customer service was polite and helpful when I reached out. It’s clear they value their customers, and I’ll continue shopping with Emmanuel Electronics for future electronics needs.",
+        "store_review_reaction_count": 1,
+        "reactions": {
+          "like": 1
+        },
+        "time_of_post": "2026-07-01T20:51:05.424142Z"
+      },
+      {
+        "id": 8,
+        "user": {
+          "id": 8,
+          "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/733d0321-2858-4c36-80a0-dbd9017a0156_payment_terminal_logs.png",
+          "first_name": "Jacob",
+          "middle_name": "Glory",
+          "surname": "Israel"
+        },
+        "edited": true,
+        "ratings": 5,
+        "review_text": "I bought from Emmanuel Electronics through AtomicCommerce and had an excellent experience. The item was exactly as described, packaged securely, and delivered on time. Communication from the seller was clear and professional, and they responded quickly to my questions. It’s reassuring to know there are trustworthy vendors like Emmanuel Electronics on the platform. I’ll definitely shop with them again.",
+        "store_reply_count": 2,
+        "time_of_post": "2026-07-01T13:22:40.508280Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 2
+    }
+  }
+}
+```
+
+---
 
 
 ### 20. Store Reply Service
@@ -717,6 +1925,50 @@ store\_reply\_count = \max(0, store\_reply\_count_{current} - 1)
 
 * **Dynamic State Mutation Triggers**: Enforces accountability across message boards by monitoring content alterations. When an author modifies an existing entry, the operational routine alters the tracking flag (`edited = True`), signaling to consumers that the message has been modified from its original post state.
 
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "replies",
+  "data": {
+    "items": [
+      {
+        "id": 6,
+        "edited": true,
+        "user": {
+          "id": 5,
+          "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/82c8ca02-96a4-47a1-92ac-58df63d559b8_passport_image.png",
+          "first_name": "Sandra",
+          "surname": "Eke"
+        },
+        "reply_text": "Thank you for your patronage, Mr. James, hope to serve you again. Peace and Love.",
+        "reactions": {
+          "love": 1
+        },
+        "time_of_post": "2026-07-02T11:46:46.136024Z"
+      },
+      {
+        "id": 9,
+        "user": {
+          "id": 8,
+          "profile_picture": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/733d0321-2858-4c36-80a0-dbd9017a0156_payment_terminal_logs.png",
+          "first_name": "Jacob",
+          "middle_name": "Glory",
+          "surname": "Israel"
+        },
+        "reply_text": "you are welcome",
+        "time_of_post": "2026-07-02T19:11:05.971182Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 2
+    }
+  }
+}
+```
 
 ---
 
@@ -763,7 +2015,19 @@ expire\_at = \max(Subscription.expire\_at, now()) + INTERVAL\text{ '30 days'}
 
 * **Asynchronous Background Core Activation**: Postpones non-critical business tasks until after the immediate web request-response cycle completes. Once database changes are written and committed, the pipeline registers downstream tasks—such as profile updates—via background worker queues (`background_task.add_task`), ensuring lightning-fast webhook responses.
 
+### Terminal Log
 
+```log
+marketplace_api | 2026-06-15 14:41:15,579-INFO-Received webhook for membership subscription event: customer.subscription.created
+marketplace_api | { "membership_id": "5", "payment_type": "subscription", "type": "membership", "user_id": "8" }
+marketplace_api | 2026-06-15 14:41:15,854-WARNING-Received unhandled event type: payment_intent.succeeded
+marketplace_api | 2026-06-15 14:41:15,907-INFO-Received webhook for membership subscription event: checkout.session.completed
+marketplace_api | INFO:  172.18.0.1:44814 - "POST /payment/webhook HTTP/1.1" 200 OK
+marketplace_api | 2026-06-15 14:41:20,554-INFO-Payment cs_test_a1FmodnSbtlV4Oyp9G6m09F6fwjJhu9lWYKzQi4lLT5c2nfVQBuNh8csKP processed successfully.
+```
+
+
+---
 
 ### 22. Sub-Category Service
 
@@ -784,6 +2048,77 @@ This collapses all inner whitespace sequences into zero-space blocks, neutralizi
 * **Audit-Safe Deletion Topology**: Disables destructive database record purging (`DELETE`) to preserve relational mapping trees across product portfolios. The module executes structural state modifications by setting a soft-delete flag (`SubCategory.is_deleted = True`), instantly hiding the targeted entry from subsequent consumer retrieval pipelines while maintaining database integrity.
 * **Encapsulated Unit-of-Work Fail-Safes**: Encapsulates write actions and state updates inside isolated `try...except` contexts that intercept `IntegrityError` and global exceptions. Any database block breakdown triggers an immediate `await db.rollback()`, ensuring uncommitted mutations unwind instantly to shield directory metadata from fragmentation.
 
+
+### JSON Response
+
+```json
+{
+  "status": "success",
+  "message": "sub_categories",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "category_id": 2,
+        "name": "Academic Textbooks"
+      },
+      {
+        "id": 2,
+        "category_id": 2,
+        "name": "Non‑fiction"
+      },
+      {
+        "id": 3,
+        "category_id": 2,
+        "name": "Fiction"
+      },
+      {
+        "id": 4,
+        "category_id": 2,
+        "name": "Children’s Books"
+      },
+      {
+        "id": 5,
+        "category_id": 2,
+        "name": "Comics & Graphic Novels"
+      },
+      {
+        "id": 6,
+        "category_id": 2,
+        "name": "Religious & Spiritual"
+      },
+      {
+        "id": 7,
+        "category_id": 2,
+        "name": "Writing Instruments"
+      },
+      {
+        "id": 8,
+        "category_id": 2,
+        "name": "Paper Products"
+      },
+      {
+        "id": 9,
+        "category_id": 2,
+        "name": "Office Supplies"
+      },
+      {
+        "id": 10,
+        "category_id": 2,
+        "name": "Art Supplies"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 91
+    }
+  }
+}
+```
+
+
+---
 
 
 🚀 Setup & Deployment
