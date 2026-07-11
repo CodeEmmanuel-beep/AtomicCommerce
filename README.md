@@ -377,15 +377,16 @@ $$\text{new\_avg} = \frac{(\text{current\_avg} \times \text{current\_count}) + \
 
 * **Dynamic Correction Recalculation Loops**: Re-evaluates rolling statistics dynamically when a review is edited or removed. If a review's score changes, the system applies an adjustment formula to correct the product's average score without recalculating the entire table; if a review is deleted, it scales back the metrics using an update block (`update(Product)`) while clamping minimum boundaries to `0.0`:
 
-$$\text{adjusted\_avg} = \frac{(\text{current\_avg} \times \text{current\_count}) - \text{former\_rating} + \text{ratings}}{\text{current\_count}}$$
-
+```math
+new\_avg = \frac{(current\_avg \times current\_count) + ratings}{current\_count + 1}
+```
 
 * **Dynamic Correction Recalculation Loops**: Re-evaluates rolling statistics dynamically when a review is edited or removed. If a review's score changes, the system applies an adjustment formula to correct the product's average score without recalculating the entire table; if a review is deleted, it scales back the metrics using an update block (`update(Product)`) while clamping minimum boundaries to `0.0`:
 
 
-
-$$\text{adjusted\_avg} = \frac{(\text{current\_avg} \times \text{current\_count}) - \text{former\_rating} + \text{ratings}}{\text{current\_count}}$$
-
+```math
+adjusted\_avg = \frac{(current\_avg \times current\_count) - former\_rating + ratings}{current\_count}
+```
 
 
 📐 **Architectural Decisions & Safeguards**:
