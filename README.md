@@ -373,20 +373,20 @@ Governs verified-purchase consumer feedback loops, real-time rolling product met
 
 
 
-$$\text{new\_avg} = \frac{(\text{current\_avg} \times \text{current\_count}) + \text{ratings}}{\text{current\_count} + 1}$$
-
-* **Dynamic Correction Recalculation Loops**: Re-evaluates rolling statistics dynamically when a review is edited or removed. If a review's score changes, the system applies an adjustment formula to correct the product's average score without recalculating the entire table; if a review is deleted, it scales back the metrics using an update block (`update(Product)`) while clamping minimum boundaries to `0.0`:
-
 ```math
 new\_avg = \frac{(current\_avg \times current\_count) + ratings}{current\_count + 1}
 ```
 
+
 * **Dynamic Correction Recalculation Loops**: Re-evaluates rolling statistics dynamically when a review is edited or removed. If a review's score changes, the system applies an adjustment formula to correct the product's average score without recalculating the entire table; if a review is deleted, it scales back the metrics using an update block (`update(Product)`) while clamping minimum boundaries to `0.0`:
+
+
 
 
 ```math
 adjusted\_avg = \frac{(current\_avg \times current\_count) - former\_rating + ratings}{current\_count}
 ```
+
 
 
 📐 **Architectural Decisions & Safeguards**:
@@ -421,7 +421,9 @@ END DESC, reply.time_of_post ASC
 
 
 
-$$\text{reply\_count}_{\text{new}} = \max(0, \text{reply\_count}_{\text{current}} - 1)$$
+```math
+reply\_count_{new} = \max(0, reply\_count_{current} - 1)
+```
 
 
 
@@ -519,10 +521,18 @@ Governs merchant visibility dashboards, multi-dimensional gross profit aggregati
 * **Multi-Clause Ownership Authorization Hook**: Evaluates profile metadata structures using an inline tuple extraction query (`select(Store, exists(...))`). It simultaneously confirms business clearance flags (`Store.approved.is_(True)`) and verifies if the profile matches verified credentials within the `store_owners` junction table before serving business intelligence details.
 * **Net Revenue Financial Matrix**: Extends standard gross calculation routines by parsing raw operational logs across payment relationships. The arithmetic engine strips operational costs from standard ledger metrics to reveal true merchant gross sales, computing rolling performance tracking averages dynamically:
 
-$$\text{gross\_sales} = \sum(\text{total\_amount}) - \sum(\text{shipping\_fee})$$
 
 
-$$\text{avg\_sales\_per\_day} = \frac{\text{gross\_sales}}{\text{today} - \text{store\_founded\_date}}$$
+```math
+gross\_sales = \sum(total\_amount) - \sum(shipping\_fee)
+```
+
+
+
+```math
+avg\_sales\_per\_day = \frac{gross\_sales}{today - store\_founded\_date}
+```
+
 
 
 * **Time-Bound Flexible Product Ranking**: Provides rolling visibility insights by evaluating product orders across structured date limits (`relativedelta`). The system sorts items based on volume performance configurations, filtering by sales metrics (`func.sum(OrderItem.quantity)`) or customer satisfaction averages (`func.avg(Review.ratings)`) to isolate top or underperforming products.
@@ -586,14 +596,19 @@ Governs verified-purchase consumer feedback loops, real-time rolling store metri
 
 
 
-$$\text{new\_avg} = \frac{(\text{current\_avg} \times \text{current\_count}) + \text{ratings}}{\text{current\_count} + 1}$$
+```math
+new\_avg = \frac{(current\_avg \times current\_count) + ratings}{current\_count + 1}
+```
+
 
 
 * **Dynamic Correction Recalculation Loops**: Re-evaluates rolling statistics dynamically when a review is edited or removed. If a review's score changes, the system applies an adjustment formula to correct the store's average score without recalculating the entire table; if a review is deleted, it scales back the metrics using an update block (`update(Store)`) while clamping minimum boundaries to `0.0`:
 
 
 
-$$\text{adjusted\_avg} = \frac{(\text{current\_avg} \times \text{current\_count}) - \text{former\_rating} + \text{ratings}}{\text{current\_count}}$$
+```math
+adjusted\_avg = \frac{(current\_avg \times current\_count) - former\_rating + ratings}{current\_count}
+```
 
 
 
@@ -616,14 +631,19 @@ Governs the interactive lifecycle of storefront review responses, validating str
 
 
 
-$$\text{Cache Version Scope} = f"\text{store\_reply\_key}:\{\text{store\_id}\}"$$
+```math
+Cache\_Version\_Scope = f"store\_reply\_key:\{store\_id\}"
+```
+
 
 
 * **Transactional Counter Invalidation Safeguards**: Protects cumulative analytical metrics from drift during destructive deletion passes by wrapping updates within explicit lock blocks (`with_for_update`). When a comment is purged from the database, the system queries the associated parent row and decrements its total feedback metric safely, bounding the metric to prevent negative value flaws:
 
 
 
-$$\text{store\_reply\_count} = \max(0, \text{store\_reply\_count}_{\text{current}} - 1)$$
+```math
+store\_reply\_count = \max(0, store\_reply\_count_{current} - 1)
+```
 
 
 
@@ -654,7 +674,10 @@ Orchestrates asynchronous webhooks from financial providers to safely sync exter
 
 
 
-$$\text{expire\_at} = \max(\text{Subscription.expire\_at}, \text{now}()) + \text{INTERVAL '30 days'}$$
+
+```math
+expire\_at = \max(Subscription.expire\_at, now()) + INTERVAL\text{ '30 days'}
+```
 
 
 
