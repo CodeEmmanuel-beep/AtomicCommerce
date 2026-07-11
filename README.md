@@ -206,6 +206,66 @@ This collapses all inner whitespace sequences into zero-space blocks, neutralizi
 * **Encapsulated Unit-of-Work Fail-Safes**: Runs write actions (`db.add`) and state modifications inside isolated `try...except` contexts capturing `IntegrityError` and global exception boundaries. Any database block breakdown triggers an immediate, synchronous `await db.rollback()`, ensuring uncommitted modifications unwind to protect the directory metadata from corruption.
 
 
+### JSON Response
+
+```jsonc
+{
+  "status": "success",
+  "message": "categories",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "name": "Toys & Baby Products"
+      },
+      {
+        "id": 2,
+        "name": "Books & Stationery"
+      },
+      {
+        "id": 3,
+        "name": "Sports & Outdoors"
+      },
+      {
+        "id": 4,
+        "name": "Electronics & Technology"
+      },
+      {
+        "id": 5,
+        "name": "Fashion"
+      },
+      {
+        "id": 6,
+        "name": "Home & Living"
+      },
+      {
+        "id": 7,
+        "name": "Groceries"
+      },
+      {
+        "id": 8,
+        "name": "Automotive"
+      },
+      {
+        "id": 9,
+        "name": "Health & Wellness"
+      },
+      {
+        "id": 14,
+        "name": "Beauty & Personal Care"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 10
+    }
+  }
+}
+```
+
+---
+
 ### 4. Customer Support Service
 
 Governs multi-tenant customer care lifecycles, load-balanced ticket allocation routing, asynchronous storage engine integration, and message-state indicators.
