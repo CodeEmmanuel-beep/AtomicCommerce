@@ -631,13 +631,21 @@ $$\text{store\_reply\_count} = \max(0, \text{store\_reply\_count}_{\text{current
 * **Dynamic State Mutation Triggers**: Enforces accountability across message boards by monitoring content alterations. When an author modifies an existing entry, the operational routine alters the tracking flag (`edited = True`), signaling to consumers that the message has been modified from its original post state.
 
 
-### 21. Stripe Webhook Service
+---
+
+### 21. Financial Gateways & Stripe Webhook Service
 
 Orchestrates asynchronous webhooks from financial providers to safely sync external transactional states with subscription memberships, order processing workflows, and multi-tier refund architectures.
 
 * **Idempotent Multi-Layer Event Fencing**: Employs rigorous state verification to block duplicate processing from out-of-order delivery or re-driven webhooks. By framing updates around explicit event IDs (`last_event_id != event['id']`) and timestamp linear progressions (`last_event_at <= created_timestamp`), the routine safely drops stale notifications and confirms that transactions are modified exactly once per state transition.
+
+
 * **Polymorphic Metadata Parsing Matrix**: Traverses unstructured inbound JSON blocks to locate internal identifiers across various product profiles. The engine inspects multiple object layers, extracting properties from the core root mapping (`metadata`), specialized billing fields (`subscription_details`), and line-item collections (`lines.data[0].metadata`) to dynamically map events to internal records.
+
+
 * **Conditional Mathematical State Transitions**: Evaluates external billing statuses via conditional query logic to calculate expiration windows and subscription levels dynamically. For successful membership completions, it shifts access rights safely forward into future windows:
+
+
 
 $$\text{expire\_at} = \max(\text{Subscription.expire\_at}, \text{now}()) + \text{INTERVAL '30 days'}$$
 
@@ -645,41 +653,33 @@ $$\text{expire\_at} = \max(\text{Subscription.expire\_at}, \text{now}()) + \text
 
 ---
 
-### Key Operational Event Workflows
+### Stripe Webhook Operational Signals
 
 | Payload Classification | Supported Stripe Signals | Downstream Internal Target Updates |
 | --- | --- | --- |
-| **Membership & Recurring Billing** | `checkout.session.completed`<br>
+| **Membership & Recurring Billing** | `checkout.session.completed``customer.subscription.updated``customer.subscription.deleted``invoice.payment_succeeded``invoice.payment_failed` | Adjusts core `SubscriptionStatus` variants (`active`, `cancelled`, `past_due`), updates product subscription tiers (`Standard`, `Regular`, `Premium`), and sets the `is_active` flag.
 
-<br>`customer.subscription.updated`<br>
+ |
+| **Direct Order Checkout** | `checkout.session.completed``payment_intent.succeeded``charge.succeeded``checkout.session.expired``payment_intent.payment_failed``charge.failed` | Maps transaction keys against direct records (`Payment.transaction_id`), alters payment statuses (`SUCCESS`, `FAILED`), and updates parent order processing states.
 
-<br>`customer.subscription.deleted`<br>
+ |
+| **Reversals & Chargebacks** | `charge.refunded``refund.updated` | Validates structural updates across internal ledger schemas (`Refund`); shifts tracking flags to `REFUNDED`, or rolls back parent accounts to `SUCCESS` if rejected.
 
-<br>`invoice.payment_succeeded`<br>
-
-<br>`invoice.payment_failed` | Adjusts core `SubscriptionStatus` variants (`active`, `cancelled`, `past_due`), updates product subscription tiers (`Standard`, `Regular`, `Premium`), and sets the `is_active` flag. |
-| **Direct Order Checkout** | `checkout.session.completed`<br>
-
-<br>`payment_intent.succeeded`<br>
-
-<br>`charge.succeeded`<br>
-
-<br>`checkout.session.expired`<br>
-
-<br>`payment_intent.payment_failed`<br>
-
-<br>`charge.failed` | Maps transaction keys against direct records (`Payment.transaction_id`), alters payment statuses (`SUCCESS`, `FAILED`), and updates parent order processing states. |
-| **Reversals & Chargebacks** | `charge.refunded`<br>
-
-<br>`refund.updated` | Validates structural updates across internal ledger schemas (`Refund`); shifts tracking flags to `REFUNDED`, or rolls back parent accounts to `SUCCESS` if rejected. |
+ |
 
 ---
 
 📐 **Architectural Decisions & Safeguards**:
 
 * **Defensive Reversal Restoration Routing**: Protects systems against payment status errors when a credit institution or bank rejects a pending return transaction. When an outbound refund fails, the system catches the failure state and reverts the parent payment record back to `SUCCESS`, protecting financial consistency across the application.
+
+
 * **Type-Cast Enum Integration**: Eliminates structural schema mapping mismatches by compiling statuses through safe database type casts (`cast(..., target_enum)`). This technique verifies that arbitrary strings from webhooks are parsed into valid database types before submission, preventing runtime schema validation drops.
+
+
 * **Asynchronous Background Core Activation**: Postpones non-critical business tasks until after the immediate web request-response cycle completes. Once database changes are written and committed, the pipeline registers downstream tasks—such as profile updates—via background worker queues (`background_task.add_task`), ensuring lightning-fast webhook responses.
+
+
 
 ### 22. Sub-Category Service
 
