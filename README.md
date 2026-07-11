@@ -373,7 +373,7 @@ Governs verified-purchase consumer feedback loops, real-time rolling product met
 
 
 
-\text{new\_avg} = \frac{(\text{current\_avg} \times \text{current\_count}) + \text{ratings}}{\text{current\_count} + 1}
+$$\text{new\_avg} = \frac{(\text{current\_avg} \times \text{current\_count}) + \text{ratings}}{\text{current\_count} + 1}$$
 
 
 * **Dynamic Correction Recalculation Loops**: Re-evaluates rolling statistics dynamically when a review is edited or removed. If a review's score changes, the system applies an adjustment formula to correct the product's average score without recalculating the entire table; if a review is deleted, it scales back the metrics using an update block (`update(Product)`) while clamping minimum boundaries to `0.0`:
