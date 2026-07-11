@@ -28,9 +28,7 @@ A heavy-duty, service-oriented FastAPI backend architected for enterprise-scale 
        │                              ▲                        ▼
        └───────(Pub/Sub Fan-Out)──────┴─────────── [ Shared Event Listener ]
 
-```
-
----
+```---
 
 ## ✨ Features
 
@@ -119,6 +117,8 @@ The system is divided into **20+ Domain-Specific Services**, ensuring zero circu
 └── requirements.txt            # Dependency Management
 
 ```
+
+---
 
 ### Domain Services
 
@@ -658,11 +658,10 @@ $$\text{expire\_at} = \max(\text{Subscription.expire\_at}, \text{now}()) + \text
 ### Stripe Webhook Operational Signals
 
 | Payload Classification | Supported Stripe Signals | Downstream Internal Target Updates |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | **Membership & Recurring Billing** | `checkout.session.completed``customer.subscription.updated``customer.subscription.deleted``invoice.payment_succeeded``invoice.payment_failed` | Adjusts core `SubscriptionStatus` variants (`active`, `cancelled`, `past_due`), updates product subscription tiers (`Standard`, `Regular`, `Premium`), and sets the `is_active` flag.
 | **Direct Order Checkout** | `checkout.session.completed``payment_intent.succeeded``charge.succeeded``checkout.session.expired``payment_intent.payment_failed``charge.failed` | Maps transaction keys against direct records (`Payment.transaction_id`), alters payment statuses (`SUCCESS`, `FAILED`), and updates parent order processing states.
-| **Reversals & Chargebacks** | 
-`charge.refunded``refund.updated` | Validates structural updates across internal ledger schemas (`Refund`); shifts tracking flags to `REFUNDED`, or rolls back parent accounts to `SUCCESS` if rejected.
+| **Reversals & Chargebacks** | `charge.refunded``refund.updated` | Validates structural updates across internal ledger schemas (`Refund`); shifts tracking flags to `REFUNDED`, or rolls back parent accounts to `SUCCESS` if rejected.
 
 ---
 
