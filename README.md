@@ -321,7 +321,10 @@ Governs multi-tenant consumer checkout lifecycles, precision tax and discount co
 
 
 
-$$total\_amount = (subtotal + shipping\_fee + tax\_amount) - discount\_amount$$
+```math
+total\_amount = (subtotal + shipping\_fee + tax\_amount) - discount\_amount
+```
+
 
 
 * **State-Driven Multi-Tier Expiration Gates**: Evaluates transactional session windows using dynamic temporal thresholds (`created_at` or `re_order_time` checkpoints). If a buyer navigates to the payment portal after a transaction boundary lapses (e.g., more than 1 hour post-creation or 30 minutes post-reactivation), the engine triggers an automatic cleanup phase—marking the checkout status as `OrderStatus.cancelled`, executing inventory restock hooks (`restore_inventory`), and soft-deleting the expired session record.
@@ -545,25 +548,6 @@ avg\_sales\_per\_day = \frac{gross\_sales}{today - store\_founded\_date}
 
 
 ### 18. Core Store Management Service
-
-Governs the storefront registration lifecycles, configuration editing regimes, cross-role staff and owner permissions, and cascading hard/soft-deletion workflows.
-
-* **Multi-Owner Store Registration Fencing**: Restricts multi-tenant profile instantiation to authorized users, validating requested parameters using clean regex validations (`^[\p{L}\s]+$`). The routine verifies that the target profile does not breach maximum asset thresholds (`store_count >= 10`) and validates existing taxonomy requirements within a synchronized subquery block.
-* **Immutable Name Modification & Appending**: Regulates configuration update patterns by tracking title-change states (`edited_name = True`). If a storefront profile modifies its commercial name once, future modification attempts are barred. For nested parameters (such as sub-categories), developers pass explicit mutation parameters (`update_type="add"` or `"replace"`), which use mathematical set unions (`current_sub_category.union(...)`) to append fresh metadata without destroying legacy assignments.
-* **Personnel Escalation & Roster Ceilings**: Enforces explicit headcount boundaries on organizational rosters via multi-row constraint checks. Staff assignments prevent overlapping roles (blocking staff from acting as store owners and vice versa) and enforce explicit capacity metrics across the enterprise layout:
-
-$$\text{Max Stores Per Owner} \le 10$$
-
-
-$$\text{Max Employed Stores Per Staff Member} \le 2$$
-
-
-
-📐 **Architectural Decisions & Safeguards**:
-
-* **Advisory Locks for Personnel Realignment**: Mitigates concurrent race conditions when rewriting organizational rosters by invoking an explicit database session lock (`SELECT pg_advisory_xact_lock(:id)`). This isolates transaction states during personnel updates, preventing double-assignment flaws or out-of-bounds roster sizes under rapid network loads.
-* **Asynchronous Lateral Image Promotion**: Optimizes paginated global discovery feeds by combining a deterministic seed-based hashing mechanism (`func.md5(...)`) with a lateral subquery correlation loop. This structure surfaces exactly one prominent product profile alongside its primary storage link directly within the parent query scope, lowering processing overhead during random discovery queries.
-* **Cascading Dependency Demolition**: Executes sweeping database invalidation passes during store deletion routines by combining targeted soft-deletes with hard file purges. While parent relationships (Stores, Inventory records, Financial accounts, and Addresses) are safely toggled via soft flags (`is_deleted = True`), associated nested tracking nodes (`ProductImage`) are permanently dropped from relational schemas, triggering an external script to clear out orphan object storage artifacts.### 30. Core Store Management Service
 
 Governs the storefront registration lifecycles, configuration editing regimes, cross-role staff and owner permissions, and cascading hard/soft-deletion workflows.
 
