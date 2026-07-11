@@ -143,6 +143,7 @@ Decoupled Asset Upload Pipeline: Profile picture uploading is explicitly separat
 
 <img width="1365" height="487" alt="image" src="https://github.com/user-attachments/assets/5884d204-ef5c-4b94-9979-c971cdf72fd4" />
 
+---
 
 ### 2. Cart Service
 
@@ -164,6 +165,16 @@ Manages active shopping cart lifecycles, item allocations, state synchronization
 
 
 * **Auto-Cleaning Sanitize Routines (`update_cart`)**: Features a localized self-healing pipeline that parses an active cart, detects items matching deleted products (`item.product.is_deleted`) or items exceeding current warehouse numbers (`stock_quantity < item.quantity`), and executes atomic bulk deletes (`delete(CartItem).where(CartItem.id.in_(...))`) to reconcile states prior to billing handoffs.
+
+### Screen Recording
+
+
+
+
+https://github.com/user-attachments/assets/76715055-35a3-498f-b72b-e706d4a866bd
+
+
+---
 
 ### 3. Category Service
 
