@@ -139,6 +139,11 @@ Decoupled Asset Upload Pipeline: Profile picture uploading is explicitly separat
 
 * **Transactional Orphan Purging**: If a database transaction fails after a media payload has been written to the bucket, an automated cleanup helper (cleaned_up) intercepts the exception context, rolling back the database state and issuing a delete vector to the storage engine to keep the asset bucket zero-orphan compliant.
 
+### Screenshot
+
+<img width="1365" height="487" alt="image" src="https://github.com/user-attachments/assets/5884d204-ef5c-4b94-9979-c971cdf72fd4" />
+
+
 ### 2. Cart Service
 
 Manages active shopping cart lifecycles, item allocations, state synchronizations, and volatile cache invalidations across individual store boundaries.
