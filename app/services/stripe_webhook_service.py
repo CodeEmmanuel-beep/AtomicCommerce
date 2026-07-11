@@ -72,6 +72,14 @@ async def stripe_webhook(request, background_task):
         "payment_intent.payment_failed",
         "charge.failed",
     )
+    ORDER_PAYMENT_EVENTS = (
+        "checkout.session.completed",
+        "payment_intent.succeeded",
+        "charge.succeeded",
+        "checkout.session.expired",
+        "payment_intent.payment_failed",
+        "charge.failed",
+    )
     detected_types = [type_metadata, type_subscription_metadata, invoice_metadata_type]
     is_membership = "membership" in detected_types and event["type"] not in (
         "invoice.paid",
@@ -80,7 +88,7 @@ async def stripe_webhook(request, background_task):
         "invoice.finalized",
     )
     is_order_payment = type_metadata == "order_payment" and event["type"] in (
-        VALID_SUCCESS_EVENTS or VALID_FAILURE_EVENTS
+        ORDER_PAYMENT_EVENTS
     )
     is_order_refund = type_metadata in ("order_refund", "order_payment") and event[
         "type"
@@ -217,7 +225,7 @@ async def stripe_webhook(request, background_task):
                     event_type.in_(
                         (
                             "customer.subscription.updated",
-                            "invoice.payment_succeede",
+                            "invoice.payment_succeeded",
                         )
                     ),
                     func.to_timestamp(subscription_days),
