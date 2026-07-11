@@ -27,8 +27,8 @@ A heavy-duty, service-oriented FastAPI backend architected for enterprise-scale 
        │                      (Celery Workers)                 │
        │                              ▲                        ▼
        └───────(Pub/Sub Fan-Out)──────┴─────────── [ Shared Event Listener ]
-
-```---
+```
+---
 
 ## ✨ Features
 
