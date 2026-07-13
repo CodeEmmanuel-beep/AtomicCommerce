@@ -1,6 +1,5 @@
 # 🗂️ Category Module
 
----
 The Category module manages the platform-wide product taxonomy. It provides hierarchical category management, enforces normalized naming rules, and maintains referential integrity for all product classifications across the marketplace.
 
 ---
