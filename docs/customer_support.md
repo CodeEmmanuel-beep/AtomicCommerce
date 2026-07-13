@@ -1,12 +1,12 @@
 # 🎧 Customer Support Module
 
-The Customer Support Module handles store-level issue remediation, user-to-merchant message routing, and support thread management. It enables store owners and their designated staff to manage, track, and resolve inquiries initiated by their specific storefront users. It also governs multi-tenant customer care lifecycles, load-balanced ticket allocation routing, asynchronous storage engine integration, and message-state indicators
+The Customer Support Module handles store-level issue remediation, user-to-merchant message routing, and support thread management. It enables store owners and their designated staff to manage, track, and resolve inquiries initiated by their specific storefront users. It also manages multi-tenant customer care lifecycles, load-balanced ticket allocation routing, asynchronous storage engine integration, and message-state indicators
 
 ---
 
 ### 📡 Server-Client Interface
 
-* **Load-Balanced Support Allocation**: Employs an automated, aggregate load-routing query to detect and assign incoming help requests to active, qualified store personnel or `["Owner", "customer_care"]` operators. The engine groups unresolved entries via an inner subquery (`TicketStatus.open`, `TicketStatus.in_progress`), matching them against parent structures via an outer join that filters for active states (`User.is_active.is_(True)`). It then routes the ticket to the least-burdened operator using a dynamic ascending null-coalesced ordering sequence:
+* **Load-Balanced Support Allocation**: Employs an automated, aggregate load-routing query to detect and assign incoming help requests to active, qualified store personnel or operators. The engine groups unresolved entries via an inner subquery (`TicketStatus.open`, `TicketStatus.in_progress`), matching them against parent structures via an outer join that filters for active states (`User.is_active.is_(True)`). It then routes the ticket to the least-burdened operator using a dynamic ascending null-coalesced ordering sequence:
 
 $$func.coalesce(subq.c.cnt, 0).asc()$$
 
@@ -69,7 +69,7 @@ Retrieves a paginated list of messages attached to a ticket. Can only be viewed 
 ```python
  store_id: int,
  ticket_id: int,
-  view: str = Query("customer_view", enum=["support_view", "customer_view"]),
+view: str = Query("customer_view", enum=["support_view", "customer_view"]),
  page: int = Query(1, ge=1),
  limit: int = Query(10, le=100),
 ```
@@ -172,7 +172,7 @@ Invoked by store operators to transition a ticket state to closed when validatio
 
 `DELETE api/v1/customer_service/delete_conversation`
 
-Clears conversations of the selected ticket
+Performs a logical deletion of all messages associated with the specified ticket from the caller's perspective. The underlying conversation history is preserved until both participants clear the thread or retention policies apply.
 
 **Request Payload**
 
