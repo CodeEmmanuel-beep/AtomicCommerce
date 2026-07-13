@@ -172,7 +172,7 @@ Invoked by store operators to transition a ticket state to closed when validatio
 
 `DELETE api/v1/customer_service/delete_conversation`
 
-Performs a logical deletion of all messages associated with the specified ticket from the caller's perspective. The underlying conversation history is preserved until both participants clear the thread or retention policies apply.
+Performs a logical deletion of all messages associated with the specified ticket from the caller's perspective.
 
 **Request Payload**
 
