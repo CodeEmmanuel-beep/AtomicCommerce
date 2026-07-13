@@ -204,8 +204,10 @@ The routes within this module inherit the following controller structures:
 
 ### Security Guardrails
 
-400 Bad Request: Dispatched during out-of-order state transitions, database integrity errors, or attempts to post to a frozen thread.
+* **400 Bad Request**: Dispatched during out-of-order state transitions, database integrity errors, or attempts to post to a frozen thread.
 
-403 Forbidden: Dispatched during validation failures, or when invalid auth session tokens are provide
+* **403 Forbidden**: Dispatched during validation failures, or when invalid auth session tokens are provide.
 
-404 Not Found: Dispatched if a specified ticket_id or targeted resource index does not exist within the active workspace records
+* **404 Not Found**: Dispatched if a specified ticket_id or targeted resource index does not exist within the active workspace records.
+
+* **500 Internal Server Error**: Dispatched as an unmapped escape route to cleanly catch unhandled thread runtime exceptions.
