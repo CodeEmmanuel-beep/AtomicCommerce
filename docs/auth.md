@@ -36,9 +36,11 @@ Configure the following variables in your local `.env` file to initialize the mo
 ### Core Endpoint
 
 **User Registration**
+g
 `POST api/v1/auth/registration`
 
 Handles users onboarding
+
 **Request Payload**
 
 ```python
@@ -54,6 +56,7 @@ class RegistrationModel(BaseModel):
 ```
 
 **Registration JSON Response**
+
 ```jsonc
 {
  "status":"success",
@@ -61,12 +64,15 @@ class RegistrationModel(BaseModel):
 }
 ```
 ---
+
 **Photo Upload**
+
 `Post api/v1/auth/profile_picture`
 
 Streams asset chunks to cloud storage buckets. Protected by bearer token validation.
 
 ***Request Payload***
+
 ```python
 profile_picture: UploadFile = File(...)
 ```
@@ -83,11 +89,13 @@ profile_picture: UploadFile = File(...)
 ---
 
 **Login**
+
 `Post api/v1/auth/login`
 
 Exchanges valid credentials for a bearer token. Sets a rolling refresh token in a secure cookie.
 
 **Request Payload**
+
 ```python
 class LoginResponse(BaseModel):
     username: str
@@ -95,6 +103,7 @@ class LoginResponse(BaseModel):
 ```
 
 **Login JSON Response**
+
 ```jsonc
 {
   "status": "success",
@@ -108,6 +117,7 @@ class LoginResponse(BaseModel):
 ---
 
 **Create Role**
+
 `POST api/v1/auth/make_role`
 
 Assigns privileges to an existing account node. Restricted to Admin/Owner tiers.
