@@ -182,3 +182,5 @@ The routes within this module inherit the following controller structures:
 * **403 Forbidden**: Dispatched if a merchant or user who is not platform owner or platform admin attempts structural creation or deletion sweeps on the global taxonomy tree.
 
 * **404 Not Found**: Dispatched if a specified parent_id target does not exist in the active records.
+
+* **500 Internal Server Error**: Dispatched as an unmapped escape route to cleanly catch unhandled thread runtime exceptions.
