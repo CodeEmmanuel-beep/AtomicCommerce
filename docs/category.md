@@ -72,7 +72,7 @@ name: str
 
 `GET api/v1/category/get_category`
 
-Retrieves all categories, paginated with a limit of 100
+Retrieves all categories, paginated with a default limit of 10 (maximum allowance of 100 per request page)
 
 **Request Payload**
 
