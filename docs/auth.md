@@ -36,7 +36,7 @@ Configure the following variables in your local `.env` file to initialize the mo
 ### Core Endpoint
 
 **User Registration**
-g
+
 `POST api/v1/auth/registration`
 
 Handles users onboarding
