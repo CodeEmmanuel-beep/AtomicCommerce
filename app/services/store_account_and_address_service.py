@@ -197,7 +197,11 @@ async def verify_store_account(status, reason, slug, db, payload):
             await db.execute(
                 select(StoreAccount)
                 .join(Store, StoreAccount.store_id == Store.id)
-                .where(Store.slug == slug, ~Store.is_deleted, Store.approved)
+                .where(
+                    Store.slug == slug,
+                    Store.is_deleted.is_(False),
+                    Store.approved.is_(True),
+                )
                 .with_for_update()
             )
         ).scalar_one_or_none()
@@ -304,6 +308,7 @@ async def add_address(store_id, address_details, db, payload):
         city=address_details.city,
         state=address_details.state,
         country=address_details.country,
+        store_address=True,
     )
     try:
         db.add(address_detail)
@@ -335,7 +340,11 @@ async def view_store_addresses(store_id, page, limit, db):
         select(Address, func.count(Address.id).over().label("total_count"))
         .join(Store, Address.store_id == Store.id)
         .where(
-            Store.id == store_id, ~Address.is_deleted, ~Store.is_deleted, Store.approved
+            Address.store_address.is_(True),
+            Store.id == store_id,
+            Address.is_deleted.is_(False),
+            Store.is_deleted.is_(False),
+            Store.approved.is_(True),
         )
         .offset(offset)
         .limit(limit)
@@ -376,7 +385,7 @@ async def remove_address(store_id, address_id, db, payload):
             Store.id == store_id,
             store_owners.c.users_id == user_id,
             Address.id == address_id,
-            ~Address.is_deleted,
+            Address.is_deleted.is_(False),
         )
         .with_for_update(of=Address)
     )
