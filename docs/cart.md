@@ -210,7 +210,7 @@ The routes within this module inherit the following controller structures:
 ---
 ### Security Guardrails
 
-**400 Bad Request**: Dispatched upon downstream relational integrity violations, attempts to select deleted catalogs, or requests exceeding warehouse tracking limits.
-**404 Not Found** Dispatched if requests target entities missing from active records or configurations sequestered by tenancy bounds.
-**401 Unauthorized**: Dispatched when inbound sessions present malformed, modified, or expired access tokens.
-**500 Internal Server Error**: Dispatched as an unmapped escape route to cleanly catch unhandled thread runtime exceptions.
+* **400 Bad Request**: Dispatched upon downstream relational integrity violations, attempts to select deleted catalogs, or requests exceeding warehouse tracking limits.
+* **404 Not Found** Dispatched if requests target entities missing from active records or configurations sequestered by tenancy bounds.
+* **401 Unauthorized**: Dispatched when inbound sessions present malformed, modified, or expired access tokens.
+* **500 Internal Server Error**: Dispatched as an unmapped escape route to cleanly catch unhandled thread runtime exceptions.
