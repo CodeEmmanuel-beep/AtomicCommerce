@@ -24,7 +24,7 @@ Governs warehouse inventory levels, product stock allocation, multi-tenant inven
 
 * **Database Check Constraint** The core database engine strictly blocks stock levels from dipping below zero using a SQL-level constraint:
 
-`CheckConstraint("stock_quantity >= 0", name="positive_quantity")`  
+                   `CheckConstraint("stock_quantity >= 0", name="positive_quantity")`  
 
 * **Audit-Safe Purging Topology**: Enforces strict historical integrity across ledger transactions by overriding destructive SQL commands with a logical soft-delete marker (`inventory.is_deleted = True`). The execution flow wraps all database mutations inside explicit `try...except` contexts that issue immediate `await db.rollback()` invocations on intercepting `IntegrityError` or runtime exceptions to block data pollution.
 
