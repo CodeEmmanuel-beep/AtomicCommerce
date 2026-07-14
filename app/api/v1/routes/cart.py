@@ -62,7 +62,7 @@ async def change_quanity(
     store_id: int,
     cart_id: int,
     cartitem_id: int,
-    new_quntity: int = Query(1, ge=1),
+    new_quantity: int = Query(1, ge=1),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
@@ -70,7 +70,7 @@ async def change_quanity(
         cart_id=cart_id,
         store_id=store_id,
         cartitem_id=cartitem_id,
-        new_quantity=new_quntity,
+        new_quantity=new_quantity,
         db=db,
         payload=payload,
     )
