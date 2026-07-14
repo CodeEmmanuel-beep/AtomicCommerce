@@ -4,7 +4,6 @@ from fastapi import Security, HTTPException
 from jose import jwt, JWTError, ExpiredSignatureError
 from dotenv import load_dotenv
 
-
 load_dotenv()
 sk = os.getenv("SECRET_KEY")
 if not sk:
@@ -21,7 +20,7 @@ security_scheme = HTTPBearer()
 def verify_token(credentials: HTTPAuthorizationCredentials = Security(security_scheme)):
     token = credentials.credentials
     credentials_exception = HTTPException(
-        status_code=403,
+        status_code=401,
         detail="not authenticated",
         headers={"www-Authenticate": "Bearer"},
     )
@@ -32,14 +31,14 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security_s
             raise credentials_exception
         return payload
     except ExpiredSignatureError:
-        raise HTTPException(status_code=400, detail="expired session")
+        raise HTTPException(status_code=401, detail="expired session")
     except JWTError:
         raise credentials_exception
 
 
 def decode_token(token: str):
     credentials_exception = HTTPException(
-        status_code=403,
+        status_code=401,
         detail="not authenticated",
         headers={"www-Authenticate": "Bearer"},
     )
@@ -50,6 +49,6 @@ def decode_token(token: str):
             raise credentials_exception
         return payload
     except ExpiredSignatureError:
-        raise HTTPException(status_code=400, detail="expired session")
+        raise HTTPException(status_code=401, detail="expired session")
     except JWTError:
         raise credentials_exception
