@@ -95,7 +95,7 @@ async def view_store_data(slug, db):
         empty_response = StandardResponse(
             status="success",
             message="store has no orders yet",
-            data=None,
+            data={},
         )
         await cached(cache_key, empty_response.model_dump(), ttl=300)
         return empty_response
