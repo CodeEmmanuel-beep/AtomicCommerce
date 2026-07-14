@@ -373,7 +373,7 @@ async def view_selected_members(store_id, member_status, page, limit, db, payloa
     if total == 0:
         logger.info(f"{context} members search returned an empty list")
         response = StandardResponse(
-            status="success", message=f"no {context} member found", data=None
+            status="success", message=f"no {context} member found", data={}
         )
         await cached(cache_key, response, ttl=360)
         return response
