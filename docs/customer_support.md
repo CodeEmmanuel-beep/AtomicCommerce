@@ -190,14 +190,12 @@ Performs a logical deletion of all messages associated with the specified ticket
 
 ---
 
-⚙️ Module Dependencies
+### ⚙️ Module Dependencies
 
 The routes within this module inherit the following controller structures:
 
 * **get_db**: Context manager providing asynchronous pool operations to the database tier.
-
-* **verify_token**: Validates session signatures, parses permissions, and returns both the individual user_id and the linked merchant store_id.
-
+* **verify_token**:  Decorator layer executing JWT decryption and validation checkpoints.
 * **get_supabase**: Retrieve the persistent Supabase client registered globally on `request.app.state.supabase` during the application lifespan. This client is used to upload files to your private storage buckets and generate time-bound, secure signed URLs without the overhead of client re-initialization.
 
 ---
@@ -205,9 +203,6 @@ The routes within this module inherit the following controller structures:
 ### Security Guardrails
 
 * **400 Bad Request**: Dispatched during out-of-order state transitions, database integrity errors, or attempts to post to a frozen thread.
-
-* **403 Forbidden**: Dispatched during validation failures, or when invalid auth session tokens are provide.
-
+* **401 Unauthorized**: Dispatched when authentication credentials are missing, malformed, expired, or the supplied JWT fails validation.
 * **404 Not Found**: Dispatched if a specified ticket_id or targeted resource index does not exist within the active workspace records.
-
 * **500 Internal Server Error**: Dispatched as an unmapped escape route to cleanly catch unhandled thread runtime exceptions.
