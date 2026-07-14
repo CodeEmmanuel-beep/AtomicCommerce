@@ -408,7 +408,7 @@ async def customer_support_conversations(views, page, limit, db, payload, get_su
         logger.warning(
             "Unauthorized access attempt at customer_support_conversations endpoint"
         )
-        raise HTTPException(status_code=403, detail="not a valid user")
+        raise HTTPException(status_code=401, detail="not a valid user")
     offset = (page - 1) * limit
     views = views.lower().strip()
     if views not in {"customer_view", "support_view"}:
@@ -590,7 +590,7 @@ async def mark_as_resolved(store_id, ticket_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("Unauthorized access attempt at the mark_as_resolved endpoint")
-        raise HTTPException(status_code=403, detail="not a valid user")
+        raise HTTPException(status_code=401, detail="not a valid user")
     try:
         ticket = (
             await db.execute(
@@ -640,7 +640,7 @@ async def close_ticket(store_id, ticket_id, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("Unauthorized access attempt at the close_ticket endpoint")
-        raise HTTPException(status_code=403, detail="not a valid user")
+        raise HTTPException(status_code=401, detail="not a valid user")
     try:
         ticket = (
             await db.execute(
@@ -717,7 +717,7 @@ async def remove_message(
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("Unauthorized access attempt at the remove_message endpoint")
-        raise HTTPException(status_code=403, detail="not a valid user")
+        raise HTTPException(status_code=401, detail="not a valid user")
     try:
         message = (
             await db.execute(
@@ -789,7 +789,7 @@ async def clear_conversation(
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("Unauthorized access attempt at the clear_conversation")
-        raise HTTPException(status_code=403, detail="not a valid user")
+        raise HTTPException(status_code=401, detail="not a valid user")
     if agent not in ["customer", "support"]:
         raise HTTPException(
             status_code=409, detail="agent must be either 'customer' or 'support'"
