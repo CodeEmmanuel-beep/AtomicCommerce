@@ -18,7 +18,7 @@ async def send_message(
     store_id: int,
     subject: str,
     message: str | None = None,
-    picure: UploadFile = File(None),
+    picture: UploadFile = File(None),
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
     get_supabase=Depends(_supabase),
@@ -26,7 +26,7 @@ async def send_message(
     return await customer_support_service.text_support(
         subject=subject,
         message=message,
-        pics=picure,
+        pics=picture,
         store_id=store_id,
         db=db,
         payload=payload,
