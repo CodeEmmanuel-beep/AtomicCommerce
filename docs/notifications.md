@@ -12,28 +12,30 @@ CREATE OR REPLACE FUNCTION notify_event()
 RETURNS TRIGGER AS $$
 DECLARE 
     target_user_id INT; 
+    product INT; 
     subscriber INT; 
     event_time TIMESTAMPTZ; 
     v_store_id INT; 
     review_object INT; 
     v_customer_id INT;
 BEGIN 
-    -- 1. REPLY EVENTS
     IF TG_TABLE_NAME = 'reply' THEN 
-        SELECT user_id INTO target_user_id FROM review WHERE id = NEW.review_id;
-        
+        SELECT user_id INTO target_user_id 
+        FROM review 
+        WHERE id = NEW.review_id;
+
         IF NEW.product_id IS NOT NULL THEN 
             review_object := NEW.product_id; 
         ELSE 
             review_object := NEW.store_id; 
         END IF;
-        
+
         IF target_user_id IS NOT NULL THEN 
             PERFORM pg_notify(
                 'app_events', 
                 json_build_object(
                     'inserter', NEW.user_id, 
-                    'notification', 'replied to your review', 
+                    'notification', 'reply to your review', 
                     'obj', review_object, 
                     'user_id', target_user_id, 
                     'action', TG_OP, 
@@ -44,14 +46,15 @@ BEGIN
             ); 
         END IF;
 
-    -- 2. CART, REVIEW, ORDER EVENTS
     ELSIF TG_TABLE_NAME IN ('cart', 'review', 'order') THEN 
         IF TG_TABLE_NAME = 'review' THEN 
-            event_time := NEW.time_of_post; 
+            event_time := NEW.time_of_post;  
+            product := NEW.product_id; 
         ELSE 
             event_time := NEW.created_at; 
+            product := NULL; 
         END IF; 
-        
+
         FOR subscriber IN 
             SELECT users_id FROM store_staffs WHERE stores_id = NEW.store_id 
             UNION ALL 
@@ -61,7 +64,7 @@ BEGIN
                 'app_events', 
                 json_build_object(
                     'inserter', NEW.user_id, 
-                    'product_id', NEW.product_id, 
+                    'product_id', product, 
                     'store_id', NEW.store_id, 
                     'user_id', subscriber, 
                     'notification', 'New ' || TG_TABLE_NAME, 
@@ -71,10 +74,11 @@ BEGIN
             ); 
         END LOOP;
 
-    -- 3. PAYMENT EVENTS
     ELSIF TG_TABLE_NAME = 'payment' THEN 
-        SELECT store_id INTO v_store_id FROM "order" WHERE id = NEW.order_id; 
-        
+        SELECT store_id INTO v_store_id 
+        FROM "order" 
+        WHERE id = NEW.order_id; 
+
         IF v_store_id IS NOT NULL THEN
             FOR subscriber IN 
                 SELECT users_id FROM store_owners WHERE stores_id = v_store_id
@@ -94,7 +98,6 @@ BEGIN
             END LOOP; 
         END IF;
 
-    -- 4. MEMBERSHIP EVENTS
     ELSIF TG_TABLE_NAME = 'membership' THEN 
         FOR subscriber IN 
             SELECT users_id FROM store_staffs WHERE stores_id = NEW.store_id 
@@ -117,12 +120,11 @@ BEGIN
             );
         END LOOP;
 
-    -- 5. SUBSCRIPTION EVENTS
     ELSIF TG_TABLE_NAME = 'subscription' THEN 
         SELECT store_id, user_id INTO v_store_id, v_customer_id 
         FROM membership 
         WHERE id = NEW.membership_id; 
-        
+
         FOR subscriber IN 
             SELECT users_id FROM store_owners WHERE stores_id = v_store_id 
             UNION ALL 
@@ -142,10 +144,11 @@ BEGIN
             ); 
         END LOOP;
     END IF;
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
 ```
 
 **Table Triggers**
@@ -207,9 +210,9 @@ async with aiopg.connect(dsn) as conn:
 
 **Notification List**
 
-`GET api/v1/notifications/notifications_list`
+`GET api/v1/notifications/notifications_data`
 
-Retrieves a dropdown listing of the 30 most recent notifications for the authenticated session, automatically updating unread status tracking.
+Retrieves a paginated list of notifications for the authenticated session, automatically updating unread status tracking.
 
 **JSON RESPONSE**
 
@@ -217,241 +220,100 @@ Retrieves a dropdown listing of the 30 most recent notifications for the authent
 {
   "status": "success",
   "message": "notifications",
-  "data": [
-    {
-      "id": 473,
-      "notification": "New payment for order 27 by Jacob Israel",
-      "status": "REFUNDED",
-      "time_of_op": "2026-06-07T15:32:15.799288Z",
-      "created_at": "2026-07-10T13:00:37.823782Z"
-    },
-    {
-      "id": 471,
-      "notification": "New payment for order 27 by Jacob Israel",
-      "status": "REFUNDED",
-      "time_of_op": "2026-06-07T15:32:15.799288Z",
-      "created_at": "2026-07-10T12:31:27.405041Z"
-    },
-    {
-      "id": 469,
-      "notification": "New payment for order 27 by Jacob Israel",
-      "status": "REFUNDED",
-      "time_of_op": "2026-06-07T15:32:15.799288Z",
-      "created_at": "2026-07-10T12:27:47.301080Z"
-    },
-    {
-      "id": 467,
-      "notification": "New payment for order 27 by Jacob Israel",
-      "status": "REFUNDED",
-      "time_of_op": "2026-06-07T15:32:15.799288Z",
-      "created_at": "2026-07-10T12:24:40.880928Z"
-    },
-    {
-      "id": 465,
-      "notification": "New payment for order 35 by Sandra Eke",
-      "status": "SUCCESS",
-      "time_of_op": "2026-07-03T17:04:18.793700Z",
-      "created_at": "2026-07-03T17:08:44.806081Z"
-    },
-    {
-      "id": 463,
-      "notification": "New payment for order 35 by Sandra Eke",
-      "status": "PENDING",
-      "time_of_op": "2026-07-03T17:04:18.793700Z",
-      "created_at": "2026-07-03T17:04:25.292070Z"
-    },
-    {
-      "id": 461,
-      "notification": "New order by Sandra Eke",
-      "time_of_op": "2026-07-03T16:59:19.581017Z",
-      "created_at": "2026-07-03T16:59:24.332649Z"
-    },
-    {
-      "id": 458,
-      "notification": "New cart by Sandra Eke",
-      "time_of_op": "2026-07-03T16:58:15.940680Z",
-      "created_at": "2026-07-03T16:58:20.388747Z"
-    },
-    {
-      "id": 452,
-      "notification": "New review by James John",
-      "time_of_op": "2026-07-01T20:51:05.424142Z",
-      "created_at": "2026-07-01T20:51:06.936314Z"
-    },
-    {
-      "id": 449,
-      "notification": "New review by James John",
-      "time_of_op": "2026-07-01T20:41:56.194904Z",
-      "created_at": "2026-07-01T20:41:59.315063Z"
-    },
-    {
-      "id": 446,
-      "notification": "New review by Jacob Israel",
-      "time_of_op": "2026-07-01T13:22:40.508280Z",
-      "created_at": "2026-07-01T13:22:42.773756Z"
-    },
-    {
-      "id": 438,
-      "notification": "New payment for order 34 by James John",
-      "status": "SUCCESS",
-      "time_of_op": "2026-06-27T14:07:19.915800Z",
-      "created_at": "2026-06-27T14:09:47.248934Z"
-    },
-    {
-      "id": 436,
-      "notification": "New payment for order 34 by James John",
-      "status": "PENDING",
-      "time_of_op": "2026-06-27T14:07:19.915800Z",
-      "created_at": "2026-06-27T14:07:27.509337Z"
-    },
-    {
-      "id": 434,
-      "notification": "New order by James John",
-      "time_of_op": "2026-06-27T13:39:35.793526Z",
-      "created_at": "2026-06-27T13:39:41.009724Z"
-    },
-    {
-      "id": 431,
-      "notification": "New cart by James John",
-      "time_of_op": "2026-06-27T13:30:09.870785Z",
-      "created_at": "2026-06-27T13:30:14.071347Z"
-    },
-    {
-      "id": 428,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": true,
-      "is_deleted": true,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T18:25:02.277476Z"
-    },
-    {
-      "id": 425,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": true,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T18:14:08.184561Z"
-    },
-    {
-      "id": 422,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": false,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T18:13:42.936710Z"
-    },
-    {
-      "id": 419,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": true,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T18:04:09.681682Z"
-    },
-    {
-      "id": 416,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": false,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T18:01:40.030678Z"
-    },
-    {
-      "id": 413,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": true,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T17:45:46.961475Z"
-    },
-    {
-      "id": 410,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": false,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T17:45:19.563524Z"
-    },
-    {
-      "id": 407,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": true,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T17:42:15.867443Z"
-    },
-    {
-      "id": 404,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": true,
-      "is_deleted": false,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T17:41:43.411335Z"
-    },
-    {
-      "id": 401,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": true,
-      "is_deleted": true,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T17:25:00.848939Z"
-    },
-    {
-      "id": 398,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": true,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T17:19:28.276230Z"
-    },
-    {
-      "id": 395,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": false,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T17:14:29.385717Z"
-    },
-    {
-      "id": 392,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": true,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T16:59:01.366514Z"
-    },
-    {
-      "id": 389,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": true,
-      "is_deleted": false,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T16:25:00.652814Z"
-    },
-    {
-      "id": 386,
-      "notification": "New membership by Ngozi Eke",
-      "membership_type": "Premium",
-      "is_active": false,
-      "is_deleted": false,
-      "time_of_op": "2026-06-16T11:37:40.137671Z",
-      "created_at": "2026-06-25T16:24:50.564789Z"
+  "data": {
+    "items": [
+      {
+        "id": 511,
+        "notification": "New payment for order 36 by Jacob Israel",
+        "store_name": "Emmanuel Electronics",
+        "status": "SUCCESS",
+        "time_of_op": "2026-07-15T18:03:44.740371Z",
+        "created_at": "2026-07-15T18:05:55.418389Z"
+      },
+      {
+        "id": 509,
+        "notification": "New payment for order 36 by Jacob Israel",
+        "store_name": "Emmanuel Electronics",
+        "status": "PENDING",
+        "time_of_op": "2026-07-15T18:03:44.740371Z",
+        "created_at": "2026-07-15T18:03:54.539620Z"
+      },
+      {
+        "id": 503,
+        "notification": "New subscription by Jacob Israel",
+        "store_name": "Emmanuel Electronics",
+        "status": "past_due",
+        "time_of_op": "2026-07-15T17:06:57.457105Z",
+        "created_at": "2026-07-15T17:07:03.776979Z"
+      },
+      {
+        "id": 507,
+        "notification": "New membership by Jacob Israel",
+        "store_name": "Emmanuel Electronics",
+        "membership_type": "Premium",
+        "is_active": true,
+        "is_deleted": false,
+        "time_of_op": "2026-06-10T14:01:54.207191Z",
+        "created_at": "2026-07-15T17:07:03.776979Z"
+      },
+      {
+        "id": 501,
+        "notification": "New membership by Jacob Israel",
+        "store_name": "Emmanuel Electronics",
+        "membership_type": "Premium",
+        "is_active": true,
+        "is_deleted": false,
+        "time_of_op": "2026-06-10T14:01:54.207191Z",
+        "created_at": "2026-07-15T17:07:02.120240Z"
+      },
+      {
+        "id": 497,
+        "notification": "New subscription by Jacob Israel",
+        "store_name": "Emmanuel Electronics",
+        "status": "past_due",
+        "time_of_op": "2026-07-15T17:06:57.521501Z",
+        "created_at": "2026-07-15T17:07:02.120240Z"
+      },
+      {
+        "id": 494,
+        "notification": "New subscription by Jacob Israel",
+        "store_name": "Emmanuel Electronics",
+        "status": "past_due",
+        "time_of_op": "2026-07-15T16:37:11.629451Z",
+        "created_at": "2026-07-15T16:37:21.332619Z"
+      },
+      {
+        "id": 492,
+        "notification": "New membership by Jacob Israel",
+        "store_name": "Emmanuel Electronics",
+        "membership_type": "Premium",
+        "is_active": false,
+        "is_deleted": false,
+        "time_of_op": "2026-06-10T14:01:54.207191Z",
+        "created_at": "2026-07-15T16:37:21.332619Z"
+      },
+      {
+        "id": 488,
+        "notification": "New order by Jacob Israel",
+        "store_name": "Emmanuel Electronics",
+        "time_of_op": "2026-07-15T15:32:07.999572Z",
+        "created_at": "2026-07-15T15:32:12.474630Z"
+      },
+      {
+        "id": 485,
+        "notification": "New review by Jacob Israel",
+        "product_name": "HP Laptop",
+        "store_name": "Emmanuel Electronics",
+        "time_of_op": "2026-07-15T15:30:10.426155Z",
+        "created_at": "2026-07-15T15:30:15.026719Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 188
     }
-  ]
+  }
 }
 ```
 
