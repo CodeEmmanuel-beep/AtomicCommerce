@@ -78,6 +78,8 @@ class UserResponse(BaseModel):
 class NotificationResponse(BaseModel):
     id: int
     notification: str
+    product_name: str | None = Field(default_factory=str)
+    store_name: str | None = Field(default_factory=str)
     membership_type: str | None = None
     status: str | None = None
     is_active: bool | None = None
@@ -202,7 +204,7 @@ class ReplyResponse(BaseModel):
 
 class Reply(BaseModel):
     id: int | None = None
-    store_id: int | None = None
+    store_id: int
     product_id: int | None = None
     review_id: int | None = None
     reply_text: str
@@ -437,6 +439,8 @@ class SubscriptionResponse(BaseModel):
 
 class ProductReviewResponse(BaseModel):
     id: int
+    store_id: int | None = None
+    product_id: int
     user: ProfileResponse
     edited: bool = Field(default=False)
     review_text: str
@@ -451,6 +455,7 @@ class ProductReviewResponse(BaseModel):
 
 class StoreReviewResponse(BaseModel):
     id: int
+    store_id: int
     user: ProfileResponse
     edited: bool = Field(default=False)
     ratings: int
@@ -467,7 +472,7 @@ class StoreReviewResponse(BaseModel):
 class Review(BaseModel):
     id: int | None = None
     product_id: int | None = None
-    store_id: int | None = None
+    store_id: int
     review_text: str
 
 
