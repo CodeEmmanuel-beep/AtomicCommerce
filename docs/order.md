@@ -243,7 +243,7 @@ order_id: int
 ```
 
 ```json
-{"status": "success", message": "order cancelled"}
+{"status": "success", "message": "order cancelled"}
 ```
 
 ---
@@ -278,7 +278,7 @@ The routes within this module inherit the following controller structures:
 
 ### Security  Guardrails
 
-* **400 Bad Request**: Dispatched upon downstream relational integrity violations or transaction failures.
+* **400 Bad Request**: Dispatched upon downstream integrity violations or transaction failures.
 * **401 Unauthorized**: Dispatched when inbound sessions present malformed, modified, or expired access tokens.
 * **404 Not Found**: Dispatched if requests target entities missing from active records or configurations sequestered by tenancy bounds.
 * **409 Conflict**: Dispatched when a cart is about to be checked out twice or when an invalidated order is being processed.
