@@ -68,6 +68,16 @@ async def reply(reply, background_task, db, payload):
                 exists().where(
                     Reply.user_id == user_id, Reply.review_id == reply.review_id
                 ),
+                exists(
+                    select(1)
+                    .select_from(Store)
+                    .join(Product, Store.id == Product.store_id)
+                    .where(
+                        Store.id == reply.store_id,
+                        Store.is_deleted.is_(False),
+                        Product.id == reply.product_id,
+                    )
+                ),
             )
             .join(Product, Review.product_id == Product.id)
             .where(
@@ -81,7 +91,7 @@ async def reply(reply, background_task, db, payload):
         if not row:
             logger.warning("user %s, tried replying to a non-existent review", user_id)
             raise HTTPException(status_code=404, detail="review not found")
-        review_obj, reply_exist = row
+        review_obj, reply_exist, store_exists = row
         if reply_exist:
             logger.warning(
                 "user: %s, tried replying to a review more than once, review: %s",
@@ -89,9 +99,21 @@ async def reply(reply, background_task, db, payload):
                 reply.review_id,
             )
             raise HTTPException(status_code=400, detail="only one reply per review")
+        if not store_exists:
+            logger.warning(
+                "user: %s, tried to reply to a review: %s, on a product: %s. from a store: %s, that does not exists",
+                user_id,
+                reply.review_id,
+                reply.product_id,
+                reply.store_id,
+            )
+            raise HTTPException(
+                status_code=404, detail="the reviewed product is without a store"
+            )
         new_reply = Reply(
             user_id=user_id,
             product_id=reply.product_id,
+            store_id=reply.store_id,
             review_id=reply.review_id,
             reply_text=reply.reply_text,
         )
