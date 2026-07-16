@@ -264,6 +264,8 @@ async def run_router():
                                     time_of_op=datetime.fromisoformat(
                                         time_op.replace("Z", "+00:00")
                                     ),
+                                    product_id=payload.get("product_id"),
+                                    store_id=payload.get("store_id"),
                                     status=payload.get("status"),
                                     membership_type=payload.get("type"),
                                     is_active=payload.get("is_active"),
