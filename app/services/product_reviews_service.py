@@ -6,7 +6,16 @@ from app.api.v1.schemas import (
     PaginatedResponse,
     ReactionsSummary,
 )
-from app.models import Review, Product, React, User, OrderItem, OrderStatus, Order
+from app.models import (
+    Review,
+    Product,
+    React,
+    User,
+    OrderItem,
+    OrderStatus,
+    Order,
+    Store,
+)
 from fastapi import HTTPException, status, Response
 from sqlalchemy import select, func, exists, update
 from sqlalchemy.orm import selectinload
@@ -57,6 +66,16 @@ async def product_review(review, background_task, ratings, db, payload):
                 exists().where(
                     Review.user_id == user_id, Review.product_id == review.product_id
                 ),
+                exists(
+                    select(1)
+                    .select_from(Store)
+                    .join(Product, Store.id == Product.store_id)
+                    .where(
+                        Store.id == review.store_id,
+                        Store.is_deleted.is_(False),
+                        Product.id == review.product_id,
+                    )
+                ),
             )
             .where(Product.id == review.product_id, Product.is_deleted.is_(False))
             .with_for_update(of=Product)
@@ -68,7 +87,7 @@ async def product_review(review, background_task, ratings, db, payload):
                 user_id,
             )
             raise HTTPException(status_code=404, detail="product not found")
-        target, limit = row
+        target, limit, store_exists = row
         if limit:
             logger.warning(
                 "user '%s' tried posting more than one review for a product", user_id
@@ -76,10 +95,21 @@ async def product_review(review, background_task, ratings, db, payload):
             raise HTTPException(
                 status_code=400, detail="can not make more that one review per product"
             )
+        if not store_exists:
+            logger.warning(
+                "user: %s, tried to review a product: %s. from a store: %s, that does not exists",
+                user_id,
+                review.product_id,
+                review.store_id,
+            )
+            raise HTTPException(
+                status_code=404, detail="the product is without a store"
+            )
         new_review = Review(
             user_id=user_id,
             product_id=review.product_id,
             review_text=review.review_text,
+            store_id=review.store_id,
             ratings=ratings,
         )
         db.add(new_review)
