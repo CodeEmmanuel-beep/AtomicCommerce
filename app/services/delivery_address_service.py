@@ -8,7 +8,7 @@ from app.utils.redis import (
     cache,
     cached,
 )
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import contains_eager, selectinload
 from app.api.v1.schemas import (
     StandardResponse,
     PaginatedMetadata,
@@ -94,7 +94,9 @@ async def view_delivery_address(store_id, page, limit, db, payload):
         select(Address)
         .join(Order, Address.id == Order.delivery_address_id)
         .where(
-            Order.store_id == store_id, Order.user_id == user_id, ~Address.is_deleted
+            Order.store_id == store_id,
+            Order.user_id == user_id,
+            Address.is_deleted.is_(False),
         )
         .distinct()
         .offset(offset)
@@ -136,52 +138,67 @@ async def choose_order_address(
     if not user_id:
         logger.error("Unauthorized attempt to choose delivery address")
         raise HTTPException(status_code=401, detail="not authorized")
-    order = (
-        await db.execute(
-            select(Order)
-            .where(
-                Order.id == order_id,
-                Order.store_id == store_id,
-                Order.user_id == user_id,
-                ~Order.order_delete,
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if not order:
-        logger.error(
-            f"Order with order_id: {order_id} not found for choosing delivery address"
-        )
-        raise HTTPException(status_code=404, detail="no order created")
-    stmt = (
-        select(Address)
-        .options(selectinload(Address.orders).selectinload(Order.user))
-        .where(
-            Address.id == address_id,
-            ~Address.is_deleted,
-            Address.store_id == store_id,
-        )
-    )
-    address = (await db.execute(stmt)).scalar_one_or_none()
-    if not address or not any(order.user.id == user_id for order in address.orders):
-        logger.error(
-            "Address with address_id: '%s' not found for user_id: '%s'",
-            address_id,
-            user_id,
-        )
-        raise HTTPException(
-            status_code=404,
-            detail="address not found, please input your address to complete the order",
-        )
-    order.delivery_address = [
-        address.street,
-        address.city,
-        address.state,
-        address.country,
-    ]
-    order.delivery_address_id = address.id
     try:
+        order = (
+            await db.execute(
+                select(Order)
+                .where(
+                    Order.id == order_id,
+                    Order.store_id == store_id,
+                    Order.user_id == user_id,
+                    Order.order_delete.is_(False),
+                )
+                .with_for_update(of=Order)
+            )
+        ).scalar_one_or_none()
+        if not order:
+            logger.warning(
+                "Order with order_id: '%s' not found for choosing delivery address",
+                order_id,
+            )
+            raise HTTPException(status_code=404, detail="no order created")
+        address = (
+            await db.execute(
+                select(Address)
+                .options(selectinload(Address.orders).selectinload(Order.user))
+                .where(
+                    Address.id == address_id,
+                    Address.is_deleted.is_(False),
+                    Address.store_id == store_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not address or not any(order.user_id == user_id for order in address.orders):
+            logger.warning(
+                "user: %s tried choosing a non existent address: %s for order: %s",
+                user_id,
+                address_id,
+                order_id,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail="address not found, please input your address to complete the order",
+            )
+        if order.status != OrderStatus.pending:
+            logger.warning(
+                "user '%s' tried changing the address for an order already handled order_id '%s'",
+                user_id,
+                order_id,
+            )
+            raise HTTPException(
+                status_code=409, detail="can only change the address of pending orders"
+            )
+        order.delivery_address = [
+            address.street,
+            address.city,
+            address.state,
+            address.country,
+        ]
+        order.delivery_address_id = address.id
         await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while choosing delivery address")
@@ -202,42 +219,45 @@ async def remove_delivery_address(store_id, address_id, background_task, db, pay
     if not user_id:
         logger.error("Unauthorized attempt to delete delivery address")
         raise HTTPException(status_code=401, detail="not authorized")
-    stmt = (
-        select(Address)
-        .options(selectinload(Address.orders))
-        .join(Order, Address.id == Order.delivery_address_id)
-        .where(
-            Address.id == address_id,
-            ~Address.is_deleted,
-            Address.store_id == store_id,
-            Order.user_id == user_id,
+    try:
+        stmt = (
+            select(Address)
+            .join(Order, Address.id == Order.delivery_address_id)
+            .options(contains_eager(Address.orders))
+            .where(
+                Address.id == address_id,
+                Address.is_deleted.is_(False),
+                Address.store_id == store_id,
+                Order.user_id == user_id,
+            )
+            .with_for_update()
         )
-    )
-    address = (await db.execute(stmt)).scalar_one_or_none()
-    if not address:
-        logger.error(
-            "Address with address_id: '%s' not found for user_id: '%s'",
-            address_id,
-            user_id,
-        )
-        raise HTTPException(status_code=404, detail="address not found")
-    for order in address.orders:
-        if order.status not in [
-            OrderStatus.cancelled,
-            OrderStatus.delivered,
-            OrderStatus.shipped,
-        ]:
-            logger.warning(
-                "User_id: '%s' attempted to delete delivery address with active orders",
+        address = (await db.execute(stmt)).unique().scalar_one_or_none()
+        if not address:
+            logger.error(
+                "Address with address_id: '%s' not found for user_id: '%s'",
+                address_id,
                 user_id,
             )
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot delete address for an active order. Please cancel the order first.",
-            )
-    address.is_deleted = True
-    try:
+            raise HTTPException(status_code=404, detail="address not found")
+        for order in address.orders:
+            if order.status not in [
+                OrderStatus.cancelled,
+                OrderStatus.delivered,
+            ]:
+                logger.warning(
+                    "User_id: '%s' attempted to delete delivery address with active orders",
+                    user_id,
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot delete address for an active order. Please cancel the order first.",
+                )
+        address.is_deleted = True
         await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("Database integrity error while deleting delivery address")
