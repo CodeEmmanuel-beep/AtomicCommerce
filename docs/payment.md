@@ -26,15 +26,15 @@ Governs global electronic transaction lifecycles, real-time external processor i
 
 > 🛟 **Fail-Safe Reconciliation (Three-Tier Redundancy)**
 
-     * **Primary Webhook Sync Path**: Upon receiving a successful payment event from Stripe, the webhook handler immediately attempts an asynchronous, atomic database update to activate the membership.
+   * **Primary Webhook Sync Path**: Upon receiving a successful payment event from Stripe, the webhook handler immediately attempts an asynchronous, atomic database update to activate the membership.
 
-     * **FastAPI Native Background Task (Immediate Fail-Safe)**:
+   * **FastAPI Native Background Task (Immediate Fail-Safe)**:
 
-        * A native FastAPI BackgroundTask is always triggered alongside the webhook response.
-        * If the primary asynchronous atomic update logic is skipped or bypassed for any reason, this background task catches the state and performs the activation out-of-band.
-        * If the primary asynchronous update succeeded, the background task—which is fully idempotent—checks the status, logs that the member is already active, and gracefully skips execution.
+      * A native FastAPI BackgroundTask is always triggered alongside the webhook response.
+      * If the primary asynchronous atomic update logic is skipped or bypassed for any reason, this background task catches the state and performs the activation out-of-band.
+      * If the primary asynchronous update succeeded, the background task—which is fully idempotent—checks the status, logs that the member is already active, and gracefully skips execution.
 
-     *  **Celery Backup Worker (The Ultimate Safety Net)**: If both the webhook's asynchronous logic and the in-memory FastAPI background task fail (such as during a sudden server crash or restart), a scheduled Celery worker periodically sweeps the database. It automatically activates any inactive accounts that have a valid subscription expiration date in the future (expire_at > current_time).
+   *  **Celery Backup Worker (The Ultimate Safety Net)**: If both the webhook's asynchronous logic and the in-memory FastAPI background task fail (such as during a sudden server crash or restart), a scheduled Celery worker periodically sweeps the database. It automatically activates any inactive accounts that have a valid subscription expiration date in the future (expire_at > current_time).
 
 
 ### Business Rules
