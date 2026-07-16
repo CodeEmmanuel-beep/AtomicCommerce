@@ -92,7 +92,8 @@ async def activate():
                     .where(
                         Subscription.expire_at > now,
                         or_(
-                            ~Membership.is_active,
+                            Subscription.status != SubscriptionStatus.active,
+                            Membership.is_active.is_(False),
                         ),
                     )
                     .limit(1000)
