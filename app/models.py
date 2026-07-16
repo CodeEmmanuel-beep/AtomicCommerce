@@ -180,6 +180,7 @@ class Store(Base):
     carts = relationship("Cart", back_populates="store")
     membership = relationship("Membership", back_populates="store", uselist=False)
     product_images = relationship("ProductImage", back_populates="store")
+    notifications = relationship("Notification", back_populates="store")
 
 
 class Address(Base):
@@ -281,7 +282,7 @@ class Reply(Base):
     review = relationship("Review", back_populates="replies")
     product = relationship("Product", back_populates="replies")
     store = relationship("Store", back_populates="replies")
-    react = relationship("React", back_populates="reply")
+    react = relationship("React", back_populates="reply", cascade="all, delete-orphan")
 
 
 class ProductSize(str, Enum):
@@ -325,6 +326,7 @@ class Product(Base):
     inventory = relationship("Inventory", back_populates="product", uselist=False)
     sub_category = relationship("SubCategory", back_populates="products")
     product_images = relationship("ProductImage", back_populates="product")
+    notifications = relationship("Notification", back_populates="product")
 
 
 class ProductImage(Base):
@@ -530,6 +532,12 @@ class Notification(Base):
     from_user: Mapped[int] = mapped_column(Integer, index=True)
     notified_user: Mapped[int] = mapped_column(Integer, index=True)
     status: Mapped[str] = mapped_column(String, nullable=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("product.id"), nullable=True
+    )
+    store_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("store.id"), nullable=False
+    )
     membership_type: Mapped[str] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=True)
@@ -538,6 +546,9 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+    product = relationship("Product", back_populates="notifications")
+    store = relationship("Store", back_populates="notifications")
 
 
 class Review(Base):
@@ -559,7 +570,6 @@ class Review(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "product_id", name="user_product_review"),
-        UniqueConstraint("user_id", "store_id", name="user_store_review"),
     )
     user = relationship("User", back_populates="reviews")
     product = relationship("Product", back_populates="review")
@@ -567,7 +577,7 @@ class Review(Base):
     replies = relationship(
         "Reply", back_populates="review", cascade="all, delete-orphan"
     )
-    react = relationship("React", back_populates="review")
+    react = relationship("React", back_populates="review", cascade="all, delete-orphan")
 
 
 class ReactionType(str, Enum):
