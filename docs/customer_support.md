@@ -67,11 +67,11 @@ Retrieves a paginated list of messages attached to a ticket. Can only be viewed 
 **Request Payload**
 
 ```python
- store_id: int,
- ticket_id: int,
-view: str = Query("customer_view", enum=["support_view", "customer_view"]),
- page: int = Query(1, ge=1),
- limit: int = Query(10, le=100),
+ store_id: int
+ ticket_id: int
+ view: str = Query("customer_view", enum=["support_view", "customer_view"])
+ page: int = Query(1, ge=1)
+ limit: int = Query(10, le=100)
 ```
 
 **JSON Response**
