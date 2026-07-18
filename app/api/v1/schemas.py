@@ -412,11 +412,12 @@ class PaymentResponse(BaseModel):
     payment_method: str
     currency: str
     payment_status: str
+    subtotal: Decimal
+    shipping_fee: Decimal
+    tax_amount: Decimal
+    discount_amount: Decimal
     total_amount: Decimal
     total_refund: Optional[Decimal] = Field(default_factory=Decimal)
-    shipping_fee: Decimal
-    discount_amount: Decimal
-    tax_amount: Decimal
     reference_id: str
     transaction_id: str | None = None
     payment_date: Optional[datetime]
