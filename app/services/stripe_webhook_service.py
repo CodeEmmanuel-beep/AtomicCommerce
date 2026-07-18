@@ -330,7 +330,6 @@ async def stripe_webhook(request, background_task):
                 event["type"]
                 in (
                     "customer.subscription.updated",
-                    "invoice_payment_succeeded",
                     "invoice.payment_succeeded",
                 )
                 and update_product is not None
@@ -362,7 +361,7 @@ async def stripe_webhook(request, background_task):
                 returned_id = idem.scalar()
                 if not returned_id:
                     logger.info(
-                        f"Subscription {membership_id} already processed. Skipping."
+                        f"Subscription {membership_id} of event_id: {event['id']} already processed. Skipping."
                     )
                     return {"status": "success", "message": "already processed"}
                 idempo = await db.execute(
