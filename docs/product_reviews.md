@@ -25,6 +25,7 @@ adjusted\_avg = \frac{(current\_avg \times current\_count) - former\_rating + ra
 * **Multi-Tenant Sentiment Isolation**: Validates that both the reviewer, the target product, and the parent store share matching structural ecosystem domains. Reviews are explicitly tagged with `store_id` and `product_id`, guaranteeing that concurrent search engine queries or dashboard statistics never bleed cross-tenant review metrics.
 
 
+
 📐 **Architectural Decisions & Safeguards**:
 
 * **Transactional Anti-Duplication Boundary**: Restricts submissions to a single entry per item per user profile by scanning lookups for existing matches (`exists().where(Review.user_id == user_id)`) inside its locking clause. If an existing record matches, the thread throws a 400 Bad Request exception, preventing data duplication or artificial metric inflating across storefront paths.
