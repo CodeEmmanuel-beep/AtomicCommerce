@@ -377,6 +377,7 @@ class Payment(Base):
     order_id: Mapped[int] = mapped_column(Integer, ForeignKey("order.id"), index=True)
     payment_method: Mapped[str] = mapped_column(String)
     currency: Mapped[str] = mapped_column(String)
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     total_amount: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     payment_status: Mapped[PaymentStatus] = mapped_column(
         PG_ENUM(PaymentStatus, name="paymentstatus", native_enum=True),
