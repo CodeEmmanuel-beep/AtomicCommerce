@@ -26,9 +26,12 @@ adjusted\_avg = \frac{(current\_avg \times current\_count) - former\_rating + ra
 
 
 
+
 📐 **Architectural Decisions & Safeguards**:
 
 * **Transactional Anti-Duplication Boundary**: Restricts submissions to a single entry per item per user profile by scanning lookups for existing matches (`exists().where(Review.user_id == user_id)`) inside its locking clause. If an existing record matches, the thread throws a 400 Bad Request exception, preventing data duplication or artificial metric inflating across storefront paths.
+
+* **Decoupled Async Cache Eviction**: Offloads transactional execution delays from the main server thread by passing cache invalidations (`product_invalidation`, `product_review_invalidation`) to an asynchronous background task queue (`background_task.add_task`). This guarantees that cache purges run completely out-of-band only after an engine transaction commit successfully clears.
 
 * **Dual-Egress Background Eviction Tree**: Maximizes API read performance by serving requests from short-lived paginated cache keys (`ttl=30`) that are isolated by schema version numbers (`cache_version`). When a review is created, modified, or deleted, the service offloads cache clearing to separate worker threads (`background_task.add_task`), running both `product_review_invalidation` and `product_invalidation` to guarantee data consistency across dependent modules.
 
