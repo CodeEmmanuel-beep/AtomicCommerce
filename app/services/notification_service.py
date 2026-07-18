@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from app.utils.redis import notifications_stream
 from app.models import Notification, User
 from app.logs.logger import get_logger
+from sqlalchemy.orm import selectinload
 from app.api.v1.schemas import (
     NotificationResponse,
     PaginatedMetadata,
@@ -45,6 +46,9 @@ async def retrieve_notifications(
         await db.execute(
             select(Notification, User)
             .join(User, Notification.from_user == User.id)
+            .options(
+                selectinload(Notification.product), selectinload(Notification.store)
+            )
             .where(Notification.notified_user == user_id)
             .order_by(Notification.created_at.desc())
             .limit(30)
@@ -58,6 +62,15 @@ async def retrieve_notifications(
     items = []
     for notify, sender in notifier:
         data = NotificationResponse.model_validate(notify)
+        if notify.product_id:
+            data.product_name = (
+                notify.product.product_name
+                if notify.product.id == notify.product_id
+                else None
+            )
+        data.store_name = (
+            notify.store.store_name if notify.store.id == notify.store_id else None
+        )
         data.notification = (
             f"{notify.notification} by {sender.first_name} {sender.surname}"
             if sender.is_active
@@ -96,6 +109,9 @@ async def notifications_list(
         await db.execute(
             select(Notification, User)
             .join(User, Notification.from_user == User.id)
+            .options(
+                selectinload(Notification.product), selectinload(Notification.store)
+            )
             .where(Notification.notified_user == user_id)
             .order_by(Notification.created_at.desc())
             .offset(offset)
@@ -118,6 +134,15 @@ async def notifications_list(
     items = []
     for notify, sender in notifier:
         data = NotificationResponse.model_validate(notify)
+        if notify.product_id:
+            data.product_name = (
+                notify.product.product_name
+                if notify.product.id == notify.product_id
+                else None
+            )
+        data.store_name = (
+            notify.store.store_name if notify.store.id == notify.store_id else None
+        )
         data.notification = (
             f"{notify.notification} by {sender.first_name} {sender.surname}"
             if sender.is_active
