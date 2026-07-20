@@ -22,10 +22,10 @@ async def react_summary(
         r_id = [r_id]
     counts = (
         await db.execute(
-            select(db_schema, React.type, func.count(React.id))
+            select(db_schema, React.reaction_type, func.count(React.id))
             .join(join_model, db_schema == join_model.id)
             .where(db_schema.in_(r_id), column_filter)
-            .group_by(db_schema, React.type)
+            .group_by(db_schema, React.reaction_type)
         )
     ).all()
     summary_map: dict[int, dict[str, int]] = {}
