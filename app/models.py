@@ -593,7 +593,9 @@ class ReactionType(str, Enum):
 class React(Base):
     __tablename__ = "react"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    type: Mapped[ReactionType] = mapped_column(SQLEnum(ReactionType), nullable=False)
+    reaction_type: Mapped[ReactionType] = mapped_column(
+        SQLEnum(ReactionType), nullable=False
+    )
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
     reply_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("reply.id", ondelete="CASCADE"), index=True, nullable=True
