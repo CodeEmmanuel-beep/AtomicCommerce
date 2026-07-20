@@ -9,7 +9,7 @@ from app.api.v1.schemas import (
 from app.models import Review, Store, Reply, React, User, Order, OrderStatus
 from app.utils.helper import react_summary
 from fastapi import HTTPException, Response, status
-from sqlalchemy import select, func, exists, update
+from sqlalchemy import select, func, exists
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from app.utils.redis import (
@@ -118,6 +118,7 @@ async def view_reviews(store_id, page, limit, db):
         )
         .where(
             Review.store_id == store_id,
+            Review.product_id.is_(None),
             Store.is_deleted.is_(False),
             User.is_active.is_(True),
         )
@@ -130,6 +131,7 @@ async def view_reviews(store_id, page, limit, db):
             .join(Store, Store.id == Review.store_id)
             .where(
                 Review.store_id == store_id,
+                Review.product_id.is_(None),
                 Store.is_deleted.is_(False),
                 User.is_active.is_(True),
             )
