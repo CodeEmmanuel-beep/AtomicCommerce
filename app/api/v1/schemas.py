@@ -385,6 +385,15 @@ class StoreResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ReactResponse(BaseModel):
+    id: int
+    user: ProfileResponse
+    reaction_type: str
+    time_of_reaction: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProfileMode(BaseModel):
     first_name: str = Form(None)
     middle_name: str = Form(None)
