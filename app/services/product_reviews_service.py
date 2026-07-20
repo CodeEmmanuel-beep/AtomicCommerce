@@ -263,7 +263,7 @@ async def update_review(review, ratings, background_task, db, payload):
     )
 
 
-async def delete_review(product_id, background_task, db, payload):
+async def delete_review(store_id, product_id, background_task, db, payload):
     user_id = payload.get("user_id")
     if not user_id:
         logger.warning("unauthorized attempt to access delete_review endpoint")
@@ -275,6 +275,7 @@ async def delete_review(product_id, background_task, db, payload):
             .where(
                 Review.user_id == user_id,
                 Review.product_id == product_id,
+                Review.store_id == store_id,
             )
             .with_for_update(of=Product)
         )
