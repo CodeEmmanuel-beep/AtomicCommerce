@@ -102,6 +102,7 @@ async def view_replies(store_id, review_id, page, limit, db):
         .options(selectinload(Reply.user))
         .where(
             Reply.store_id == store_id,
+            Reply.product_id.is_(None),
             Store.is_deleted.is_(False),
             Reply.review_id == review_id,
             User.is_active.is_(True),
@@ -115,6 +116,7 @@ async def view_replies(store_id, review_id, page, limit, db):
             .join(Store, Reply.store_id == Store.id)
             .where(
                 Reply.store_id == store_id,
+                Reply.product_id.is_(None),
                 Store.is_deleted.is_(False),
                 Reply.review_id == review_id,
                 User.is_active.is_(True),
