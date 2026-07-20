@@ -73,16 +73,21 @@ async def product_review_update(
 
 
 @router.delete(
-    "/product_review_delete/{product_id}",
+    "/product_review_delete/{store_id}/{product_id}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
 async def delete_product_review(
+    store_id: int,
     product_id: int,
     background_task: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     payload: dict = Depends(verify_token),
 ):
     return await product_reviews_service.delete_review(
-        product_id=product_id, background_task=background_task, db=db, payload=payload
+        store_id=store_id,
+        product_id=product_id,
+        background_task=background_task,
+        db=db,
+        payload=payload,
     )
