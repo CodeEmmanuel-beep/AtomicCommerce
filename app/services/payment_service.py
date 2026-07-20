@@ -119,6 +119,14 @@ async def create_payment(
                 raise HTTPException(
                     status_code=404, detail="Order not found or already processed."
                 )
+            if order.delivery_address_id is None:
+                logger.warning(
+                    f"user_id: {user_id} attempted to create payment for an order_id: {order_id} without a delivery address"
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail="order must have delivery address before payment can proceed",
+                )
             payment_exist = (
                 await session.execute(
                     select(Payment).where(
@@ -189,6 +197,7 @@ async def create_payment(
                     ).scalar_one_or_none()
                     updated_fields = {
                         "payment_status": PaymentStatus.PENDING.value,
+                        "subtotal": order.subtotal,
                         "total_amount": order.total_amount,
                         "currency": currency,
                         "payment_method": "card",
@@ -206,6 +215,7 @@ async def create_payment(
                     payment = Payment(
                         user_id=user_id,
                         order_id=order.id,
+                        subtotal=order.subtotal,
                         total_amount=order.total_amount,
                         currency=currency,
                         payment_method="card",
@@ -504,7 +514,7 @@ async def charge_refund(payment_id, amount, reason, db, payload):
         PaymentStatus.REFUNDED.value,
     ]:
         logger.critical(
-            "user: %s, tried reufunding a payment that was nopt successful", user_id
+            "user: %s, tried reufunding a payment that was not successful", user_id
         )
         raise HTTPException(status_code=400, detail="payment was not successful")
     if amount > payment.total_amount:
