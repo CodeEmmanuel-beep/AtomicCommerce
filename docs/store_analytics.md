@@ -41,9 +41,7 @@ avg\_sales\_per\_day = \frac{gross\_sales}{today - store\_founded\_date}
 
 * **Role Isolation**: Public store statistics are publicly accessible, whereas internal operational metrics (inventory stats, revenue reports, detailed product rankings) are strictly restricted to verified Store Owners and authorized Platform Administrators.
 
-* **Sales Calculation**: Revenue aggregations subtract shipping fees to ensure true merchant revenue metrics:
-
-$$\text{total\\_gross\\_sales} = \text{total\\_amount} - \text{shipping\\_fees}$$
+* **Sales Calculation**: Revenue aggregations subtract shipping fees to ensure true merchant revenue metrics.
 
 
 ---
@@ -114,7 +112,7 @@ Returns a list of inventory with the chosen `stock_range`.
       {
         "id": 2,
         "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/309ee1aa-e2eb-4ed1-b960-74ee276d1ab1_Screenshot_2025-10-25_160322.png",
-        "product_name": "Mac Book",
+        "product_name": "MacBook",
         "product_size": "small",
         "stock_quantity": 261
       },
