@@ -10,17 +10,17 @@ Governs the storefront registration lifecycles, configuration editing regimes, o
 
 * **Polymorphic Search Engine**: Enables unified catalog searches across products, categories, subcategories, or unique store names via a single polymorphic endpoint (GET api/v1/store/search_stores_global). Queries utilize versioned key-value cache signatures:
 
-                                $$\text{Key} = \text{"store\_global\_view:v"}\dots$$
+$$\text{Key} = \text{"store\_global\_view:v"}\dots$$
 
 * **Immutable Name Modification & Appending**: Regulates configuration update patterns by tracking title-change states (`edited_name = True`). If a storefront profile modifies its commercial name once, future modification attempts are barred. For nested parameters (such as sub-categories), developers pass explicit mutation parameters (`update_type="add"` or `"replace"`), which use mathematical set unions (`current_sub_category.union(...)`) to append fresh metadata without destroying legacy assignments.
 
 * **Personnel Escalation & Roster Ceilings**: Enforces explicit headcount boundaries on organizational rosters via multi-row constraint checks. Staff assignments prevent overlapping roles (blocking staff from acting as store owners and vice versa) and enforce explicit capacity metrics across the enterprise layout:
 
 
-                                    $$\text{Max Stores Per Owner} \le 10$$
+$$\text{Max Stores Per Owner} \le 10$$
 
 
-                              $$\text{Max Employed Stores Per Staff Member} \le 2$$
+$$\text{Max Employed Stores Per Staff Member} \le 2$$
 
 
 
