@@ -37,7 +37,7 @@ adjusted\_avg = \frac{(current\_avg \times current\_count) - former\_rating + ra
 
 * **Idempotent Single-Review Enforcement**: Prevents rating manipulation by establishing a unique compound key constraint in the database layer:
 
-                        $$\text{UniqueConstraint}(\text{user\_id}, \text{product\_id})$$
+$$\text{UniqueConstraint}(\text{user\\_id}, \text{product\\_id})$$
 
   A consumer is restricted to exactly one active review per product. Subsequent mutation requests update the existing record rather than generating a new entity.
 
