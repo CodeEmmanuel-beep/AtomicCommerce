@@ -41,8 +41,8 @@ reply\_count_{new} = \max(0, reply\_count_{current} - 1)
 * **Hierarchical Cache Eviction Pipeline**: Optimizes high-traffic API listing routes through version-tagged Redis keys (`cache_version`). Any state modification (creation, editing, or deletion) immediately offloads cache invalidation requests to background worker threads (`background_task.add_task`), clearing both `product_reply_invalidation` and `product_review_invalidation` keys concurrently.
 
 * **Foreign Key Cascade Bounds**: Employs strong relational persistence design using database-level constraints:
-  
-        $$\text{ForeignKeyConstraint}(\text{reply}.\text{review\_id} \rightarrow \text{review}.\text{id}) \quad [\text{ON DELETE CASCADE}]$$
+
+$$\text{ForeignKeyConstraint}(\text{reply}.\text{review\_id} \rightarrow \text{review}.\text{id}) \quad [\text{ON DELETE CASCADE}]$$
   
   If a consumer or platform operator wipes out a parent review entity, the underlying transaction execution automatically discards all linked text replies from active storage layout zones.
 
