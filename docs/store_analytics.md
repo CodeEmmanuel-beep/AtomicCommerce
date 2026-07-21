@@ -120,14 +120,14 @@ Returns a list of inventory with the chosen `stock_range`.
         "id": 6,
         "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/939580eb-6b49-4c82-9829-b2880fecf540_Screenshot_2026-01-05_203517.png",
         "product_name": "Infinix",
-        "Product_size": "small",
+        "product_size": "small",
         "stock_quantity": 82
       },
       {
         "id": 5,
         "image": "https://xpaemtnkeiigcwxcaush.supabase.co/storage/v1/object/public/e_commerce/ae73fe88-8972-4fc0-b68d-784a17a8d484_Screenshot_2026-01-05_203517.png",
         "product_name": "Samsung",
-        "Product_size": "small",
+        "product_size": "small",
         "stock_quantity": 60
       }
     ]
