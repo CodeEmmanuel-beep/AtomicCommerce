@@ -42,7 +42,7 @@ reply\_count_{new} = \max(0, reply\_count_{current} - 1)
 
 * **Foreign Key Cascade Bounds**: Employs strong relational persistence design using database-level constraints:
 
-$$\text{ForeignKeyConstraint}(\text{reply}.\text{review\_id} \rightarrow \text{review}.\text{id}) \quad [\text{ON DELETE CASCADE}]$$
+$$\text{ForeignKeyConstraint}(\text{reply}.\text{review\\_id} \rightarrow \text{review}.\text{id}) \quad [\text{ON DELETE CASCADE}]$$
   
   If a consumer or platform operator wipes out a parent review entity, the underlying transaction execution automatically discards all linked text replies from active storage layout zones.
 
