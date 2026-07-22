@@ -20,7 +20,11 @@ def get_cipher(request: Request):
     return request.app.state.cipher
 
 
-@router.post("/store_account")
+@router.post(
+    "/store_account",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def store_account_details(
     store_id: int,
     bank_name: str = Form(...),
@@ -51,7 +55,11 @@ async def store_account_details(
     )
 
 
-@router.put("/edit_store_account")
+@router.put(
+    "/edit_store_account",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def edit_store_account_details(
     store_id: int,
     bank_name: str = Form(None),
@@ -82,7 +90,11 @@ async def edit_store_account_details(
     )
 
 
-@router.put("/store_account_verification")
+@router.put(
+    "/store_account_verification",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def verify_account(
     slug: str,
     reason: str | None = None,
@@ -97,7 +109,7 @@ async def verify_account(
 
 @router.get(
     "/view_store_account_details/{store_id}",
-    response_model=StoreAccountResponse,
+    response_model=StandardResponse[StoreAccountResponse],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
@@ -112,7 +124,11 @@ async def view_store_account(
     )
 
 
-@router.post("/store_address")
+@router.post(
+    "/store_address",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def store_address_details(
     store_id: int,
     address_details: AddressDetails,
@@ -144,7 +160,11 @@ async def view_store_address(
     )
 
 
-@router.delete("/delete_address/{store_id}/{address_id}")
+@router.delete(
+    "/delete_address/{store_id}/{address_id}",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+)
 async def delete_address_by_id(
     store_id: int,
     address_id: int,
