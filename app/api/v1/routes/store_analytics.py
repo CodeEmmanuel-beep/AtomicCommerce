@@ -9,7 +9,7 @@ router = APIRouter(prefix="/store_analytics", tags=["Store_Analytics"])
 
 
 @router.get(
-    "/store_public_dashboard/{store_id}",
+    "/store_public_dashboard/{slug}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
