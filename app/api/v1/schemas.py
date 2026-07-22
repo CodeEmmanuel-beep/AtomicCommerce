@@ -195,6 +195,7 @@ class ReplyResponse(BaseModel):
     edited: bool = Field(default=False)
     user: ProfileResponse
     reply_text: str
+    store_reply_reaction_count: int = Field(default=0)
     product_reply_reaction_count: int = Field(default=0)
     reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
     time_of_post: Optional[datetime]
@@ -379,7 +380,6 @@ class StoreResponse(BaseModel):
     featured_product: List[ProductRes] | ProductRes = Field(default_factory=list)
     shipping_fee: Decimal
     store_description: str | None = None
-    approved: bool = Field(default=False)
     founded: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -473,7 +473,6 @@ class StoreReviewResponse(BaseModel):
     store_reply_count: int = Field(default=0)
     store_review_reaction_count: int = Field(default=0)
     reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
-    reply: List[ReplyResponse] = Field(default_factory=list)
     time_of_post: datetime
 
     model_config = ConfigDict(from_attributes=True)
