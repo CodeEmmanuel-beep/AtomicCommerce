@@ -4,7 +4,8 @@ import uuid
 from sqlalchemy.orm import selectinload
 from werkzeug.utils import secure_filename
 from app.logs.logger import get_logger
-from app.models import store_owners, store_staffs, Inventory
+from app.models import store_owners, store_staffs, Inventory, Store
+from app.utils.redis import cache
 from app.utils.supabase_url import cleaned_up
 from app.database.config import settings
 from io import BytesIO
@@ -182,3 +183,51 @@ def restore_inventory(order):
             stock.stock_quantity += orderitems.quantity
             if orderitems.product.product_availability == "out_of_stock":
                 orderitems.product.product_availability = "available"
+
+
+async def view_performance_helper(
+    slug,
+    context,
+    db,
+    payload,
+    context_1: str | None = None,
+    context_2: str | None = None,
+):
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning(f"unauthorized attempt at the {context} endpoint")
+        raise HTTPException(status_code=401, detail="unauthorized access")
+    row = (
+        await db.execute(
+            select(
+                Store,
+                exists().where(
+                    store_owners.c.users_id == user_id,
+                    store_owners.c.stores_id == Store.id,
+                ),
+            ).where(
+                Store.slug == slug,
+                Store.approved.is_(True),
+            )
+        )
+    ).fetchone()
+    target_store, is_owner = row or (None, None)
+    if not target_store or not is_owner:
+        logger.warning(
+            "user %s attempted to access %s for store %s without permission or store not found",
+            user_id,
+            context,
+            slug,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    if context_1 and context_2:
+        cache_key = f"{slug}:{context}:{context_1}:{context_2}"
+    elif context_1:
+        cache_key = f"{slug}:{context}:{context_1}"
+    else:
+        cache_key = f"{context}:{slug}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info(f"cache hit at the {context} endpoint for store: %s", slug)
+        return cached_data
+    return cache_key, target_store
