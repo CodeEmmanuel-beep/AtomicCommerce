@@ -59,7 +59,7 @@ $$\text{ForeignKeyConstraint}(\text{reply}.\text{review\\_id} \rightarrow \text{
 
 **Post Product Reply**
 
-` POST api/v1/product_replies/create_product_reply`
+`POST api/v1/product_replies/create_product_reply`
 
 Appends a threaded reply string to an active target review structure.
 
@@ -149,6 +149,8 @@ Erases a targeted reply directly. Restricted to the author of the reply.
 reply_id: int
 review_id: int
 ```
+
+**JSON Response**
 
 ```json
 {"status": "success", "message": "deleted reply"}
