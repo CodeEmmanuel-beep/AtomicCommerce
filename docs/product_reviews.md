@@ -60,7 +60,7 @@ $$\text{UniqueConstraint}(\text{user\\_id}, \text{product\\_id})$$
 
 `POST api/v1/product_reviews/post_product_review`
 
-Creates or updates a verified buyer review entry linked to a specific item.
+Creates a verified buyer review entry linked to a specific item.
 
 **Request Payload**
 
@@ -156,11 +156,11 @@ limit: int = Query(10, le=100)
 
 ---
 
-**Delete Review**
+**Delete Product Review**
 
 `DELETE api/v1/product_reviews/product_review_delete`
 
-Deletes a targeted review and cascade-purges all child replies from the system.
+Deletes a targeted product review and cascade-purges all child replies from the system.
 
 **Request Payload**
 
