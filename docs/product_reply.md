@@ -59,7 +59,7 @@ $$\text{ForeignKeyConstraint}(\text{reply}.\text{review\\_id} \rightarrow \text{
 
 **Post Product Reply**
 
-` POST api/v1/product_replies/create_product_reply`
+`POST api/v1/product_replies/create_product_reply`
 
 Appends a threaded reply string to an active target review structure.
 
@@ -141,7 +141,7 @@ limit: int = Query(10, le=100)
 
 `DELETE api/v1/product_replies/product_reply_delete`
 
-Erases a targeted reply directly. Restricted to the author of the reply or authenticated store operators.
+Erases a targeted reply directly. Restricted to the author of the reply.
 
 **Request Payload**
 
@@ -149,6 +149,8 @@ Erases a targeted reply directly. Restricted to the author of the reply or authe
 reply_id: int
 review_id: int
 ```
+
+**JSON Response**
 
 ```json
 {"status": "success", "message": "deleted reply"}
@@ -172,3 +174,5 @@ The routes within this module inherit the following controller structures:
 * **401 Unauthorized**: Dispatched when authentication credentials are missing, malformed, expired, or the supplied JWT fails validation.
 * **404 Not Found**:  Dispatched if requests target entities missing from active records or configurations sequestered by tenancy bounds.
 * **500 Internal Server Error**: Dispatched as an unmapped escape route to cleanly catch unhandled thread runtime exceptions.
+
+---
