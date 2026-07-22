@@ -6,6 +6,7 @@ from app.api.v1.schemas import (
 )
 from app.models import Category, User
 from fastapi import HTTPException
+from sqlalchemy.orm import selectinload
 from app.logs.logger import get_logger
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -55,7 +56,7 @@ async def category(name, db, payload):
 
 async def retrieve(page, limit, db):
     offset = (page - 1) * limit
-    stmt = select(Category).where(~Category.is_deleted)
+    stmt = select(Category).where(Category.is_deleted.is_(False))
     total = (
         await db.execute(select(func.count()).select_from(stmt.subquery()))
     ).scalar() or 0
@@ -93,23 +94,33 @@ async def delete_category(category_id, db, payload):
             f"{user_id}, tried deleting a category without admin powers, category id: {category_id}"
         )
         raise HTTPException(status_code=403, detail="not authorized")
-    stmt = select(Category).where(Category.id == category_id, ~Category.is_deleted)
-    data = (await db.execute(stmt)).scalar_one_or_none()
-    if not data:
-        logger.warning(
-            f"{user_id}, tried deleting a nonexistent category, category id: {category_id}"
-        )
-        raise HTTPException(status_code=404, detail="category not found")
-    data.is_deleted = True
     try:
+        stmt = (
+            select(Category)
+            .options(selectinload(Category.sub_categories))
+            .where(Category.id == category_id, Category.is_deleted.is_(False))
+            .with_for_update()
+        )
+        data = (await db.execute(stmt)).scalar_one_or_none()
+        if not data:
+            logger.warning(
+                f"{user_id}, tried deleting a nonexistent category, category id: {category_id}"
+            )
+            raise HTTPException(status_code=404, detail="category not found")
+        data.is_deleted = True
+        for subcategory in data.sub_categories:
+            subcategory.is_deleted = True
         await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
-        logger.error("database error occured while deleting category: %s", data.id)
+        logger.error("database error occured while deleting category: %s", category_id)
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
-        logger.exception("error occured while deleting category: %s", data.id)
+        logger.exception("error occured while deleting category: %s", category_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("deleted category %s", category_id)
     return StandardResponse(
