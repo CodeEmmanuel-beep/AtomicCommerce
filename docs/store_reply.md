@@ -110,7 +110,7 @@ limit: int = Query(10, le=100)
           "surname": "Eke"
         },
         "reply_text": "Thank you for your patronage, Mr. James, hope to serve you again. Peace and Love.",
-"store_reply_reaction_count": 1,
+        "store_reply_reaction_count": 1,
         "reactions": {
           "love": 1
         },
