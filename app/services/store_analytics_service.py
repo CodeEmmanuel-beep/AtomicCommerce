@@ -8,10 +8,10 @@ from app.models import (
     Product,
     OrderItem,
     Inventory,
-    store_owners,
 )
 from app.utils.redis import cache, cached
-from sqlalchemy import cast, Float, select, func, desc, asc, Integer, exists
+from sqlalchemy import cast, select, func, desc, asc, Integer
+from decimal import Decimal
 from typing import cast as typing_cast
 from fastapi import HTTPException
 from app.logs.logger import get_logger
@@ -19,56 +19,11 @@ from app.utils.supabase_url import get_public_url
 from app.api.v1.schemas import StandardResponse
 from datetime import date, datetime, timezone
 from dateutil.relativedelta import relativedelta
+from app.utils.helper import view_performance_helper
 
 logger = get_logger("store_analytics")
 
-
-async def view_performance_helper(
-    slug,
-    context,
-    db,
-    payload,
-    context_1: str | None = None,
-    context_2: str | None = None,
-):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning(f"unauthorized attempt at the {context} endpoint")
-        raise HTTPException(status_code=401, detail="unauthorized access")
-    row = (
-        await db.execute(
-            select(
-                Store,
-                exists().where(
-                    store_owners.c.users_id == user_id,
-                    store_owners.c.stores_id == Store.id,
-                ),
-            ).where(
-                Store.slug == slug,
-                Store.approved.is_(True),
-            )
-        )
-    ).fetchone()
-    target_store, is_owner = row or (None, None)
-    if not target_store or not is_owner:
-        logger.warning(
-            "user %s attempted to access %s for store %s without permission or store not found",
-            user_id,
-            context,
-            slug,
-        )
-        raise HTTPException(status_code=403, detail="restricted access")
-    if context_1 and context_2:
-        cache_key = f"{slug}:{context}:{context_1}:{context_2}"
-    elif context_1:
-        cache_key = f"{slug}:{context}:{context_1}"
-    else:
-        cache_key = f"{context}:{slug}"
-    cached_data = await cache(cache_key)
-    if cached_data:
-        logger.info(f"cache hit at the {context} endpoint for store: %s", slug)
-        return cached_data
-    return cache_key, target_store
+TWO_PLACES = Decimal("0.01")
 
 
 async def view_store_data(slug, db):
@@ -102,6 +57,7 @@ async def view_store_data(slug, db):
     product = (
         await db.execute(
             select(
+                Product.id,
                 Product.primary_image,
                 Product.product_name,
                 Product.product_size,
@@ -116,6 +72,7 @@ async def view_store_data(slug, db):
                 Store.slug == slug,
             )
             .group_by(
+                Product.id,
                 Product.primary_image,
                 Product.product_name,
                 Product.product_size,
@@ -126,8 +83,9 @@ async def view_store_data(slug, db):
     ).fetchone()
     top_product_data = None
     if product:
-        img, name, size, qty = product
+        p_id, img, name, size, qty = product
         top_product_data = {
+            "id": p_id,
             "image": get_public_url(img),
             "product_name": name,
             "product_size": size,
@@ -177,7 +135,7 @@ async def view_overall_performance(slug, db, payload):
     total_amount = total_amount or 0
     shipping_fees = shipping_fees or 0
     total_gross_sales = total_amount - shipping_fees
-    average_sales_per_day = round(float(total_gross_sales / days), 2)
+    average_sales_per_day = Decimal(total_gross_sales / days).quantize(TWO_PLACES)
     extreme_sale_row = (
         select(Payment.payment_date, Payment.total_amount, Payment.shipping_fee)
         .join(Order, Order.id == Payment.order_id)
@@ -186,8 +144,9 @@ async def view_overall_performance(slug, db, payload):
             Payment.payment_status == PaymentStatus.SUCCESS.value,
         )
     )
+    net_sales = Payment.total_amount - Payment.shipping_fee
     lowest_sale_row = (
-        await db.execute(extreme_sale_row.order_by(Payment.total_amount.asc()).limit(1))
+        await db.execute(extreme_sale_row.order_by(net_sales.asc()).limit(1))
     ).fetchone()
     if lowest_sale_row:
         lowest_sale_date, lowest_sale_total, lowest_sale_shipping = lowest_sale_row or (
@@ -196,11 +155,12 @@ async def view_overall_performance(slug, db, payload):
             0,
         )
         l_sale = lowest_sale_total - lowest_sale_shipping
-        lowest_sale = {"date": lowest_sale_date, "sales": float(l_sale)}
+        lowest_sale = {
+            "date": lowest_sale_date,
+            "sales": Decimal(l_sale).quantize(TWO_PLACES),
+        }
     highest_sale_row = (
-        await db.execute(
-            extreme_sale_row.order_by(Payment.total_amount.desc()).limit(1)
-        )
+        await db.execute(extreme_sale_row.order_by(net_sales.desc()).limit(1))
     ).fetchone()
     if highest_sale_row:
         highest_sale_date, highest_sale_total, highest_sale_shipping = (
@@ -212,9 +172,12 @@ async def view_overall_performance(slug, db, payload):
             )
         )
         h_sale = highest_sale_total - highest_sale_shipping
-        highest_sale = {"date": highest_sale_date, "sales": float(h_sale)}
+        highest_sale = {
+            "date": highest_sale_date,
+            "sales": Decimal(h_sale).quantize(TWO_PLACES),
+        }
     data = {
-        "total_gross_sales": round(float(total_gross_sales or 0), 2),
+        "total_gross_sales": Decimal(total_gross_sales or "0.00").quantize(TWO_PLACES),
         "highest_sales": highest_sale,
         "lowest_sales": lowest_sale,
         "average_sales_per_day": average_sales_per_day or 0,
@@ -276,7 +239,10 @@ async def view_current_performance(slug, db, payload):
             0,
         )
         l_sale = lowest_sale_total - lowest_sale_shipping
-        lowest_sale = {"date": lowest_sale_date, "sales": float(l_sale)}
+        lowest_sale = {
+            "date": lowest_sale_date,
+            "sales": Decimal(l_sale).quantize(TWO_PLACES),
+        }
     highest_sale_row = (
         await db.execute(extreme_sale_row.order_by(net_sales.desc()).limit(1))
     ).fetchone()
@@ -285,7 +251,10 @@ async def view_current_performance(slug, db, payload):
             highest_sale_row or (0, 0, 0)
         )
         h_sale = highest_sale_total - highest_sale_shipping
-        highest_sale = {"date": highest_sale_date, "sales": float(h_sale)}
+        highest_sale = {
+            "date": highest_sale_date,
+            "sales": Decimal(h_sale).quantize(TWO_PLACES),
+        }
     ratings_orders_check = select(
         select(func.count(Order.id))
         .where(
@@ -302,12 +271,14 @@ async def view_current_performance(slug, db, payload):
         select(func.count(Review.ratings))
         .where(
             Review.store_id == target_store.id,
+            Review.product_id.is_(None),
             Review.time_of_post >= first_of_the_month,
         )
         .scalar_subquery(),
-        select(func.avg(cast(Review.ratings, Float)))
+        select(func.avg(Review.ratings))
         .where(
             Review.store_id == target_store.id,
+            Review.product_id.is_(None),
             Review.time_of_post >= first_of_the_month,
         )
         .scalar_subquery(),
@@ -319,11 +290,15 @@ async def view_current_performance(slug, db, payload):
         "orders_this_month": orders,
         "day_of_last_order": last_order,
         "total_ratings_this_month": ratings or 0,
-        "average_ratings_this_month": round(float(avg_ratings or 0), 2),
-        "gross_sales_this_month": round(float(gross_sales_this_month or 0), 2),
+        "average_ratings_this_month": Decimal(avg_ratings or "0.00").quantize(
+            Decimal("0.1")
+        ),
+        "gross_sales_this_month": Decimal(gross_sales_this_month or "0.00").quantize(
+            TWO_PLACES
+        ),
         "highest_sales": highest_sale,
         "lowest_sales": lowest_sale,
-        "daily_average": round(float(daily_avg or 0), 2),
+        "daily_average": Decimal(daily_avg or "0.00").quantize(TWO_PLACES),
     }
     full_response = StandardResponse(
         status="success", message="current performance", data=data
@@ -379,6 +354,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     products = (
         await db.execute(
             select(
+                Product.id,
                 Product.primary_image,
                 Product.product_name,
                 Product.product_size,
@@ -394,6 +370,7 @@ async def products_stats(slug, ranking, time_frame, db, payload):
                 Store.slug == slug,
             )
             .group_by(
+                Product.id,
                 Product.primary_image,
                 Product.product_name,
                 Product.product_size,
@@ -406,10 +383,11 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     product_ratings = (
         await db.execute(
             select(
+                Product.id,
                 Product.primary_image,
                 Product.product_name,
                 Product.product_size,
-                cast(func.coalesce(avg_ratings, 0), Float),
+                func.coalesce(avg_ratings, 0.00),
             )
             .join(Review, Product.id == Review.product_id)
             .join(Store, Product.store_id == Store.id)
@@ -417,7 +395,12 @@ async def products_stats(slug, ranking, time_frame, db, payload):
                 Review.time_of_post >= time_period,
                 Store.slug == slug,
             )
-            .group_by(Product.primary_image, Product.product_name, Product.product_size)
+            .group_by(
+                Product.id,
+                Product.primary_image,
+                Product.product_name,
+                Product.product_size,
+            )
             .order_by(order_count(avg_ratings))
             .limit(5)
         )
@@ -437,21 +420,23 @@ async def products_stats(slug, ranking, time_frame, db, payload):
     data = {
         "product_sales": [
             {
+                "id": p_id,
                 "image": get_public_url(img),
                 "product_name": name,
                 "product_size": size,
                 "quantity_sold": int(qty),
             }
-            for img, name, size, qty in products
+            for p_id, img, name, size, qty in products
         ],
         "product_ratings": [
             {
+                "id": p_id,
                 "image": get_public_url(img),
-                "name": name,
+                "product_name": name,
                 "product_size": size,
-                "ratings": float(rts),
+                "ratings": Decimal(rts).quantize(Decimal("0.1")),
             }
-            for img, name, size, rts in product_ratings
+            for p_id, img, name, size, rts in product_ratings
         ],
     }
     full_response = StandardResponse(status="success", message=message, data=data)
@@ -484,6 +469,7 @@ async def select_products_stats(slug, product_id, stats, db, payload):
         products = (
             await db.execute(
                 select(
+                    Product.id,
                     Product.primary_image,
                     Product.product_name,
                     Product.product_size,
@@ -499,6 +485,7 @@ async def select_products_stats(slug, product_id, stats, db, payload):
                     Payment.payment_status == PaymentStatus.SUCCESS.value,
                 )
                 .group_by(
+                    Product.id,
                     Product.primary_image,
                     Product.product_name,
                     Product.product_size,
@@ -510,10 +497,11 @@ async def select_products_stats(slug, product_id, stats, db, payload):
         product_ratings = (
             await db.execute(
                 select(
+                    Product.id,
                     Product.primary_image,
                     Product.product_name,
                     Product.product_size,
-                    cast(func.coalesce(avg_ratings, 0), Float),
+                    func.coalesce(avg_ratings, 0.00),
                 )
                 .join(Review, Product.id == Review.product_id)
                 .join(Store, Product.store_id == Store.id)
@@ -522,7 +510,10 @@ async def select_products_stats(slug, product_id, stats, db, payload):
                     Product.id == product_id,
                 )
                 .group_by(
-                    Product.primary_image, Product.product_name, Product.product_size
+                    Product.id,
+                    Product.primary_image,
+                    Product.product_name,
+                    Product.product_size,
                 )
             )
         ).fetchone()
@@ -535,20 +526,22 @@ async def select_products_stats(slug, product_id, stats, db, payload):
         )
     message = "product sales" if stats == "product_sales" else "product ratings"
     if stats == "product_sales" and products:
-        img, name, size, qty = products
+        p_id, img, name, size, qty = products
         data = {
+            "id": p_id,
             "image": get_public_url(img),
             "product_name": name,
             "product_size": size,
             "quantity_sold": int(qty),
         }
     elif stats == "product_ratings" and product_ratings:
-        img, name, size, rts = product_ratings
+        p_id, img, name, size, rts = product_ratings
         data = {
+            "id": p_id,
             "image": get_public_url(img),
             "name": name,
             "product_size": size,
-            "ratings": float(rts),
+            "ratings": Decimal(rts).quantize(Decimal("0.1")),
         }
     full_response = StandardResponse(status="success", message=message, data=data)
     await cached(cache_key, full_response, ttl=60)
@@ -578,6 +571,7 @@ async def inventory_stats(slug, stock_range, db, payload):
         raise HTTPException(status_code=400, detail="invalid stock range selected")
     inventories_stmt = (
         select(
+            Product.id,
             Product.primary_image,
             Product.product_name,
             Product.product_size,
@@ -622,14 +616,15 @@ async def inventory_stats(slug, stock_range, db, payload):
             data=None,
         )
     data = {
-        "inventory": [
+        "items": [
             {
+                "id": p_id,
                 "image": get_public_url(img),
                 "product_name": name,
-                "Product_size": size,
+                "product_size": size,
                 "stock_quantity": qty,
             }
-            for img, name, size, qty in inventories
+            for p_id, img, name, size, qty in inventories
         ],
     }
     full_response = StandardResponse(
