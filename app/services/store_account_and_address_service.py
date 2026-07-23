@@ -90,7 +90,9 @@ async def add_finance_details(
         logger.exception("error while adding finance details for store '%s'", store_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("finance details added to store: %s successfully", store_id)
-    return {"message": "finance details added"}
+    return StandardResponse(
+        status="success", message="finance details added", data=None
+    )
 
 
 async def edit_finance_details(
@@ -169,7 +171,9 @@ async def edit_finance_details(
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("finance details updated for store: %s successfully", store_id)
-    return {"message": "finance details updated"}
+    return StandardResponse(
+        status="success", message="finance details updated", data=None
+    )
 
 
 async def verify_store_account(status, reason, slug, db, payload):
@@ -236,7 +240,7 @@ async def verify_store_account(status, reason, slug, db, payload):
     logger.info(
         "Store account for slug '%s' updated to status '%s' successfully", slug, status
     )
-    return {"status": "success", "message": message}
+    return StandardResponse(status="success", message=message, data=None)
 
 
 async def view_financial_details(store_id, db, payload, cipher):
@@ -278,7 +282,7 @@ async def view_financial_details(store_id, db, payload, cipher):
         store_id,
         user_id,
     )
-    return data
+    return StandardResponse(status="success", message="store account", data=data)
 
 
 async def add_address(store_id, address_details, db, payload):
@@ -324,7 +328,9 @@ async def add_address(store_id, address_details, db, payload):
         logger.exception("error while adding address details for store '%s'", store_id)
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("address details added to store: %s successfully", store_id)
-    return {"message": "address details added"}
+    return StandardResponse(
+        status="success", message="address details added", data=None
+    )
 
 
 async def view_store_addresses(store_id, page, limit, db):
@@ -385,6 +391,7 @@ async def remove_address(store_id, address_id, db, payload):
             Store.id == store_id,
             store_owners.c.users_id == user_id,
             Address.id == address_id,
+            Address.store_address.is_(True),
             Address.is_deleted.is_(False),
         )
         .with_for_update(of=Address)
@@ -396,8 +403,8 @@ async def remove_address(store_id, address_id, db, payload):
             user_id,
         )
         raise HTTPException(
-            status_code=403,
-            detail="permission error, verify the store and address before proceeding",
+            status_code=404,
+            detail="address not found, verify the store and address before proceeding",
         )
     address_check.is_deleted = True
     try:
@@ -417,4 +424,4 @@ async def remove_address(store_id, address_id, db, payload):
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("address '%s', removed from store: %s", address_id, store_id)
-    return {"message": "address deleted"}
+    return StandardResponse(status="success", message="address deleted", data=None)
