@@ -160,6 +160,7 @@ async def update(reply, background_task, db, payload):
         .where(
             Reply.user_id == user_id,
             Reply.store_id == reply.store_id,
+            Reply.product_id.is_(None),
             Reply.id == reply.id,
             Store.is_deleted.is_(False),
         )
@@ -205,6 +206,7 @@ async def delete_reply(reply_id, store_id, background_task, db, payload):
                 Reply.store_id == store_id,
                 Reply.id == reply_id,
                 Reply.user_id == user_id,
+                Reply.product_id.is_(None),
             )
             .with_for_update()
         )
