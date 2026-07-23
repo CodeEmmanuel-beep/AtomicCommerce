@@ -38,7 +38,9 @@ async def store_review(review, ratings, background_task, db, payload):
                     Order.status.in_((OrderStatus.processing, OrderStatus.delivered)),
                 ),
                 exists().where(
-                    Review.user_id == user_id, Review.store_id == review.store_id
+                    Review.user_id == user_id,
+                    Review.store_id == review.store_id,
+                    Review.product_id.is_(None),
                 ),
             )
             .where(Store.id == review.store_id, Store.is_deleted.is_(False))
@@ -175,6 +177,7 @@ async def update_review(review, ratings, background_task, db, payload):
             .where(
                 Review.user_id == user_id,
                 Store.is_deleted.is_(False),
+                Review.product_id.is_(None),
                 Review.id == review.id,
                 Review.store_id == review.store_id,
             )
@@ -242,6 +245,7 @@ async def delete_review(store_id, background_task, db, payload):
             .where(
                 Review.user_id == user_id,
                 Review.store_id == store_id,
+                Review.product_id.is_(None),
             )
             .with_for_update(of=Store)
         )
@@ -263,6 +267,9 @@ async def delete_review(store_id, background_task, db, payload):
             store.avg_rating = 0.0
             store.review_count = 0
         await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error occurred while deleting review user: %s", user_id)
