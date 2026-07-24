@@ -12,21 +12,77 @@ A heavy-duty, service-oriented FastAPI backend architected for enterprise-scale 
 
 ## 🏗️ Core Architecture & Event Flow
 
-```text
-[ Client Requests ]
-       │
-       ▼
- [ FastAPI / ASGI ] ──(Token Rotation / RBAC)──> [ Domain Services ]
-       │                                                 │
-       ├─(Async Queue Buffer)─> [ micro-batch task ]     ├─(Postgres Advisory Locks)
-       │                              │                  │             │
-       ▼                              ▼                  ▼             ▼
-[ Redis Cache-Aside ]         [ Time-Series Logs ] ──> [ PostgreSQL Relational DB ]
-       ▲                              ▲                        │
-       │                              │                 (LISTEN / NOTIFY)
-       │                      (Celery Workers)                 │
-       │                              ▲                        ▼
-       └───────(Pub/Sub Fan-Out)──────┴─────────── [ Shared Event Listener ]
+```mermaid
+graph TB
+    subgraph Clients["📱 Client Layer"]
+        UserClient["User / Buyer App"]
+        MerchantClient["Store Owner Dashboard"]
+        AdminClient["Platform Admin Portal"]
+    end
+
+    subgraph Gateway["🛡️ Gateway & Ingress Layer"]
+        Nginx["Nginx Reverse Proxy / Load Balancer"]
+    end
+
+    subgraph Application["🚀 FastAPI Backend Core (Dockerized)"]
+        AuthModule["Auth & Security Engine<br/>• JWT Token Verification<br/>• Argon2 Password Hashing<br/>• Fernet Key Encryption / Decryption"]
+        StoreMgmt["Store & Admin Workflow Engine"]
+        OrderSubEngine["Orders & Subscriptions Engine"]
+        EngagementModule["Reviews, Replies & Reactions"]
+        SupportModule["Support Ticketing Engine"]
+        NotifService["Real-Time Notification Worker"]
+    end
+
+    subgraph BackgroundWorkers["⚡ Asynchronous Background Layer"]
+        CeleryWorker["Celery Worker Engine"]
+        InventoryTask["Inventory Reconciliation Task"]
+        MembershipTask["Membership Activation / Deactivation Task"]
+    end
+
+    subgraph External["💳 External Services"]
+        Stripe["Stripe Payment Gateway"]
+    end
+
+    subgraph DataLayer["💾 Data & Messaging Layer"]
+        PostgreSQL[("PostgreSQL Multi-Tenant DB<br/>• Triggers & LISTEN/NOTIFY<br/>• Encrypted Bank Details (Fernet)<br/>• Persisted Notifications")]
+        RedisCache[("Redis Cache & Celery Broker<br/>• Token Revocation / Sessions")]
+    end
+
+    %% Client Routing
+    UserClient -->|HTTPS / Bearer JWT| Nginx
+    MerchantClient -->|HTTPS / Bearer JWT| Nginx
+    AdminClient -->|HTTPS / Bearer JWT| Nginx
+
+    %% Ingress to App
+    Nginx --> AuthModule
+    AuthModule --> StoreMgmt
+    AuthModule --> OrderSubEngine
+    AuthModule --> EngagementModule
+    AuthModule --> SupportModule
+
+    %% External & Caching
+    OrderSubEngine <--> Stripe
+    AuthModule <-->|Blacklist / Session Check| RedisCache
+
+    %% Async Queue Dispatch (Celery)
+    OrderSubEngine -->|Dispatch Tasks| RedisCache
+    StoreMgmt -->|Dispatch Tasks| RedisCache
+    
+    RedisCache -->|Broker Queue| CeleryWorker
+    CeleryWorker --> InventoryTask
+    CeleryWorker --> MembershipTask
+
+    %% Database Sync & Security
+    StoreMgmt <-->|Fernet Encrypted Bank Details| PostgreSQL
+    OrderSubEngine <--> PostgreSQL
+    EngagementModule <--> PostgreSQL
+    SupportModule <--> PostgreSQL
+    InventoryTask <-->|Audit Stock| PostgreSQL
+    MembershipTask <-->|Toggle Status| PostgreSQL
+
+    %% Real-time DB Triggers
+    PostgreSQL -- "LISTEN / NOTIFY" --> NotifService
+    NotifService -- "Persist State" --> PostgreSQL
 ```
 ---
 
