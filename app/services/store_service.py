@@ -30,7 +30,6 @@ from sqlalchemy import (
     select,
     text,
     and_,
-    or_,
     exists,
     update,
     cast,
@@ -91,9 +90,9 @@ async def store_creation(
             normalized = []
             for item in owners:
                 if isinstance(item, str):
-                    normalized.extend(i.strip() for i in item.split(","))
+                    normalized.extend(int(i.strip()) for i in item.split(","))
                 else:
-                    normalized.append(str(item).strip())
+                    normalized.append(int(item))
             owners = normalized
     except ValueError:
         raise HTTPException(
@@ -289,7 +288,7 @@ async def store_update(
             .options(selectinload(Store.user_owners))
             .where(
                 Store.id == store_id,
-                ~Store.is_deleted,
+                Store.is_deleted.is_(False),
             )
             .with_for_update()
         )
@@ -399,6 +398,7 @@ async def store_update(
                 )
             await store_invalidation(user_id)
             await store_invalidation_global()
+            logger.info("store: %s, updated successfully", store_map.id)
             return StandardResponse(
                 status="success", message="store updated", data=None
             )
@@ -433,7 +433,6 @@ async def store_update(
             )
         logger.exception("error while updating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info("store: %s, updated successfully", store_map.id)
     await db.rollback()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -446,7 +445,11 @@ async def approve_stores(slug, db, payload):
         raise HTTPException(status_code=401, detail="restricted access")
     approved = (
         await db.execute(
-            select(Store).where(Store.slug == slug, ~Store.is_deleted, ~Store.approved)
+            select(Store).where(
+                Store.slug == slug,
+                Store.is_deleted.is_(False),
+                Store.approved.is_(False),
+            )
         )
     ).scalar_one_or_none()
     if not approved:
@@ -491,7 +494,7 @@ async def view_store(position, db, payload):
         select(Store)
         .outerjoin(store_owners, Store.id == store_owners.c.stores_id)
         .outerjoin(store_staffs, Store.id == store_staffs.c.stores_id)
-        .where(query, ~Store.is_deleted)
+        .where(query, Store.is_deleted.is_(False))
     )
     store_type = (await db.execute(stmt)).scalars().all()
     if not store_type:
@@ -546,7 +549,7 @@ async def search_stores(search, search_value, seed, page, limit, db):
             .where(
                 Product.store_id == Store.id,
                 Product.product_name.ilike(f"%{search_value}%"),
-                ~Product.is_deleted,
+                Product.is_deleted.is_(False),
             )
             .order_by(Product.id.desc())
             .limit(1)
@@ -566,8 +569,8 @@ async def search_stores(search, search_value, seed, page, limit, db):
             .options(selectinload(product_aliase.inventory))
             .where(
                 filter_column,
-                Store.approved,
-                ~Store.is_deleted,
+                Store.approved.is_(True),
+                Store.is_deleted.is_(False),
             )
             .order_by(func.md5(func.concat(cast(Store.id, String), str(seed))))
         )
@@ -591,8 +594,8 @@ async def search_stores(search, search_value, seed, page, limit, db):
             await conn.execute(
                 count_stmt.where(
                     filter_column,
-                    Store.approved,
-                    ~Store.is_deleted,
+                    Store.approved.is_(True),
+                    Store.is_deleted.is_(False),
                 )
             )
         ).scalar() or 0
@@ -874,27 +877,19 @@ async def remove_staff(store_id, staff_id, db, payload):
     check_stmt = (
         select(Store).where(
             Store.id == store_id,
-            Store.approved,
-            or_(
-                exists().where(
-                    and_(
-                        store_owners.c.users_id == user_id,
-                        store_owners.c.stores_id == store_id,
-                    )
-                ),
-                exists().where(
-                    and_(
-                        store_staffs.c.users_id == staff_id,
-                        store_staffs.c.stores_id == store_id,
-                    )
-                ),
+            Store.approved.is_(True),
+            exists().where(
+                and_(
+                    store_owners.c.users_id == user_id,
+                    store_owners.c.stores_id == store_id,
+                )
             ),
         )
     ).cte("check_stmt")
     result = await db.execute(
         select(Store)
         .options(selectinload(Store.user_staffs))
-        .where(Store.id == store_id, Store.approved)
+        .where(Store.id == store_id, Store.approved.is_(True))
         .join(check_stmt, Store.id == check_stmt.c.id)
     )
     store_check = result.scalar_one_or_none()
@@ -955,7 +950,7 @@ async def remove_store(store_id, db, payload, get_supabase):
             )
             .where(
                 Store.id == store_id,
-                ~Store.is_deleted,
+                Store.is_deleted.is_(False),
             )
             .with_for_update()
         )
