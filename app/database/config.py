@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     REDIS_URL: str
     SUPABASE_URL: str
     SUPABASE_KEY: str
+    DOMAIN_NAME: str
     BUCKET: str
     BUCKET1: str
     Standard: str
