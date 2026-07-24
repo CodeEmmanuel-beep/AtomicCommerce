@@ -7,7 +7,7 @@ def get_logger(name: str):
     logs = "logs"
     os.makedirs(logs, exist_ok=True)
     logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     if not logger.handlers:
         logger.propagate = False
         fmt = logging.Formatter("%(asctime)s-%(levelname)s-%(message)s")
