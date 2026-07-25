@@ -155,28 +155,151 @@ The platform features an event-driven, low-latency infrastructure designed to ca
 The system is divided into **20+ Domain-Specific Services**, ensuring zero circular dependencies and high maintainability for a 12,000+ line codebase.
 
 ```text
-.
-├── app/                        # Core Engine
-│   ├── api/v1/                 # Versioned REST Routes
-│   ├── auth/                   # JWT & Security Logic
-│   ├── database/               # Async Engine & Session Management
-│   ├── services/               # 12+ Business Logic Domains (Cart, Order, etc.)
-│   ├── utils/                  # Redis, Fernet Encryption, Supabase Helpers
-│   ├── main.py                 # App Entry Point
-│   └── models_sql.py           # Centralized SQLAlchemy Models
-├── migration/                  # Alembic Database Versioning
-│   └── versions/               # Schema Evolution History
-├── logs/                       # Per-Service Observability (Auth, Order, etc.)
-├── Dockerfile                  # Production Containerization
-├── docker-compose.yaml         # Local Environment Orchestration
-├── alembic.ini                 # Migration Configuration
-└── requirements.txt            # Dependency Management
+
+atomic_commerce/
+├── app/                    # Core FastAPI application
+│   ├── api/v1/             # API routes and Pydantic schemas
+│   ├── auth/               # JWT authentication and security
+│   ├── database/           # PostgreSQL/Supabase session management
+│   ├── services/           # Business logic, Celery tasks, and Stripe integration
+│   ├── utils/              # Redis caching and background task helpers
+│   ├── models.py           # SQLAlchemy ORM models
+│   └── main.py             # Application entry point
+├── docs/                   # Detailed, domain-specific API documentation
+├── migration/              # Alembic database migrations (versions collapsed)
+├── docker-compose.yaml     # Multi-container orchestration (App, DB, Redis, Worker)
+├── Dockerfile              # Multi-stage production build
+├── nginx.conf.template     # Nginx reverse proxy configuration
+├── requirements.txt        # Python dependencies
+└── README.md
 
 ```
 
 ---
+## 📚 Domain Module Documentation
 
-🚀 Setup & Deployment
-Clone & Environment: Copy .env.example to .env and configure your CIPHER_KEY and DATABASE_URL.
-Docker Orchestration: docker-compose up --build to spin up FastAPI, Redis, and PostgreSQL.
-Database Migrations: alembic upgrade head to sync the latest hardened schema.
+Detailed architectural specs, data schemas, and service boundaries for each internal domain are documented in the internal `docs` directory:
+
+| Domain Module | Architecture Spec Link | Core Responsibility |
+|---|---|---|
+| **Authentication & Security** | `docs/auth.md` | Stateless JWT verification, Argon2 hashing, & Refresh Token Rotation |
+| **Inventory & Warehouse** | `docs/inventory.md` | PostgreSQL advisory locks, atomic stock allocations, & race condition prevention |
+| **Stripe Webhooks** | `docs/stripe_webhook.md` | Idempotent event ledger, signature validation, atomic database updates & async event dispatch |
+| **Notifications & SSE** | `docs/notifications.md` | Real-time `LISTEN/NOTIFY` triggers, Redis Pub/Sub, & Server-Sent Events |
+| **Customer Support** | `docs/customer_support.md` | Multi-tenant ticketing, & agent routing |
+| **Payments** | `docs/payment.md` | One-time checkout flows, refunds, & payment ledger mutations |
+| **Memberships** | `docs/membership.md` | Tenant membership states & tier assignments |
+| **Orders** | `docs/order.md`] | Order processing, state machines, & checkout pipelines |
+| **Shopping Cart** | `docs/cart.md` | Session & persistent tenant carts with stock validation |
+| **Categories** | `docs/category.md` | Top-level product taxonomy & hierarchy management |
+| **Subcategories** | `docs/sub_category.md` | Granular catalog tagging & dynamic filtering |
+| **Products** | `docs/modules/product.md` | Catalog engine, SKU constraints, & image streaming pipeline |
+| **Stores** | `docs/store.md` | Tenant onboarding, storefront settings, & status management |
+| **Store Analytics** | `docs/store_analytics.md` | Time-series metrics, revenue buckets, & conversion tracking |
+| **Store Account & Address** |  `docs/store_account_and_address.md` | Encrypted Fernet bank payout details & merchant locations |
+| **Delivery Address** | `docs/modules/delivery_address.md` | Customer shipping destinations & validation |
+| **Product Reviews** | `docs/product_reviews.md` | Customer product feedback, & star ratings |
+| **Product Replies** | `docs/product_reply.md` | Merchant official responses to product reviews |
+| **Store Reviews** | `docs/store_reviews.md` | Tenant-level merchant trust & reputation metrics |
+| **Store Replies** | `docs/store_reply.md` | Merchant official responses to vendor reviews |
+| **User Profiles** | `docs/profile.md` | Customer identities, avatars, & metadata preferences |
+| **Reactions** | `docs/reactions.md` | Social engagement signals (likes/upvotes) on reviews |
+| **Database Core** | `docs/database.md` | AsyncSession engine, connection pool tuning, & migrations |
+
+---
+
+## 🚀 Local Production Setup & Deployment
+
+### Prerequisites
+* **Docker & Docker Compose** installed.
+* **WSL2 / Linux / macOS** environment.
+
+---
+
+### 1. Configure Host Domain
+Map the local domain to your loopback interface in your host machine's `hosts` file (`C:\Windows\System32\drivers\etc\hosts` on Windows or `/etc/hosts` on Linux/macOS):
+
+```text
+127.0.0.1    atomiccommerce.local
+127.0.0.1    localhost
+```
+
+### 2. Environment Configuration
+
+Clone the repository and prepare your environment variables:
+
+Bash
+git clone https://github.com/CodeEmmanuel-beep/AtomicCommerce.git
+cd atomiccommerce
+cp .env.example .env
+
+Ensure your `.env` contains your core runtime keys:
+
+```text
+DOMAIN_NAME=atomiccommerce.local
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_secure_password
+POSTGRES_DB=marketplace
+REDIS_URL=redis://redis:6379/0
+FERNET_KEY=your_generated_fernet_key
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+### 3. Generate Local SSL Certificates
+
+Nginx requires TLS certificates for local HTTPS termination. Generate a self-signed cert bundle into your project's certs directory:
+
+Bash
+mkdir -p certs
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout certs/privkey.pem \
+  -out certs/fullchain.pem \
+  -subj "/CN=atomiccommerce.local"
+
+
+### 4. Orchestrate Stack via Docker
+
+Spin up the full containerized stack (Nginx, FastAPI API Engine, PostgreSQL, Redis, and Celery Workers):
+
+Bash
+
+# Build and launch all services in detached mode
+docker compose up --build -d
+
+# Run database migrations via Alembic
+docker compose exec e_marketplace alembic upgrade head
+
+## 📖 API Documentation & Verification
+
+Once the stack is healthy, Nginx routes traffic securely over HTTPS:
+
+* ***Interactive Swagger Documentation***: `https://atomiccommerce.local/docs`
+* ***ReDoc Engine***: `https://atomiccommerce.local/redoc`
+* ***Health Check Endpoint***: `https://atomiccommerce.local/healthcheck`
+
+**Note on Browser Warnings**: Since local development uses self-signed SSL certificates, your browser will display a safety warning on first access. Click Advanced → Proceed to atomiccommerce.local (unsafe) to proceed to Swagger UI.
+
+
+## 🧪 Testing & Observability
+
+**Inspecting Live Container Logs**
+
+Stream real-time structured logs across services:
+
+Bash
+# Stream Nginx reverse proxy logs
+docker compose logs -f nginx
+
+# Stream FastAPI application logs
+docker compose logs -f e_marketplace
+
+# Stream Celery background worker tasks
+docker compose logs -f celery_worker
+
+
+## 👨‍💻 Author
+
+**Emmanuel Eke** — Backend Software Engineer
+* **LinkedIn**: https://www.linkedin.com/in/emmanuel-eke-592595353
+* **Email**: [emmanuelchiedueke01@gmail.com](mailto:emmanuelchiedueke01@gmail.com)
