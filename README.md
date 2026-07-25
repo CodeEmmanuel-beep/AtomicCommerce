@@ -283,7 +283,7 @@ Once the stack is healthy, Nginx routes traffic securely over HTTPS:
 **Note on Browser Warnings**: Since local development uses self-signed SSL certificates, your browser will display a safety warning on first access. Click Advanced → Proceed to atomiccommerce.local (unsafe) to proceed to Swagger UI.
 
 
-## 🧪 Testing & Observability
+## 🧪 Observability
 
 **Inspecting Live Container Logs**
 
