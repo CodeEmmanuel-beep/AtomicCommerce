@@ -1,5 +1,7 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends, status, Response
 import time
+from app.database.get import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.routes import (
     auth,
     product,
@@ -30,6 +32,7 @@ from app.exceptions import (
     make_http_exception_handler,
     make_validation_error_handler,
 )
+from sqlalchemy import text
 from fastapi.exceptions import RequestValidationError
 from app.logs.logger import get_logger
 from contextlib import asynccontextmanager
@@ -71,7 +74,7 @@ async def requests(request: Request, call_next):
         process = await call_next(request)
     except Exception as exc:
         duration = time.time() - start
-        logger = get_logger("requests")
+        logger = get_logger("error_requests")
         logger.error(
             f"{request.method}-{request.url.path}|error:{exc}|duration:{duration:.3f}s"
         )
@@ -82,6 +85,20 @@ async def requests(request: Request, call_next):
         f"{request.method}-{request.url.path}|status:{process.status_code}|duration:{duration:.3f}s"
     )
     return process
+
+
+@app.get("/healthcheck", include_in_schema=False, status_code=status.HTTP_200_OK)
+async def healthcheck(response: Response, db: AsyncSession = Depends(get_db)):
+    try:
+        await db.execute(text("SELECT 1"))
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "service": "marketplace_api",
+        }
+    except Exception as e:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "unhealthy", "database": str(e)}
 
 
 @app.get("/", include_in_schema=False)
