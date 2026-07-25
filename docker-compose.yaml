@@ -61,6 +61,12 @@ services:
 
   e_marketplace:
     build: .
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/healthcheck\")' || exit 1"]
+      interval: 120s
+      timeout: 20s
+      retries: 3
+      start_period: 10s
     container_name: marketplace_api
     restart: always
     volumes:
@@ -92,7 +98,8 @@ services:
       - ./fullchain.pem:/etc/letsencrypt/live/${DOMAIN_NAME}/fullchain.pem:ro
       - ./privkey.pem:/etc/letsencrypt/live/${DOMAIN_NAME}/privkey.pem:ro
     depends_on:
-      - e_marketplace
+      e_marketplace:
+        condition: service_healthy
     networks:
       - backend
 
