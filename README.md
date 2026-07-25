@@ -182,29 +182,29 @@ Detailed architectural specs, data schemas, and service boundaries for each inte
 
 | Domain Module | Architecture Spec Link | Core Responsibility |
 |---|---|---|
-| **Authentication & Security** | `docs/auth.md` | Stateless JWT verification, Argon2 hashing, & Refresh Token Rotation |
-| **Inventory & Warehouse** | `docs/inventory.md` | PostgreSQL advisory locks, atomic stock allocations, & race condition prevention |
-| **Stripe Webhooks** | `docs/stripe_webhook.md` | Idempotent event ledger, signature validation, atomic database updates & async event dispatch |
-| **Notifications & SSE** | `docs/notifications.md` | Real-time `LISTEN/NOTIFY` triggers, Redis Pub/Sub, & Server-Sent Events |
-| **Customer Support** | `docs/customer_support.md` | Multi-tenant ticketing, & agent routing |
-| **Payments** | `docs/payment.md` | One-time checkout flows, refunds, & payment ledger mutations |
-| **Memberships** | `docs/membership.md` | Tenant membership states & tier assignments |
-| **Orders** | `docs/order.md`] | Order processing, state machines, & checkout pipelines |
-| **Shopping Cart** | `docs/cart.md` | Session & persistent tenant carts with stock validation |
-| **Categories** | `docs/category.md` | Top-level product taxonomy & hierarchy management |
-| **Subcategories** | `docs/sub_category.md` | Granular catalog tagging & dynamic filtering |
-| **Products** | `docs/modules/product.md` | Catalog engine, SKU constraints, & image streaming pipeline |
-| **Stores** | `docs/store.md` | Tenant onboarding, storefront settings, & status management |
-| **Store Analytics** | `docs/store_analytics.md` | Time-series metrics, revenue buckets, & conversion tracking |
-| **Store Account & Address** |  `docs/store_account_and_address.md` | Encrypted Fernet bank payout details & merchant locations |
-| **Delivery Address** | `docs/modules/delivery_address.md` | Customer shipping destinations & validation |
-| **Product Reviews** | `docs/product_reviews.md` | Customer product feedback, & star ratings |
-| **Product Replies** | `docs/product_reply.md` | Merchant official responses to product reviews |
-| **Store Reviews** | `docs/store_reviews.md` | Tenant-level merchant trust & reputation metrics |
-| **Store Replies** | `docs/store_reply.md` | Merchant official responses to vendor reviews |
-| **User Profiles** | `docs/profile.md` | Customer identities, avatars, & metadata preferences |
-| **Reactions** | `docs/reactions.md` | Social engagement signals (likes/upvotes) on reviews |
-| **Database Core** | `docs/database.md` | AsyncSession engine, connection pool tuning, & migrations |
+| **Authentication & Security** | [`docs/auth.md`](docs/auth.md) | Stateless JWT verification, Argon2 hashing, & Refresh Token Rotation |
+| **Inventory & Warehouse** | [`docs/inventory.md`](docs/inventory.md) | PostgreSQL advisory locks, atomic stock allocations, & race condition prevention |
+| **Stripe Webhooks** | [`docs/stripe_webhook.md`](docs/stripe_webhook.md) | Idempotent event ledger, signature validation, atomic database updates & async event dispatch |
+| **Notifications & SSE** | [`docs/notifications.md`](docs/notifications.md) | Real-time `LISTEN/NOTIFY` triggers, Redis Pub/Sub, & Server-Sent Events |
+| **Customer Support** | [`docs/customer_support.md`](docs/customer_support.md) | Multi-tenant ticketing, & agent routing |
+| **Payments** | [`docs/payment.md`](docs/payment.md) | One-time checkout flows, refunds, & payment ledger mutations |
+| **Memberships** | [`docs/membership.md`](docs/membership.md) | Tenant membership states & tier assignments |
+| **Orders** | [`docs/order.md`](docs/order.md) | Order processing, state machines, & checkout pipelines |
+| **Shopping Cart** | [`docs/cart.md`](docs/cart.md) | Session & persistent tenant carts with stock validation |
+| **Categories** | [`docs/category.md`](docs/category.md) | Top-level product taxonomy & hierarchy management |
+| **Subcategories** | [`docs/sub_category.md`](docs/sub_category.md) | Granular catalog tagging & dynamic filtering |
+| **Products** | [`docs/product.md`](docs/product.md) | Catalog engine, SKU constraints, & image streaming pipeline |
+| **Stores** | [`docs/store.md`](docs/store.md) | Tenant onboarding, storefront settings, & status management |
+| **Store Analytics** | [`docs/store_analytics.md`](docs/store_analytics.md) | Time-series metrics, revenue buckets, & conversion tracking |
+| **Store Account & Address** | [`docs/store_account_and_address.md`](docs/store_account_and_address.md) | Encrypted Fernet bank payout details & merchant locations |
+| **Delivery Address** | [`docs/delivery_address.md`](docs/delivery_address.md) | Customer shipping destinations & validation |
+| **Product Reviews** | [`docs/product_reviews.md`](docs/product_reviews.md) | Customer product feedback, & star ratings |
+| **Product Replies** | [`docs/product_reply.md`](docs/product_reply.md) | Merchant official responses to product reviews |
+| **Store Reviews** | [`docs/store_reviews.md`](docs/store_reviews.md) | Tenant-level merchant trust & reputation metrics |
+| **Store Replies** | [`docs/store_reply.md`](docs/store_reply.md) | Merchant official responses to vendor reviews |
+| **User Profiles** | [`docs/profile.md`](docs/profile.md) | Customer identities, avatars, & metadata preferences |
+| **Reactions** | [`docs/reactions.md`](docs/reactions.md) | Social engagement signals (likes/upvotes) on reviews |
+| **Database Core** | [`docs/database.md`](docs/database.md) | AsyncSession engine, connection pool tuning, & migrations |
 
 ---
 
@@ -264,11 +264,13 @@ Spin up the full containerized stack (Nginx, FastAPI API Engine, PostgreSQL, Red
 
 Bash
 
+```text
 # Build and launch all services in detached mode
 docker compose up --build -d
 
 # Run database migrations via Alembic
 docker compose exec e_marketplace alembic upgrade head
+```
 
 ## 📖 API Documentation & Verification
 
@@ -288,6 +290,8 @@ Once the stack is healthy, Nginx routes traffic securely over HTTPS:
 Stream real-time structured logs across services:
 
 Bash
+
+```text
 # Stream Nginx reverse proxy logs
 docker compose logs -f nginx
 
@@ -296,7 +300,7 @@ docker compose logs -f e_marketplace
 
 # Stream Celery background worker tasks
 docker compose logs -f celery_worker
-
+```
 
 ## 👨‍💻 Author
 
