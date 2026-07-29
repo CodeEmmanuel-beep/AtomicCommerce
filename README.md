@@ -152,7 +152,7 @@ The platform features an event-driven, low-latency infrastructure designed to ca
 ```
 
 ## 📁 Modular Service Architecture (SOA)
-The system is divided into **20+ Domain-Specific Services**, ensuring zero circular dependencies and high maintainability for a 12,000+ line codebase.
+The system is divided into **20+ Domain-Specific Services**, ensuring zero circular dependencies and high maintainability for a 14,000+ line codebase.
 
 ```text
 
