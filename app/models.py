@@ -14,8 +14,6 @@ from sqlalchemy import (
     CheckConstraint,
     Text,
 )
-
-from typing import Optional
 from sqlalchemy.dialects.postgresql import JSONB, ENUM as PG_ENUM
 from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped, declarative_base
@@ -39,6 +37,11 @@ store_owners = Table(
 )
 
 
+class BanUnit(str, Enum):
+    days = "days"
+    months = "months"
+
+
 class User(Base):
     __tablename__ = "user"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -47,9 +50,23 @@ class User(Base):
     surname: Mapped[str] = mapped_column(String, index=True)
     username: Mapped[str] = mapped_column(String, unique=True, index=True)
     password: Mapped[str] = mapped_column(String)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    indefinite_ban: Mapped[bool] = mapped_column(
+        Boolean, default=False, index=True, nullable=True
+    )
+    deactivation_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ban_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    ban_period: Mapped[int] = mapped_column(Integer, default=0)
+    ban_unit: Mapped[BanUnit] = mapped_column(
+        SQLEnum(BanUnit), default=None, nullable=True
+    )
+    ban_reaon: Mapped[str] = mapped_column(String, nullable=True)
+    ban_count: Mapped[int] = mapped_column(Integer, nullable=True)
     role: Mapped[str] = mapped_column(String, default="user", index=True)
-    email: Mapped[str] = mapped_column(String)
+    email: Mapped[str] = mapped_column(String, index=True)
     nationality: Mapped[str] = mapped_column(String)
     profile_picture: Mapped[str] = mapped_column(String, nullable=True)
     phone_number: Mapped[str] = mapped_column(String, nullable=True)
@@ -113,7 +130,7 @@ class Ticket(Base):
     status: Mapped[TicketStatus] = mapped_column(
         SQLEnum(TicketStatus), default=TicketStatus.open.value, index=True
     )
-    assigned_to: Mapped[Optional[int]] = mapped_column(
+    assigned_to: Mapped[int] = mapped_column(
         Integer, ForeignKey("user.id"), nullable=True, index=True
     )
     updated_at = mapped_column(
@@ -502,8 +519,8 @@ class Subscription(Base):
         default=SubscriptionPlan.Standard,
         index=True,
     )
-    price_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    plan_price: Mapped[Optional[Decimal]] = mapped_column(
+    price_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    plan_price: Mapped[Decimal | None] = mapped_column(
         Numeric(precision=10, scale=2), nullable=True
     )
     status: Mapped[SubscriptionStatus] = mapped_column(
