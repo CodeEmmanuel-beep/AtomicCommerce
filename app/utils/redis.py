@@ -248,7 +248,7 @@ async def run_router():
                         current_time = time.time()
                         if current_time - last_heartbeat > 180:
                             await redis_client.set(
-                                "router_heartbeat", int(current_time)
+                                "router_heartbeat", int(current_time), ex=180
                             )
                             last_heartbeat = current_time
                             logger.info("Heartbeat sent: Router is healthy.")
