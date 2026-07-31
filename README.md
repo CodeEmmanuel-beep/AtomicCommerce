@@ -21,16 +21,19 @@ graph TB
     end
 
     subgraph Gateway["🛡️ Gateway & Ingress Layer"]
-        Nginx["Nginx Reverse Proxy / Load Balancer"]
+        Nginx["Nginx Reverse Proxy & Ingress<br/>• Upstream Keepalive Connection Pooling<br/>• Zero-Buffer SSE / Event Streaming Support<br/>• Dynamic Gzip Compression<br/>• TLS 1.2/1.3 Termination"]
     end
 
     subgraph Application["🚀 FastAPI Backend Core (Dockerized)"]
-        AuthModule["Auth & Security Engine<br/>• JWT Token Verification<br/>• Argon2 Password Hashing<br/>• Fernet Key Encryption / Decryption"]
-        StoreMgmt["Store & Admin Workflow Engine"]
-        OrderSubEngine["Orders & Subscriptions Engine"]
-        EngagementModule["Reviews, Replies & Reactions"]
-        SupportModule["Support Ticketing Engine"]
-        NotifService["Real-Time Notification Worker"]
+        AuthMiddleware["🔒 Auth Middleware Layer<br/>• Fast JWT Decoding & Verification<br/>• Request Scope Context Injection (request.state.user)<br/>• Token Revocation Check"]
+        
+        subgraph DomainServices["Domain Service Engines"]
+            StoreMgmt["Store & Admin Workflow Engine"]
+            OrderSubEngine["Orders & Subscriptions Engine"]
+            EngagementModule["Reviews, Replies & Reactions"]
+            SupportModule["Support Ticketing Engine"]
+            NotifService["Real-Time Notification Worker"]
+        end
     end
 
     subgraph BackgroundWorkers["⚡ Asynchronous Background Layer"]
@@ -53,16 +56,18 @@ graph TB
     MerchantClient -->|HTTPS / Bearer JWT| Nginx
     AdminClient -->|HTTPS / Bearer JWT| Nginx
 
-    %% Ingress to App
-    Nginx --> AuthModule
-    AuthModule --> StoreMgmt
-    AuthModule --> OrderSubEngine
-    AuthModule --> EngagementModule
-    AuthModule --> SupportModule
+    %% Gateway to App
+    Nginx --> AuthMiddleware
+
+    %% Auth Middleware Context Propagation to Domain Services via Request Scope
+    AuthMiddleware -->|Validated Scope & User Context| StoreMgmt
+    AuthMiddleware -->|Validated Scope & User Context| OrderSubEngine
+    AuthMiddleware -->|Validated Scope & User Context| EngagementModule
+    AuthMiddleware -->|Validated Scope & User Context| SupportModule
 
     %% External & Caching
     OrderSubEngine <--> Stripe
-    AuthModule <-->|Blacklist / Session Check| RedisCache
+    AuthMiddleware <-->|Blacklist / Session Check| RedisCache
 
     %% Async Queue Dispatch (Celery)
     OrderSubEngine -->|Dispatch Tasks| RedisCache
@@ -92,8 +97,8 @@ graph TB
 *   **Stripe Subscriptions & Billing**: An asynchronous financial ledger core managing B2B/B2C multi-tier subscription states, trial/grace intervals, automated webhook processing, and credit proration.
 *   **Warehouse Inventory**: Atomic stock engine enforcing strict concurrency controls to eradicate race conditions, warehouse drops, and product over-allocation.
 *   **Real-Time Analytics**: High-signal metrics tracking layer engineered using low-overhead time-series ledger write logs to bypass expensive computational table lookups.
-*   **Event-Driven Notifications**: Sub-millisecond data reactivity using native PostgreSQL `LISTEN/NOTIFY` structures combined with async task broadcasting pipelines.
-*   **Redis Caching**: Highly efficient Cache-Aside strategy serving intense catalog reads, pricing structures, and storefront snapshots natively out of sub-millisecond memory stores.
+*   **Event-Driven Notifications**: Low-latency data reactivity using native PostgreSQL LISTEN/NOTIFY structures combined with async task broadcasting pipelines.
+*   **Redis Caching**: Highly efficient Cache-Aside strategy serving intense catalog reads, pricing structures, and storefront snapshots directly from in-memory stores to bypass disk I/O.
 *   **Celery Workers**: Offloads long-running application-level computations, metric compilations, transactional reporting, and automated subscription status checks out of the core request-response lifecycle.
 *   **Media Uploads**: Chunk-streaming asset gateway that scans, validates MIME-types at the binary byte level, and writes straight to Supabase Storage Buckets to protect server memory.
 *   **JWT Authentication**: Stateless verification workflow featuring Multi-Tenant Role-Based Access Control (RBAC) maps backed by a zero-reuse Refresh Token Rotation security policy.
@@ -103,7 +108,7 @@ graph TB
 
 ## 📈 System Metrics & Scale
 
-*   **100+ REST Endpoints**: Fully versioned, clean API paths covering multi-tenant billing portals, vendor marketplaces, real-time analytics dashboards, shopping carts, checkout logic, and advanced stock administration.
+*   **110+ REST Endpoints**: Fully versioned, clean API paths covering multi-tenant billing portals, vendor marketplaces, real-time analytics dashboards, shopping carts, checkout logic, and advanced stock administration.
 *   **20+ Service Modules**: Fully isolated domain modules following Service-Oriented Architecture (SOA) principles to eliminate circular imports and enforce a clear separation of concerns.
 *   **20+ Database Tables**: A robust PostgreSQL relational schema complete with optimized composite indexes, write-ahead time-series logging, explicit cascading parameters, and foreign key boundaries.
 *   **10+ Strict Enums**: Rigid state-machine tracking via Python/SQLAlchemy Enums (e.g., Subscription Status, Order states, Payment states, Account tiers, Analytics event types) ensuring type-safe processing at every interface.
@@ -135,7 +140,11 @@ The platform features an event-driven, low-latency infrastructure designed to ca
 ## 🛠️ Engineering Highlights
 
 *   **Asynchronous Architecture**: Built entirely on an ASGI worker pool loop using FastAPI and SQLAlchemy `AsyncSession`, enabling high-concurrency throughput without thread context-switching overhead.
+*   **Zero-Copy Request Scope Context Injection**: Implements a lightweight ASGI Auth Middleware that validates incoming JWTs and injects the authenticated tenant payload directly into `request.state`. Downstream domain services consume this request scope instantly without redundant token parsing overhead or duplicate database user fetches.
 *   **Atomic State Management**: Guarantees zero "Lost Updates" or inventory drift in high-throughput warehouse environments by implementing precise **PostgreSQL Advisory Locks** and row-level locking schemas (`FOR UPDATE`) across critical transaction paths.
+*   **High-Throughput Upstream Keepalives**: Configured `keepalive 32` within the Nginx `upstream` block over HTTP/1.1 to maintain a persistent connection pool with Uvicorn. This prevents TCP socket churn and port exhaustion under high concurrency.
+*   **Unbuffered SSE Proxying**: Explicitly disabled proxy buffering (`proxy_buffering off`) at the ingress layer to ensure continuous, unbuffered chunk streaming for real-time Server-Sent Events (SSE) and notification streams.
+*   **Offloaded HTTP Dynamic Compression**: Enforces Nginx-level `gzip` compression across JSON responses and API payloads, reducing network round-trip time (RTT) while keeping CPU-bound compression tasks completely off the Python ASGI event loop.
 *   **Read-Optimized Analytics Modules**: Offloads expensive aggregate queries (`SUM`, `AVG`) from core transaction tables on every API call by leveraging a read-optimized time-series ledger strategy. Efficiently buckets store performance, net revenue, conversion rates, and item sales velocity across customizable hourly, daily, and monthly windows.
 *   **Analytics Performance Safeguards**: High-volume analytics lookups utilize explicit composite indexes on `(store_id, created_at DESC)` and are structured to avoid nested loop joins and sequential scans, verified via `EXPLAIN ANALYZE`.
 *   **Stateless Deterministic Pagination**: Replaces erratic runtime execution setups like `setseed()` for randomized store and product discoveries. Instead, the layout uses an `md5(id || seed)` cryptographic sorting schema inside raw SQL strings to guarantee predictable, drift-free, page-by-page infinite scrolling across concurrent database lookups.
