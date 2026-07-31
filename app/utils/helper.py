@@ -1,5 +1,5 @@
 from sqlalchemy import func, select, exists
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 import uuid
 from sqlalchemy.orm import selectinload
 from werkzeug.utils import secure_filename
@@ -14,6 +14,41 @@ from app.api.v1.schemas import ReactionsSummary
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger("helper")
+
+
+def user_role(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return user["role"]
+
+
+def jwt_exp(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return int(user["exp"])
+
+
+def user_jti(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return user["jti"]
+
+
+def unique_id(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return int(user["user_id"])
+
+
+def unique_name(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return user["sub"]
 
 
 async def react_summary(
@@ -47,8 +82,8 @@ async def react_summary(
     return result
 
 
-async def upload_photo_helper(photo, payload, get_supabase, bucket: str | None = None):
-    user_id = payload.get("user_id")
+async def upload_photo_helper(photo, request, get_supabase, bucket: str | None = None):
+    user_id = unique_id(request)
     filename = None
     max_size = 5 * 1024 * 1024
     allowed_types = ("image/jpeg", "image/webp", "image/png")
@@ -133,8 +168,8 @@ async def file_generator(file, user_id):
         return bytes(buffer)
 
 
-async def store_auth(store_id, db, payload):
-    user_id = payload.get("user_id")
+async def store_auth(store_id, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt")
         raise HTTPException(status_code=401, detail="not authenticated")
@@ -189,11 +224,11 @@ async def view_performance_helper(
     slug,
     context,
     db,
-    payload,
+    request,
     context_1: str | None = None,
     context_2: str | None = None,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning(f"unauthorized attempt at the {context} endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
