@@ -5,18 +5,23 @@ from app.auth.auth_jwt import (
     hashed_password,
 )
 from sqlalchemy.exc import IntegrityError
-from app.auth.verify_jwt import decode_token
-from fastapi import HTTPException
+from app.auth.decode_jwt import decode_token
+from fastapi import HTTPException, status
 from werkzeug.utils import secure_filename
 from sqlalchemy import select, func
 from app.models import User
 from email_validator import validate_email, EmailNotValidError
 import uuid
+from app.utils.redis import redis_client
 from app.api.v1.schemas import StandardResponse
 from app.logs.logger import get_logger
-from datetime import timedelta
+from dateutil.relativedelta import relativedelta
+from datetime import timedelta, datetime, timezone
 from app.database.config import settings
+import time
+from fastapi.responses import JSONResponse
 from app.utils.helper import file_generator
+from app.utils.helper import unique_id, user_jti, jwt_exp, user_role
 from app.utils.supabase_url import cleaned_up
 
 logger = get_logger("auth")
@@ -99,8 +104,8 @@ async def reg(
     )
 
 
-async def upload_profile_picture(profile_picture, db, payload, get_supabase):
-    user_id = payload.get("user_id")
+async def upload_profile_picture(request, profile_picture, db, get_supabase):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("Unauthorized attempt at the upload_profile_picture function")
         raise HTTPException(status_code=401, detail="not a valid user")
@@ -126,7 +131,7 @@ async def upload_profile_picture(profile_picture, db, payload, get_supabase):
                 status_code=400,
                 detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
             )
-        logger.info("Starting file upload for new user")
+        logger.info("Starting file upload for user: %s", user_id)
         file_byte = await file_generator(profile_picture, "user_id")
         filename = f"{uuid.uuid4()}_{secure_filename(profile_picture.filename)}"
         client = await get_supabase.storage.from_(settings.BUCKET).upload(
@@ -182,68 +187,138 @@ async def upload_profile_picture(profile_picture, db, payload, get_supabase):
 
 async def logins(login, response, db):
     user = (
-        await db.execute(
-            select(User).where(User.username == login.username.strip(), User.is_active)
-        )
+        await db.execute(select(User).where(User.username == login.username.strip()))
     ).scalar_one_or_none()
     if not user or not verify_password(login.password, user.password):
         raise HTTPException(status_code=400, detail="invalid username or password")
-    token_expires = timedelta(minutes=60)
+    now = datetime.now(timezone.utc)
+    user_id = user.id
+    has_changed = False
+    need_redis_uncache = False
+    if not user.is_active and not user.is_banned:
+        three_months_ago = now - relativedelta(months=3)
+        if user.deactivation_time and user.deactivation_time < three_months_ago:
+            logger.warning("Permanently deactivated user %s attempted login", user_id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="this account has been permanently deactivated",
+            )
+        else:
+            user.is_active = True
+            user.deactivation_time = None
+            has_changed = True
+    if user.is_banned:
+        if user.indefinite_ban:
+            logger.warning("blocked user: %s, tried logging in", user_id)
+            raise HTTPException(
+                status_code=401,
+                detail="this account is permanently suspended, if you need clarifications contact support",
+            )
+        ban_begin = user.ban_date or now
+        ban_period = None
+        try:
+            ban_value = int(user.ban_period)
+            if user.ban_unit == "days":
+                ban_period = ban_begin + relativedelta(days=ban_value)
+            else:
+                ban_period = ban_begin + relativedelta(months=ban_value)
+        except (ValueError, TypeError):
+            logger.error(
+                "Invalid ban_period value '%s' for user %s",
+                user.ban_period,
+                user_id,
+            )
+            ban_period = now + timedelta(days=1)
+        if ban_period and now < ban_period:
+            lift_date_str = ban_period.strftime("%Y-%m-%d")
+            logger.warning("suspended user: %s, tried logging in", user_id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"this account is suspended until {lift_date_str}",
+            )
+        else:
+            user.is_banned = False
+            user.is_active = True
+            user.ban_unit = None
+            user.ban_period = 0
+            need_redis_uncache = True
+            has_changed = True
+    token_expires = timedelta(minutes=settings.ACCESS_TOKEN_MINUTES)
+    if has_changed:
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception(
+                "Failed to update user state on login for user %s", user_id
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="login failed due to database update error",
+            )
+    if need_redis_uncache:
+        try:
+            await redis_client.delete(f"banned_client:{user_id}")
+        except Exception:
+            logger.exception("could not clear redis ban cache for user: %s", user_id)
     access_token = create_access_token(
         data={
-            "name": user.surname,
+            "jti": str(uuid.uuid4()),
             "sub": user.username,
-            "user_id": user.id,
-            "nationality": user.nationality,
+            "user_id": user_id,
             "role": user.role,
         },
         expire_delta=token_expires,
     )
     refresh_token = create_refresh_token(
         data={
-            "name": user.surname,
+            "jti": str(uuid.uuid4()),
             "sub": user.username,
-            "user_id": user.id,
-            "nationality": user.nationality,
+            "user_id": user_id,
             "role": user.role,
         }
     )
     response.set_cookie(
-        key="refresh", value=refresh_token, secure=True, samesite="lax", httponly=True
+        key="refresh",
+        value=refresh_token,
+        secure=True,
+        samesite="lax",
+        httponly=True,
+        max_age=60 * 60 * 24 * 7,
     )
-    logger.info(f"User {login.username} logged in successfully")
+    logger.info("User '%s' logged in successfully", login.username)
     data = {"access_token": access_token, "token_type": "Bearer"}
     return StandardResponse(status="success", message="login successful", data=data)
 
 
-async def create_role(username, role, db, payload):
-    user_id = payload.get("user_id")
-    owner_username = payload.get("sub")
+async def create_role(id_number, request, assigned_role, db):
+    user_id = unique_id(request)
+    role = user_role(request)
     if not user_id:
         logger.warning("unauthorized access at create_role endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
-    stmt = select(User).where(User.id == user_id, User.role == "Owner")
-    owner = (await db.execute(stmt)).scalar_one_or_none()
-    if not owner:
+    if role != "Owner":
         logger.warning("user: %s, tried to create_role without authorization", user_id)
         raise HTTPException(status_code=403, detail="you are not the owner")
-    stmt = select(User).where(User.username == username)
+    stmt = select(User).where(User.id == id_number)
     admin = (await db.execute(stmt)).scalar_one_or_none()
     if not admin:
-        logger.error(
-            "user: %s, inputed a wrong username, while trying to create role", user_id
+        logger.warning(
+            "user: %s, inputed a wrong user_id, while trying to create role", user_id
         )
         raise HTTPException(status_code=404, detail="user not found")
-    if owner_username == username:
+    if user_id == id_number:
         logger.error("owner attempted to change their own role")
         raise HTTPException(status_code=400, detail="you cannot redesignate yourself")
-    if admin.role == role:
-        logger.error("owner tried assigning same role to the same user twice in a role")
+    if admin.role == assigned_role:
+        logger.warning(
+            "owner tried assigning same role to the same user twice in a role"
+        )
         raise HTTPException(
             status_code=400,
             detail="role already assigned to user, click on a new role if you want to redesignate user",
         )
-    admin.role = role
+    admin.role = assigned_role
     try:
         await db.commit()
     except IntegrityError:
@@ -254,53 +329,134 @@ async def create_role(username, role, db, payload):
         await db.rollback()
         logger.exception("error occured while creating role")
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info("%s, successfully assigned a new role'", username)
+    logger.info("User: %s, successfully assigned a new role'", id_number)
     return StandardResponse(
-        status="success", message=f"{username} assigned role {role}", data=None
+        status="success",
+        message=f"User '{id_number}' assigned role: {assigned_role}",
+        data=None,
     )
 
 
 async def refresh_token(request, response):
+    access_user_id = unique_id(request)
     token = request.cookies.get("refresh")
     if not token:
-        raise HTTPException(status_code=400, detail="Refresh token missing")
+        raise HTTPException(status_code=401, detail="Refresh token missing")
     payload = decode_token(token)
     if not payload or payload.get("type") != "refresh_token":
-        raise HTTPException(status_code=400, detail="invalid refresh token")
+        response.delete_cookie("refresh")
+        raise HTTPException(status_code=401, detail="invalid refresh token")
     username = payload.get("sub")
-    surname = payload.get("surname")
     user_id = payload.get("user_id")
-    nationality = payload.get("nationality")
     role = payload.get("role")
-    expire = timedelta(days=7)
+    old_jti = payload.get("jti")
+    old_exp = payload.get("exp")
+    if access_user_id and user_id and access_user_id != user_id:
+        logger.warning("session conflict at refresh token endpoint")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Session conflict: A different user logged in on another tab.",
+        )
+    try:
+        async with redis_client.pipeline(transaction=False) as pipe:
+            pipe.exists(f"blacklist:{old_jti}")
+            pipe.exists(f"banned_client:{user_id}")
+            is_blacklisted, is_banned = await pipe.execute()
+        if is_banned:
+            logger.warning("banned user: %s, tried tried refreshing token", user_id)
+            response.delete_cookie("refresh")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="User account is banned"
+            )
+        if is_blacklisted:
+            logger.warning("blacklisted user: %s, tried refreshing token", user_id)
+            response.delete_cookie("refresh")
+            raise HTTPException(
+                status_code=401,
+                detail="user logged out",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Redis unavailable during refresh")
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service unavailable",
+        )
+    access_jti = str(uuid.uuid4())
+    refresh_jti = str(uuid.uuid4())
     new_access = create_access_token(
         data={
             "sub": username,
-            "surname": surname,
+            "jti": access_jti,
             "user_id": user_id,
-            "nationality": nationality,
             "role": role,
         },
     )
     new_token = create_refresh_token(
         data={
             "sub": username,
-            "surname": surname,
             "user_id": user_id,
-            "nationality": nationality,
+            "jti": refresh_jti,
             "role": role,
-        },
-        expire_delta=expire,
+        }
     )
+    current_time = int(time.time())
+    if old_exp and old_exp > current_time:
+        try:
+            await redis_client.set(
+                f"blacklist:{old_jti}", "true", ex=old_exp - current_time
+            )
+        except Exception:
+            logger.exception("Redis unavailable during blacklisting of refresh token")
+            raise HTTPException(
+                status_code=503,
+                detail="Authentication service unavailable",
+            )
     response.set_cookie(
-        key="refresh", value=new_token, httponly=True, samesite="lax", secure=True
+        key="refresh",
+        value=new_token,
+        httponly=True,
+        samesite="lax",
+        secure=True,
+        max_age=60 * 60 * 24 * 7,
     )
-    logger.info(f"Refresh token successful for username: {username}")
+    logger.info("Refresh token successful for user_id: %s", user_id)
     data = {"access_token": new_access, "token_type": "Bearer"}
     return StandardResponse(status="success", message="refresh token", data=data)
 
 
-async def logout(response):
+async def logout(request, response):
+    user_id = unique_id(request)
+    jti = user_jti(request)
+    exp = jwt_exp(request)
+    if not jti or not exp:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": "Invalid token payload for logout."},
+        )
+    current_time = int(time.time())
+    refresh = request.cookies.get("refresh")
+    try:
+        async with redis_client.pipeline(transaction=False) as pipe:
+            ttl = exp - current_time
+            if ttl > 0:
+                pipe.set(f"blacklist:{jti}", "true", ex=ttl)
+            if refresh:
+                payload = decode_token(refresh)
+                refresh_jti = payload.get("jti")
+                refresh_exp = payload.get("exp")
+                if refresh_exp and refresh_jti:
+                    refresh_ttl = refresh_exp - current_time
+                    if refresh_ttl > 0:
+                        pipe.set(f"blacklist:{refresh_jti}", "true", ex=refresh_ttl)
+            await pipe.execute()
+    except Exception:
+        logger.exception("Redis unavailable during logout")
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service unavailable",
+        )
     response.delete_cookie("refresh")
-    logger.info("User logged out successfully")
+    logger.info("User '%s' logged out successfully", user_id)
     return StandardResponse(status="success", message="logged out", data=None)
