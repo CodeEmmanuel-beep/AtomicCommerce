@@ -1,8 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Request, Response, Query
 from app.services import profile_service
-from app.database.get import get_db
+from app.database.get import async_db
 from app.api.v1.schemas import StandardResponse, UserResponse, ProfileMode
-from app.auth.verify_jwt import verify_token
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/profile", tags=["Profile"])
@@ -14,31 +13,46 @@ router = APIRouter(prefix="/profile", tags=["Profile"])
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def get_personal_profile(
-    db: AsyncSession = Depends(get_db), payload: dict = Depends(verify_token)
-):
-    return await profile_service.view_profile(db, payload)
+async def get_personal_profile(request: Request, db: AsyncSession = async_db):
+    return await profile_service.view_profile(db=db, request=request)
 
 
 @router.put(
     "/update_profile", response_model=StandardResponse, response_model_exclude_none=True
 )
 async def update_personal_profile(
-    profile: ProfileMode,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request, profile: ProfileMode, db: AsyncSession = async_db
 ):
-    return await profile_service.edit_profile(
-        profile=profile,
-        db=db,
-        payload=payload,
+    return await profile_service.edit_profile(profile=profile, db=db, request=request)
+
+
+@router.delete("/deactivate_personal_profile")
+async def profile_deactivation(
+    request: Request,
+    response: Response,
+    db: AsyncSession = async_db,
+):
+    return await profile_service.deactivate_profile(
+        db=db, response=response, request=request
     )
 
 
-@router.delete("/delete_personal_profile")
-async def profile_deletion(
-    userId: int | None = None,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+@router.delete("/ban_profile")
+async def profile_ban(
+    request: Request,
+    userId: int,
+    ban_period: int | None = None,
+    ban_reason: str | None = None,
+    indefinite: str = Query("No", enum=["Yes", "No"]),
+    ban_unit: str | None = Query("days", enum=["months", None, "days"]),
+    db: AsyncSession = async_db,
 ):
-    return await profile_service.delete_profile(userId=userId, db=db, payload=payload)
+    return await profile_service.ban_profile(
+        userId=userId,
+        db=db,
+        ban_period=ban_period,
+        ban_unit=ban_unit,
+        indefinite=indefinite,
+        request=request,
+        ban_reason=ban_reason,
+    )
