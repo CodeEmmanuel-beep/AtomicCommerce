@@ -4,24 +4,25 @@ from app.api.v1.schemas import (
     PaginatedResponse,
     StandardResponse,
 )
-from app.models import Category, User
+from app.models import Category
 from fastapi import HTTPException
 from sqlalchemy.orm import selectinload
 from app.logs.logger import get_logger
 from sqlalchemy import select, func
+from app.utils.redis import cache, cached
 from sqlalchemy.exc import IntegrityError
+from app.utils.helper import unique_id, user_role
 
 logger = get_logger("category")
 
 
-async def category(name, db, payload):
-    user_id = payload.get("user_id")
+async def category(name, request, db):
+    user_id = unique_id(request)
+    role = user_role(request)
     if not user_id:
         logger.warning("Unauthorized access attempt: missing user_id in payload")
         raise HTTPException(status_code=401, detail="unauthorized access")
-    stmt = select(User).where(User.id == user_id, User.role.in_(["Admin", "Owner"]))
-    admin = (await db.execute(stmt)).scalar_one_or_none()
-    if not admin:
+    if role not in ("Admin", "Owner"):
         logger.warning("Forbidden access: user_id=%s is not admin/owner", user_id)
         raise HTTPException(status_code=403, detail="restricted access")
     normalized_name = " ".join(name.split())
@@ -56,6 +57,11 @@ async def category(name, db, payload):
 
 async def retrieve(page, limit, db):
     offset = (page - 1) * limit
+    cache_key = f"categories:page={page}:limit={limit}"
+    cached_data = await cache(cache_key)
+    if cached_data:
+        logger.info("Cache hit for categories")
+        return StandardResponse(**cached_data)
     stmt = select(Category).where(Category.is_deleted.is_(False))
     total = (
         await db.execute(select(func.count()).select_from(stmt.subquery()))
@@ -74,22 +80,23 @@ async def retrieve(page, limit, db):
         items=[CategoryResponse.model_validate(item) for item in categories],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
+    full_response = StandardResponse(status="success", message="categories", data=data)
+    await cached(cache_key, full_response, ttl=86400)
     logger.info(
         f"all categories fetched successfully page={page}, limit={limit}, total={total}"
     )
-    return StandardResponse(status="success", message="categories", data=data)
+    return full_response
 
 
-async def delete_category(category_id, db, payload):
-    user_id = payload.get("user_id")
+async def delete_category(category_id, request, db):
+    user_id = unique_id(request)
+    role = user_role(request)
     if not user_id:
         logger.warning(
             "Unauthorized delete attempt: missing user_id, category_id=%s", category_id
         )
         raise HTTPException(status_code=403, detail="Unauthorized access.")
-    stmt = select(User).where(User.id == user_id, User.role.in_(["Admin", "Owner"]))
-    admin = (await db.execute(stmt)).scalar_one_or_none()
-    if not admin:
+    if role not in ("Admin", "Owner"):
         logger.warning(
             f"{user_id}, tried deleting a category without admin powers, category id: {category_id}"
         )
@@ -129,6 +136,6 @@ async def delete_category(category_id, db, payload):
         data={
             "id": category_id,
             "user_id": user_id,
-            "deleted": "Yes",
+            "deleted": True,
         },
     )
