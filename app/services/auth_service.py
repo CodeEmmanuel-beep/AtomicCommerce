@@ -241,6 +241,8 @@ async def logins(login, response, db):
             user.is_active = True
             user.ban_unit = None
             user.ban_period = 0
+            user.ban_reason = None
+            user.ban_date = None
             need_redis_uncache = True
             has_changed = True
     token_expires = timedelta(minutes=settings.ACCESS_TOKEN_MINUTES)
