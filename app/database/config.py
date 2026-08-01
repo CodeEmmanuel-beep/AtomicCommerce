@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str
     DOMAIN_NAME: str
     BUCKET: str
+    REFRESH_KEY: str
     BUCKET1: str
     Standard: str
     Premium: str
