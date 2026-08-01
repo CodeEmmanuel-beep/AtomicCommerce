@@ -63,8 +63,8 @@ class User(Base):
     ban_unit: Mapped[BanUnit] = mapped_column(
         SQLEnum(BanUnit), default=None, nullable=True
     )
-    ban_reaon: Mapped[str] = mapped_column(String, nullable=True)
-    ban_count: Mapped[int] = mapped_column(Integer, nullable=True)
+    ban_reason: Mapped[str] = mapped_column(String, nullable=True)
+    ban_count: Mapped[int] = mapped_column(Integer, default=0)
     role: Mapped[str] = mapped_column(String, default="user", index=True)
     email: Mapped[str] = mapped_column(String, index=True)
     nationality: Mapped[str] = mapped_column(String)
@@ -72,6 +72,39 @@ class User(Base):
     phone_number: Mapped[str] = mapped_column(String, nullable=True)
     address: Mapped[str] = mapped_column(String, nullable=True)
 
+    __table_args__ = (
+        CheckConstraint(
+            """
+        (
+            -- State 1: Temp Ban -> MUST have reason, date, period, unit
+            is_banned = TRUE 
+            AND indefinite_ban = FALSE 
+            AND ban_reason IS NOT NULL 
+            AND ban_date IS NOT NULL
+            AND ban_period != 0 
+            AND ban_unit IS NOT NULL 
+        ) 
+        OR 
+        (
+            -- State 2: Indefinite Ban -> MUST have reason & date, MUST NOT have period/unit
+            is_banned = TRUE 
+            AND indefinite_ban = TRUE 
+            AND ban_reason IS NOT NULL 
+            AND ban_date IS NOT NULL 
+            AND ban_period = 0
+            AND ban_unit IS NULL
+        ) 
+        OR 
+        (
+            -- State 3: Unbanned -> MUST NOT have lingering ban_unit
+            is_banned = FALSE 
+            AND indefinite_ban = FALSE  
+            AND ban_unit IS NULL
+        )
+        """,
+            name="ck_user_ban_state_integrity_v2",
+        ),
+    )
     payments = relationship("Payment", back_populates="user")
     membership = relationship("Membership", back_populates="user")
     reviews = relationship("Review", back_populates="user")
