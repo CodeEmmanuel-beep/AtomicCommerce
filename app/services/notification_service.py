@@ -11,13 +11,14 @@ from app.api.v1.schemas import (
     PaginatedResponse,
 )
 from app.utils.redis import cache, cached, notification_invalidation
+from app.utils.helper import unique_id
 from sqlalchemy import select, func, update
 
 logger = get_logger("notifications")
 
 
-async def notification_stream(payload):
-    user_id = payload.get("user_id")
+async def notification_stream(request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at notice endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
@@ -31,9 +32,9 @@ async def notification_stream(payload):
 
 async def retrieve_notifications(
     db,
-    payload,
+    request,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at get_notifications endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
@@ -71,11 +72,18 @@ async def retrieve_notifications(
         data.store_name = (
             notify.store.store_name if notify.store.id == notify.store_id else None
         )
-        data.notification = (
-            f"{notify.notification} by {sender.first_name} {sender.surname}"
-            if sender.is_active
-            else f"{notify.notification}" "deleted user"
-        )
+        if notify.notification.startswith("replied"):
+            data.notification = (
+                f"{sender.first_name} {sender.surname} {notify.notification}"
+                if sender.is_active
+                else f"{notify.notification} by deleted user"
+            )
+        else:
+            data.notification = (
+                f"{notify.notification} by {sender.first_name} {sender.surname}"
+                if sender.is_active
+                else f"{notify.notification} by deleted user"
+            )
         items.append(data)
     await db.execute(
         update(Notification)
@@ -89,13 +97,8 @@ async def retrieve_notifications(
     return full_data
 
 
-async def notifications_list(
-    page,
-    limit,
-    db,
-    payload,
-):
-    user_id = payload.get("user_id")
+async def notifications_list(page, limit, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at get_notifications endpoint")
         raise HTTPException(status_code=401, detail="unauthorized access")
@@ -143,11 +146,18 @@ async def notifications_list(
         data.store_name = (
             notify.store.store_name if notify.store.id == notify.store_id else None
         )
-        data.notification = (
-            f"{notify.notification} by {sender.first_name} {sender.surname}"
-            if sender.is_active
-            else f"{notify.notification}" "deleted user"
-        )
+        if notify.notification.startswith("replied"):
+            data.notification = (
+                f"{sender.first_name} {sender.surname} {notify.notification}"
+                if sender.is_active
+                else f"{notify.notification} by deleted user"
+            )
+        else:
+            data.notification = (
+                f"{notify.notification} by {sender.first_name} {sender.surname}"
+                if sender.is_active
+                else f"{notify.notification} by deleted user"
+            )
         items.append(data)
     await db.execute(
         update(Notification)
