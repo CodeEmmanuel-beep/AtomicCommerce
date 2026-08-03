@@ -1,4 +1,4 @@
-from app.models import SubCategory, User, Category
+from app.models import SubCategory, Category
 from app.logs.logger import get_logger
 from fastapi import HTTPException
 from sqlalchemy import select, func, and_
