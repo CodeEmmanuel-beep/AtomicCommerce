@@ -119,6 +119,7 @@ PUBLIC_PREFIX_PATHS = (
     "/openapi.json",
 )
 PUBLIC_EXACT_PATHS = (
+    "/payment/webhook",
     "/healthcheck",
     "/",
 )
