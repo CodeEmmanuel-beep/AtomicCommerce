@@ -81,6 +81,7 @@ async def reg(
             first_name=registration.first_name.strip(),
             surname=registration.surname.strip(),
             role="user",
+            date_of_birth=registration.date_of_birth,
             username=registration.username.strip().lower(),
             email=registration.email.strip(),
             nationality=registration.nationality.strip(),
