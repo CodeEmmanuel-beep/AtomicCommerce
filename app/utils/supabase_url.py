@@ -1,16 +1,16 @@
 from fastapi import Request
 from app.logs.logger import get_logger
 from app.database.config import settings
-from typing import List
+from supabase import AsyncClient
 
 logger = get_logger("supabase_urls")
 
 
-def _supabase(request: Request):
+def _supabase(request: Request) -> AsyncClient:
     return request.app.state.supabase
 
 
-async def create_signed_urls(file: List[str], expires, context, get_supabase):
+async def create_signed_urls(file: list[str], expires, context, get_supabase):
     if not file:
         return None
     try:
