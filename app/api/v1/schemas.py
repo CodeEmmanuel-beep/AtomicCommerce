@@ -7,9 +7,8 @@ from pydantic import (
     field_validator,
     ValidationInfo,
 )
-from fastapi import Form
-from typing import Optional, List, TypeVar, Generic, Any
-from datetime import datetime
+from typing import TypeVar, Generic, Any
+from datetime import datetime, date
 from app.utils.supabase_url import get_public_url
 from decimal import Decimal
 from enum import Enum
@@ -22,6 +21,79 @@ class LoginResponse(BaseModel):
     password: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class QueryEnum(str, Enum):
+    Yes = "Yes"
+    No = "No"
+
+
+class AddSwapEnum(str, Enum):
+    add = "add"
+    swap = "swap"
+
+
+class UserState(str, Enum):
+    is_banned = "is_banned"
+    not_active = "not_active"
+    new_users = "new_users"
+
+
+class StoreFilterEnum(str, Enum):
+    category = "category"
+    sub_category = "sub_category"
+    store_name = "store_name"
+    product_name = "product_name"
+
+
+class OwnerStaff(str, Enum):
+    owner = "owner"
+    staff = "staff"
+
+
+class RankingEnum(str, Enum):
+    top_product = "top_product"
+    least_product = "least_product"
+
+
+class ProductStatisticsEnum(str, Enum):
+    product_ratings = "product_ratings"
+    product_sales = "product_sales"
+
+
+class StockRangeEnum(str, Enum):
+    thirty_below = "thirty_below"
+    five_below = "five_below"
+    twenty_below = "twenty_below"
+    fifty_below = "fifty_below"
+    out_of_stock = "out_of_stock"
+    above_fifty = "above_fifty"
+    ten_below = "ten_below"
+
+
+class SupportCustomerEnum(str, Enum):
+    customer_view = "customer_view"
+    support_view = "support_view"
+
+
+class ProductFilterEnum(str, Enum):
+    cheap = "cheap"
+    latest = "latest"
+    quality = "quality"
+
+
+class TimeFrameEnum(str, Enum):
+    one_week = "1 week"
+    one_month = "1 month"
+    three_months = "3 months"
+    six_months = "6 months"
+    one_year = "1 year"
+    total = "total"
+
+
+class SubscriptionTypeEnum(str, Enum):
+    one_time = "one_time"
+    subscription = "subscription"
 
 
 class PersonnelResponse(BaseModel):
@@ -67,10 +139,39 @@ class UserResponse(BaseModel):
     surname: str
     username: str
     role: str = Field(default="user")
+    age: int = Field(default_factory=int)
+    date_of_birth: date
     phone_number: str | None = None
     email: str
     nationality: str
     address: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SuperUserResponse(BaseModel):
+    id: int
+    is_active: bool
+    profile_picture: str | None = None
+    first_name: str
+    middle_name: str | None = None
+    surname: str
+    username: str
+    role: str = Field(default="user")
+    age: int = Field(default_factory=int)
+    date_of_birth: date
+    phone_number: str | None = None
+    email: str
+    nationality: str
+    address: str | None = None
+    deactivation_time: datetime | None = None
+    is_banned: bool
+    indefinite_ban: bool | None = None
+    ban_count: int
+    ban_date: datetime | None = None
+    ban_reason: str | None
+    ban_period: int
+    ban_unit: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -178,27 +279,39 @@ class PaginatedResponse(BaseModel):
     total: int
 
 
+class MemberStatus(str, Enum):
+    active_members = "active_members"
+    inactive_members = "inactive_members"
+    deleted_members = "deleted_members"
+
+
+class CursorPaginatedResponse(BaseModel):
+    next_cursor: int | None = None
+    limit: int
+    has_more: bool
+
+
 class PaginatedMetadata(BaseModel, Generic[T]):
-    items: List[T]
-    pagination: PaginatedResponse
+    items: list[T]
+    pagination: PaginatedResponse | None = None
+    cursor_pagination: CursorPaginatedResponse | None = None
 
 
 class StandardResponse(BaseModel, Generic[T]):
     status: str
     message: str
-    data: Optional[T]
+    data: T | None = None
 
 
 class ReplyResponse(BaseModel):
     id: int
-    role: List[str] = Field(default_factory=list)
     edited: bool = Field(default=False)
     user: ProfileResponse
     reply_text: str
     store_reply_reaction_count: int = Field(default=0)
     product_reply_reaction_count: int = Field(default=0)
     reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
-    time_of_post: Optional[datetime]
+    time_of_post: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -214,18 +327,18 @@ class Reply(BaseModel):
 class Chat(BaseModel):
     id: int
     ticket_id: int
-    ticket_status: Optional[str] = Field(default_factory=str)
-    unread_count: Optional[int] = Field(default_factory=int)
-    customer_photo: Optional[str] = Field(default_factory=str)
-    customer: Optional[str] = Field(default_factory=str)
-    store_photo: Optional[str] = Field(default_factory=str)
-    customer_support: Optional[str] = Field(default_factory=str)
-    sender: Optional[str] = Field(default_factory=str)
+    ticket_status: str = Field(default_factory=str)
+    unread_count: int = Field(default_factory=int)
+    customer_photo: str = Field(default_factory=str)
+    customer: str = Field(default_factory=str)
+    store_photo: str = Field(default_factory=str)
+    customer_support: str = Field(default_factory=str)
+    sender: str = Field(default_factory=str)
     photo: str | None = None
     message: str | None = None
     delivered: bool = Field(default=False)
     seen: bool = Field(default=False)
-    time_of_chat: Optional[datetime]
+    time_of_chat: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -312,7 +425,7 @@ class ProductRes(BaseModel):
     primary_image: str
     product_price: Decimal
     product_availability: str
-    avg_rating: Decimal = Field(default=Decimal(str("0.00")))
+    avg_rating: Decimal = Field(default=Decimal("0.00"))
     inventory: InventoryObj
 
     @field_validator("primary_image", mode="before")
@@ -329,12 +442,12 @@ class ProductResponse(BaseModel):
     primary_image: str
     product_type: str
     product_price: Decimal
-    avg_rating: Decimal = Field(default=Decimal(str("0.00")))
+    avg_rating: Decimal = Field(default=Decimal("0.00"))
     review_count: int = Field(default=0)
     product_size: str
     product_description: str
     product_availability: str
-    inventory: InventoryObj
+    inventory: InventoryObj | None = None
 
     @field_validator("primary_image", mode="before")
     @classmethod
@@ -350,11 +463,11 @@ class PersonalStoreResponse(BaseModel):
     store_photo: str | None = None
     store_name: str
     category_name: str
-    sub_category: List[str]
+    sub_category: list[str]
     store_previous_name: str | None = None
     store_contact: str | None = None
     store_email: str | None = None
-    avg_rating: Decimal = Field(default=Decimal(0))
+    avg_rating: Decimal = Field(default=Decimal("0.00"))
     review_count: int = Field(default=0)
     motto: str | None = None
     tax_rate: float = Field(default=0)
@@ -372,12 +485,12 @@ class StoreResponse(BaseModel):
     store_photo: str
     store_name: str
     category_name: str
-    sub_category: List[str]
+    sub_category: list[str]
     store_previous_name: str | None = None
     review_count: int = Field(default=0)
-    avg_rating: Decimal = Field(default=Decimal(str(("0.00"))))
+    avg_rating: Decimal = Field(default=Decimal("0.00"))
     motto: str | None = None
-    featured_product: List[ProductRes] | ProductRes = Field(default_factory=list)
+    featured_product: list[ProductRes] | ProductRes = Field(default_factory=list)
     shipping_fee: Decimal
     store_description: str | None = None
     founded: datetime | None = None
@@ -395,24 +508,25 @@ class ReactResponse(BaseModel):
 
 
 class ProfileMode(BaseModel):
-    first_name: str = Form(None)
-    middle_name: str = Form(None)
-    surname: str = Form(None)
-    email: str = Form(None)
-    nationality: str = Form(None)
-    phone_number: str = Form(None)
-    address: str = Form(None)
+    first_name: str | None = None
+    middle_name: str | None = None
+    surname: str | None = None
+    email: str | None = None
+    nationality: str | None = None
+    phone_number: str | None = None
+    address: str | None = None
 
 
 class RegistrationModel(BaseModel):
-    first_name: str = Form(...)
-    surname: str = Form(...)
-    username: str = Form(...)
-    email: str = Form(...)
-    nationality: str = Form(...)
-    address: str = Form(None)
-    password: str = Form(...)
-    confirm_password: str = Form(...)
+    first_name: str
+    surname: str
+    username: str
+    email: str
+    date_of_birth: date
+    nationality: str
+    address: str | None = None
+    password: str
+    confirm_password: str
 
 
 class PaymentResponse(BaseModel):
@@ -426,10 +540,10 @@ class PaymentResponse(BaseModel):
     tax_amount: Decimal
     discount_amount: Decimal
     total_amount: Decimal
-    total_refund: Optional[Decimal] = Field(default_factory=Decimal)
+    total_refund: Decimal | None = Field(default_factory=Decimal)
     reference_id: str
     transaction_id: str | None = None
-    payment_date: Optional[datetime]
+    payment_date: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -458,7 +572,7 @@ class ProductReviewResponse(BaseModel):
     product_reply_count: int = Field(default=0)
     product_review_reaction_count: int = Field(default=0)
     reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
-    time_of_post: Optional[datetime]
+    time_of_post: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -510,10 +624,10 @@ class CartItemReponse(BaseModel):
 
 class CartResponse(BaseModel, Generic[T]):
     id: int
-    items: List[CartItemReponse] = Field(default_factory=list)
+    items: list[CartItemReponse] = Field(default_factory=list)
     total_quantity: float
     check_out: bool = Field(default=False)
-    created_at: Optional[datetime]
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -533,7 +647,6 @@ class MemRes(BaseModel):
 
 class OrderItemRes(BaseModel):
     product: Cart_OrderProductResponse
-    membership_type: List[MemRes] = Field(default_factory=list)
     quantity: float
     price: Decimal
 
@@ -543,7 +656,7 @@ class OrderItemRes(BaseModel):
 class OrderResponse(BaseModel):
     user: ProfileResponse
     id: int
-    membership_type: List[MemRes] = Field(default_factory=list)
+    membership: MemRes | None = None
     tax_rate: float
     tax_amount: Decimal
     shipping_fee: Decimal
@@ -553,7 +666,7 @@ class OrderResponse(BaseModel):
     total_amount: Decimal
     status: str
     delivery_address: list | None = None
-    created_at: Optional[datetime]
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -579,8 +692,8 @@ class MembershipRes(BaseModel):
     user: ProfileResponse
     membership_type: str
     start_date: datetime
-    pause_date: Optional[datetime] = None
-    reativation_data: Optional[datetime] = None
-    delete_date: Optional[datetime] = None
+    pause_date: datetime | None = None
+    reativation_data: datetime | None = None
+    delete_date: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
