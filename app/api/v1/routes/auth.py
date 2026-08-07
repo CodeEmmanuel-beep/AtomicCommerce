@@ -1,21 +1,23 @@
-from app.api.v1.schemas import LoginResponse, StandardResponse
+from app.api.v1.schemas import LoginResponse, StandardResponse, RegistrationModel
 from fastapi import APIRouter, Depends, Response, Request, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.api.v1.schemas import RegistrationModel
-from app.database.get import async_db
+from app.models import RoleEnum
+from typing import Annotated
+from app.database.get import get_db
 from app.services import auth_service
+from supabase import AsyncClient
 from app.utils.supabase_url import _supabase
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-s_base = Depends(_supabase)
-picture = File(...)
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
+SupabaseDep = Annotated[AsyncClient, Depends(_supabase)]
 
 
 @router.post(
     "/register", response_model=StandardResponse, response_model_exclude_none=True
 )
-async def registration(registration: RegistrationModel, db: AsyncSession = async_db):
+async def registration(registration: RegistrationModel, db: DatabaseDep):
     return await auth_service.reg(
         registration=registration,
         db=db,
@@ -29,9 +31,9 @@ async def registration(registration: RegistrationModel, db: AsyncSession = async
 )
 async def upload(
     request: Request,
-    profile_picture: UploadFile = picture,
-    db: AsyncSession = async_db,
-    get_supabase=s_base,
+    db: DatabaseDep,
+    get_supabase: SupabaseDep,
+    profile_picture: UploadFile = File(...),
 ):
     return await auth_service.upload_profile_picture(
         request=request,
@@ -44,7 +46,7 @@ async def upload(
 @router.post(
     "/login", response_model=StandardResponse, response_model_exclude_none=True
 )
-async def logins(login: LoginResponse, response: Response, db: AsyncSession = async_db):
+async def logins(login: LoginResponse, response: Response, db: DatabaseDep):
     return await auth_service.logins(login=login, response=response, db=db)
 
 
@@ -54,11 +56,11 @@ async def logins(login: LoginResponse, response: Response, db: AsyncSession = as
 async def create_roles(
     id_number: int,
     request: Request,
-    assigned_role: str = Query("user", enum=["Admin", "customer_care", "user"]),
-    db: AsyncSession = async_db,
+    db: DatabaseDep,
+    assigned_role: RoleEnum = Query(RoleEnum.user),
 ):
     return await auth_service.create_role(
-        id_number=id_number, request=request, assigned_role=assigned_role, db=db
+        id_number=id_number, request=request, assigned_role=assigned_role.value, db=db
     )
 
 
