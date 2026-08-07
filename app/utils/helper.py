@@ -116,12 +116,19 @@ async def upload_photo_helper(photo, request, get_supabase, bucket: str | None =
                 buffer.write(chunk)
             file_byte = buffer.getvalue()
             storage_bucket = bucket if bucket else settings.BUCKET
+            logger.info(
+                "user: %s, uploading photo: %s to bucket: %s",
+                user_id,
+                filename,
+                storage_bucket,
+            )
             upload_photo = await get_supabase.storage.from_(storage_bucket).upload(
                 filename, file_byte, {"content-type": photo.content_type}
             )
             if hasattr(upload_photo, "error"):
                 logger.error("error uploading photo %s", upload_photo)
                 raise HTTPException(status_code=500, detail="error uploading photo")
+            logger.info("user: %s, successfully uploaded photo: %s", user_id, filename)
             return filename
         except HTTPException:
             if filename:
@@ -133,6 +140,7 @@ async def upload_photo_helper(photo, request, get_supabase, bucket: str | None =
                 )
             raise
         except Exception:
+            logger.exception("error saving photo")
             if filename:
                 await cleaned_up(
                     get_supabase,
