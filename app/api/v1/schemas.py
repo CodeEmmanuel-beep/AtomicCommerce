@@ -426,7 +426,7 @@ class ProductRes(BaseModel):
     product_price: Decimal
     product_availability: str
     avg_rating: Decimal = Field(default=Decimal("0.00"))
-    inventory: InventoryObj
+    inventory: InventoryObj | None = None
 
     @field_validator("primary_image", mode="before")
     @classmethod
