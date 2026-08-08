@@ -169,7 +169,7 @@ class SuperUserResponse(BaseModel):
     indefinite_ban: bool | None = None
     ban_count: int
     ban_date: datetime | None = None
-    ban_reason: str | None
+    ban_reason: str | None = None
     ban_period: int
     ban_unit: str | None = None
 
