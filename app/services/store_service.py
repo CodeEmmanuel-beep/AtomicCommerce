@@ -37,7 +37,7 @@ from sqlalchemy import (
     delete,
 )
 from sqlalchemy.exc import IntegrityError
-from app.utils.helper import upload_photo_helper
+from app.utils.helper import upload_photo_helper, unique_id, user_role
 from app.utils.supabase_url import cleaned_up, get_public_url
 from app.utils.redis import (
     store_invalidation,
@@ -71,10 +71,10 @@ async def store_creation(
     store_contact,
     store_photo,
     db,
-    payload,
+    request,
     get_supabase,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at store_creation endpoint")
         raise HTTPException(
@@ -95,6 +95,7 @@ async def store_creation(
                     normalized.append(int(item))
             owners = normalized
     except ValueError:
+        logger.error("failed to nornalise owners: %s", owners)
         raise HTTPException(
             status_code=400, detail="owners must be a comma-separated list of numbers"
         )
@@ -105,11 +106,12 @@ async def store_creation(
             normalized = []
             for item in sub_category:
                 if isinstance(item, str):
-                    normalized.extend(i.strip() for i in item.split(","))
+                    normalized.extend(str(i.strip()) for i in item.split(","))
                 else:
                     normalized.append(str(item).strip())
             sub_category = normalized
     except ValueError:
+        logger.error("failed to nornalise sub_category: %s", sub_category)
         raise HTTPException(status_code=400, detail="error parsing sub_category field")
     if store_email is not None:
         try:
@@ -176,19 +178,19 @@ async def store_creation(
         raise HTTPException(
             status_code=400, detail="all owners must be registered users"
         )
-    filename = await upload_photo_helper(store_photo, payload, get_supabase)
-    new_store = Store(
-        store_photo=store_photo,
-        store_name=store_name,
-        slug=store_slug,
-        category_name=category,
-        sub_category=sub_category,
-        category_id=category_id,
-        store_email=store_email,
-        store_contact=store_contact,
-        user_owners=owner,
-    )
     try:
+        filename = await upload_photo_helper(store_photo, request, get_supabase)
+        new_store = Store(
+            store_photo=filename,
+            store_name=store_name,
+            slug=store_slug,
+            category_name=category,
+            sub_category=sub_category,
+            category_id=category_id,
+            store_email=store_email,
+            store_contact=store_contact,
+            user_owners=owner,
+        )
         db.add(new_store)
         await db.commit()
     except HTTPException:
@@ -240,30 +242,17 @@ async def store_update(
     description,
     tax_rate,
     db,
-    payload,
+    request,
     get_supabase,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at store_update endpoint")
         raise HTTPException(
             status_code=401, detail="only registered users can own a store"
         )
-    if update_type not in ("add", "replace"):
-        logger.warning(
-            "user: %s, tried an invalid update type at store update endpoint, update_type: %s",
-            user_id,
-            update_type,
-        )
-        raise HTTPException(
-            status_code=400,
-            detail="invalid update type, only 'add' and 'replace' are allowed",
-        )
-    if store_name:
-        if not store_name_pattern.fullmatch(store_name):
-            raise HTTPException(
-                status_code=400, detail="store names should be in letters"
-            )
+    if store_name and not store_name_pattern.fullmatch(store_name):
+        raise HTTPException(status_code=400, detail="store names should be in letters")
     if store_email is not None:
         try:
             validate_email(store_email)
@@ -276,11 +265,11 @@ async def store_update(
     has_changed = False
     try:
         if store_photo:
-            filename = await upload_photo_helper(store_photo, payload, get_supabase)
+            filename = await upload_photo_helper(store_photo, request, get_supabase)
             filename_link.append(filename)
             has_changed = True
         if business_logo:
-            file = await upload_photo_helper(business_logo, payload, get_supabase)
+            file = await upload_photo_helper(business_logo, request, get_supabase)
             filename_link.append(file)
             has_changed = True
         stmt = (
@@ -437,11 +426,13 @@ async def store_update(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-async def approve_stores(slug, db, payload):
-    user_id = payload.get("user_id")
-    owner = payload.get("role")
+async def approve_stores(slug, db, request):
+    user_id = unique_id(request)
+    owner = user_role(request)
     if not user_id or owner != "Owner":
-        logger.warning("unauthorized attempt at approve_stores endpoint")
+        logger.warning(
+            "unauthorized attempt at approve_stores endpoint by user %s", user_id
+        )
         raise HTTPException(status_code=401, detail="restricted access")
     approved = (
         await db.execute(
@@ -471,8 +462,8 @@ async def approve_stores(slug, db, payload):
     return StandardResponse(status="success", message="store approved", data=None)
 
 
-async def view_store(position, db, payload):
-    user_id = payload.get("user_id")
+async def view_store(position, db, request):
+    user_id = unique_id(request)
     cache_key = f"store_view:{user_id}:{position}"
     store_cache = await cache(cache_key)
     if store_cache:
@@ -495,6 +486,7 @@ async def view_store(position, db, payload):
         .outerjoin(store_owners, Store.id == store_owners.c.stores_id)
         .outerjoin(store_staffs, Store.id == store_staffs.c.stores_id)
         .where(query, Store.is_deleted.is_(False))
+        .distinct()
     )
     store_type = (await db.execute(stmt)).scalars().all()
     if not store_type:
@@ -525,14 +517,6 @@ async def view_store(position, db, payload):
 
 
 async def search_stores(search, search_value, seed, page, limit, db):
-    if search not in ["category", "sub_category", "store_name", "product_name"]:
-        logger.warning(
-            "invalid field in search attempted at the search stores endpoint"
-        )
-        raise HTTPException(
-            status_code=400,
-            detail="invalid search, only 'category','sub_category','store_name' and 'product_name' are allowed",
-        )
     offset = (page - 1) * limit
     version = await cache_version("store_key")
     cache_key = (
@@ -542,64 +526,62 @@ async def search_stores(search, search_value, seed, page, limit, db):
     if store_cache:
         logger.info(f"cache hit for {search_value} at search stores endpoint")
         return StandardResponse(**store_cache)
-    total = None
-    async with db as conn:
-        inner_stmt = (
-            select(Product)
-            .where(
-                Product.store_id == Store.id,
-                Product.product_name.ilike(f"%{search_value}%"),
-                Product.is_deleted.is_(False),
-            )
-            .order_by(Product.id.desc())
-            .limit(1)
-            .correlate(Store)
-            .lateral("product")
+    inner_stmt = (
+        select(Product)
+        .where(
+            Product.store_id == Store.id,
+            Product.product_name.ilike(f"%{search_value}%"),
+            Product.is_deleted.is_(False),
         )
-        product_aliase = aliased(Product, inner_stmt, name="product_aliase")
-        filter_column = {
-            "category": Store.category_name.ilike(f"%{search_value}%"),
-            "sub_category": cast(Store.sub_category, String).ilike(f"%{search_value}%"),
-            "store_name": Store.store_name.ilike(f"%{search_value}%"),
-            "product_name": product_aliase.product_name.ilike(f"%{search_value}%"),
-        }[search]
-        stmt = (
-            select(Store, product_aliase)
-            .outerjoin(product_aliase, Store.id == product_aliase.store_id)
-            .options(selectinload(product_aliase.inventory))
-            .where(
+        .order_by(Product.id.desc())
+        .limit(1)
+        .correlate(Store)
+        .lateral("product")
+    )
+    product_aliase = aliased(Product, inner_stmt, name="product_aliase")
+    filter_column = {
+        "category": Store.category_name.ilike(f"%{search_value}%"),
+        "sub_category": cast(Store.sub_category, String).ilike(f"%{search_value}%"),
+        "store_name": Store.store_name.ilike(f"%{search_value}%"),
+        "product_name": product_aliase.product_name.ilike(f"%{search_value}%"),
+    }[search]
+    stmt = (
+        select(Store, product_aliase)
+        .outerjoin(product_aliase, Store.id == product_aliase.store_id)
+        .options(selectinload(product_aliase.inventory))
+        .where(
+            filter_column,
+            Store.approved.is_(True),
+            Store.is_deleted.is_(False),
+        )
+        .order_by(func.md5(func.concat(cast(Store.id, String), str(seed))))
+    )
+    rows = (await db.execute(stmt.offset(offset).limit(limit))).all()
+    if not rows:
+        logger.info(
+            "search for '%s' stores returned an empty list",
+            search_value,
+        )
+        return StandardResponse(
+            status="success",
+            message="no store available under this search",
+            data=None,
+        )
+    count_stmt = select(func.count(func.distinct(Store.id)))
+    if search == "product_name":
+        count_stmt = count_stmt.outerjoin(
+            product_aliase, Store.id == product_aliase.store_id
+        )
+    total = (
+        await db.execute(
+            count_stmt.where(
                 filter_column,
                 Store.approved.is_(True),
                 Store.is_deleted.is_(False),
             )
-            .order_by(func.md5(func.concat(cast(Store.id, String), str(seed))))
         )
-        rows = (await conn.execute(stmt.offset(offset).limit(limit))).all()
-        if not rows:
-            logger.info(
-                "search for '%s' stores returned an empty list",
-                search_value,
-            )
-            return StandardResponse(
-                status="success",
-                message="no store available under this search",
-                data=None,
-            )
-        count_stmt = select(func.count(Store.id))
-        if search == "product_name":
-            count_stmt = count_stmt.outerjoin(
-                product_aliase, Store.id == product_aliase.store_id
-            )
-        total = (
-            await conn.execute(
-                count_stmt.where(
-                    filter_column,
-                    Store.approved.is_(True),
-                    Store.is_deleted.is_(False),
-                )
-            )
-        ).scalar() or 0
-        logger.info("total stores found is '%s'", total)
+    ).scalar() or 0
+    logger.info("total stores found is '%s'", total)
     items = []
     for s_type, prod in rows:
         data = StoreResponse.model_validate(s_type)
@@ -626,8 +608,8 @@ async def search_stores(search, search_value, seed, page, limit, db):
     return response
 
 
-async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
-    user_id = payload.get("user_id")
+async def add_owner_staff(store_id, owner_id, staff_id, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at add_owners_staffs endpoint")
         raise HTTPException(
@@ -755,7 +737,11 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
         logger.warning("staff: %s, already works in 2 stores")
         raise HTTPException(status_code=400, detail="staff already works in 2 store")
     intended_id = owner_id if owner_id else staff_id
-    user_obj = await db.get(User, intended_id)
+    user_obj = (
+        await db.execute(
+            select(User).where(User.id == intended_id, User.is_active.is_(True))
+        )
+    ).scalar_one_or_none()
     if not user_obj:
         logger.error(
             "user: %s, inputed an invalid user_id in add_owners_staffs endpoint invalid_id: %s",
@@ -787,20 +773,13 @@ async def add_owner_staff(store_id, owner_id, staff_id, db, payload):
     return StandardResponse(status="success", message="personnel added", data=None)
 
 
-async def view_store_owners_staffs(store_id, view, page, limit, db, payload):
-    user_id = payload.get("user_id")
+async def view_store_owners_staffs(store_id, view, page, limit, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at view_store_owners_staffs endpoint")
         raise HTTPException(
             status_code=401, detail="only registered users can access this endpoint"
         )
-    if view not in ["owners", "staffs"]:
-        logger.warning(
-            "user: %s, tried inputing an invalid view type at the view_store_owners_staffs endpoint, view: %s",
-            user_id,
-            view,
-        )
-        raise HTTPException(status_code=400, detail="invalid view type")
     offset = (page - 1) * limit
     cache_key = f"store_personnel_view:{user_id}:{store_id}:{view}:{page}:{limit}"
     personnel_cache = await cache(cache_key)
@@ -823,7 +802,7 @@ async def view_store_owners_staffs(store_id, view, page, limit, db, payload):
             user_id,
         )
         raise HTTPException(status_code=403, detail="restricted access")
-    if view == "owners" and not owner:
+    if view == "owner" and not owner:
         logger.warning(
             "user: %s, tried viewing owners of a store they do not own, store_id: %s",
             user_id,
@@ -832,15 +811,15 @@ async def view_store_owners_staffs(store_id, view, page, limit, db, payload):
         raise HTTPException(status_code=403, detail="restricted access")
     base_filter = (
         store_owners.c.stores_id == store_id
-        if view == "owners"
+        if view == "owner"
         else store_staffs.c.stores_id == store_id
     )
     stmt = select(User)
-    if view == "owners":
+    if view == "owner":
         stmt = stmt.join(store_owners, User.id == store_owners.c.users_id)
     else:
         stmt = stmt.join(store_staffs, User.id == store_staffs.c.users_id)
-    stmt = stmt.where(User.is_active, base_filter)
+    stmt = stmt.where(User.is_active.is_(True), base_filter)
     result = await db.execute(stmt.order_by(User.id.desc()).offset(offset).limit(limit))
     personnel = result.scalars().all()
     if not personnel:
@@ -856,7 +835,7 @@ async def view_store_owners_staffs(store_id, view, page, limit, db, payload):
         items=[PersonnelResponse.model_validate(p) for p in personnel],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
-    message = "owners board" if view == "owners" else "staff board"
+    message = "owners board" if view == "owner" else "staff board"
     full_response = StandardResponse(status="success", message=message, data=data)
     await cached(cache_key, full_response, ttl=300)
     logger.info(
@@ -866,8 +845,8 @@ async def view_store_owners_staffs(store_id, view, page, limit, db, payload):
     return full_response
 
 
-async def remove_staff(store_id, staff_id, db, payload):
-    user_id = payload.get("user_id")
+async def remove_staff(store_id, staff_id, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at delete_staff endpoint")
         raise HTTPException(
@@ -931,15 +910,15 @@ async def remove_staff(store_id, staff_id, db, payload):
     return StandardResponse(status="success", message="personnel deleted", data=None)
 
 
-async def remove_store(store_id, db, payload, get_supabase):
-    user_id = payload.get("user_id")
-    role = payload.get("role")
+async def remove_store(store_id, db, request, get_supabase):
+    user_id = unique_id(request)
+    role = user_role(request)
     if not user_id:
         logger.warning("unauthorized attempt at delete_store endpoint")
         raise HTTPException(
             status_code=401, detail="only registered users can access this endpoint"
         )
-    allowed_roles = ["Owner", "Admin"]
+    allowed_roles = ("Owner", "Admin")
     store_check = (
         await db.execute(
             select(Store)
