@@ -29,7 +29,7 @@ async def create_a_sub_category(
 async def sub_category_list(
     category_id: int | None = None,
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
+    limit: int = Query(10, ge=1, le=100),
     db: AsyncSession = async_db,
 ):
     return await sub_category_service.retrieve(
