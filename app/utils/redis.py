@@ -20,13 +20,15 @@ else:
     redis_client = aioredis.from_url(redis_url, decode_responses=True)
 
 
-async def cache_version(key: str):
+async def cache_version(key: str, ttl: int = 18000) -> int:
     value = await redis_client.get(key)
     if value is None:
+        await redis_client.set(key, 1, ex=ttl, nx=True)
         return 1
     try:
         return int(value)
     except (ValueError, TypeError):
+        await redis_client.set(key, 1, ex=ttl)
         return 1
 
 
@@ -80,6 +82,13 @@ async def store_invalidation_global():
     return value
 
 
+async def profile_global_invalidation():
+    version = "profile_keys"
+    value = await redis_client.incr(version)
+    await redis_client.expire(version, 18000)
+    return value
+
+
 async def store_invalidation(user_id: int):
     cursor = 0
     pattern = f"store_view:{user_id}:*"
@@ -87,7 +96,7 @@ async def store_invalidation(user_id: int):
     while True:
         cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
         if keys:
-            await redis_client.delete(*keys)
+            await redis_client.unlink(*keys)
             delete = True
         if cursor == 0 or cursor == b"0":
             break
@@ -101,7 +110,7 @@ async def order_invalidation(user_id: int):
     while True:
         cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
         if keys:
-            await redis_client.delete(*keys)
+            await redis_client.unlink(*keys)
             delete = True
         if cursor == 0 or cursor == b"0":
             break
@@ -115,7 +124,7 @@ async def notification_invalidation(user_id: Optional[int]):
     while True:
         cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
         if keys:
-            await redis_client.delete(*keys)
+            await redis_client.unlink(*keys)
             delete = True
         if cursor == 0 or cursor == b"0":
             break
@@ -135,7 +144,7 @@ async def cart_invalidation(user_id: int):
     while True:
         cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
         if keys:
-            await redis_client.delete(*keys)
+            await redis_client.unlink(*keys)
             delete = True
         if cursor == 0 or cursor == b"0":
             break
@@ -155,7 +164,7 @@ async def member_invalidation(user_id: int):
     while True:
         cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
         if keys:
-            await redis_client.delete(*keys)
+            await redis_client.unlink(*keys)
             delete = True
         if cursor == 0 or cursor == b"0":
             break
@@ -175,14 +184,28 @@ async def order_address_invalidation(user_id):
     while True:
         cursor, key = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
         if key:
-            redis_client.delete(*key)
+            redis_client.unlink(*key)
             delete = True
         if cursor == 0 or cursor == b"0":
             break
     return delete
 
 
-async def notifications_stream(user_id: Optional[int]):
+async def profile_invalidation(user_id: int):
+    cursor = 0
+    pattern = f"profile:{user_id}"
+    delete = False
+    while True:
+        cursor, key = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
+        if key:
+            await redis_client.unlink(*key)
+            delete = True
+        if cursor in (0, "0", b"0"):
+            break
+    return delete
+
+
+async def notifications_stream(user_id: int | None = None):
     pubsub = redis_client.pubsub()
     channel_name = f"notifications_{user_id}"
     await pubsub.subscribe(channel_name)
