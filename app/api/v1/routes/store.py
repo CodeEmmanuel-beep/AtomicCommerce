@@ -1,4 +1,4 @@
-from fastapi import UploadFile, File, APIRouter, Depends, Query, Form
+from fastapi import UploadFile, File, APIRouter, Depends, Query, Form, Request
 from app.services import store_service
 from app.api.v1.schemas import (
     StandardResponse,
@@ -6,15 +6,21 @@ from app.api.v1.schemas import (
     StoreResponse,
     PersonnelResponse,
     PersonalStoreResponse,
+    AddSwapEnum,
+    OwnerStaff,
+    StoreFilterEnum,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
+from supabase import AsyncClient
+from typing import Annotated
 from app.utils.supabase_url import _supabase
-from typing import List
 from decimal import Decimal
 
 router = APIRouter(prefix="/store", tags=["store"])
+
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
+SupabaseDep = Annotated[AsyncClient, Depends(_supabase)]
 
 
 @router.post(
@@ -23,16 +29,16 @@ router = APIRouter(prefix="/store", tags=["store"])
     response_model_exclude_none=True,
 )
 async def create_store(
+    request: Request,
+    db: DatabaseDep,
+    get_supabase: SupabaseDep,
     store_photo: UploadFile = File(...),
     store_name: str = Form(...),
     owners: str = Form(...),
     category: str = Form(...),
     sub_category: str = Form(...),
-    store_email: str = Form(None),
-    store_contact: str = Form(None),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-    get_supabase=Depends(_supabase),
+    store_email: str = Form(...),
+    store_contact: str | None = Form(None),
 ):
     return await store_service.store_creation(
         store_photo=store_photo,
@@ -43,7 +49,7 @@ async def create_store(
         store_email=store_email,
         store_contact=store_contact,
         db=db,
-        payload=payload,
+        request=request,
         get_supabase=get_supabase,
     )
 
@@ -54,25 +60,25 @@ async def create_store(
     response_model_exclude_none=True,
 )
 async def update_store(
+    request: Request,
+    db: DatabaseDep,
+    get_supabase: SupabaseDep,
     store_id: int,
-    update_type: str = Query("add", enum=["add", "replace"]),
+    update_type: AddSwapEnum = Query(AddSwapEnum.add),
     store_photo: UploadFile = File(None),
     business_logo: UploadFile = File(None),
-    store_name: str = Form(None),
-    sub_category: str = Form(None),
-    motto: str = Form(None),
-    description: str = Form(None),
-    store_contact: str = Form(None),
-    store_email: str = Form(None),
-    tax_rate: Decimal = Form(None),
-    shipping_fee: Decimal = Form(None),
-    get_supabase=Depends(_supabase),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    store_name: str | None = Form(None),
+    sub_category: str | None = Form(None),
+    motto: str | None = Form(None),
+    description: str | None = Form(None),
+    store_contact: str | None = Form(None),
+    store_email: str | None = Form(None),
+    tax_rate: Decimal | None = Form(None),
+    shipping_fee: Decimal | None = Form(None),
 ):
     return await store_service.store_update(
         store_id=store_id,
-        update_type=update_type,
+        update_type=update_type.value,
         business_logo=business_logo,
         store_photo=store_photo,
         store_name=store_name,
@@ -84,7 +90,7 @@ async def update_store(
         tax_rate=tax_rate,
         shipping_fee=shipping_fee,
         db=db,
-        payload=payload,
+        request=request,
         get_supabase=get_supabase,
     )
 
@@ -94,10 +100,8 @@ async def update_store(
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
-async def store_approval(
-    slug: str, db: AsyncSession = Depends(get_db), payload: dict = Depends(verify_token)
-):
-    return await store_service.approve_stores(slug=slug, db=db, payload=payload)
+async def store_approval(request: Request, slug: str, db: DatabaseDep):
+    return await store_service.approve_stores(slug=slug, db=db, request=request)
 
 
 @router.put(
@@ -106,14 +110,14 @@ async def store_approval(
     response_model_exclude_none=True,
 )
 async def onboard_owner_staff(
+    request: Request,
+    db: DatabaseDep,
     store_id: int,
     owner_id: int | None = None,
     staff_id: int | None = None,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
 ):
     return await store_service.add_owner_staff(
-        store_id=store_id, owner_id=owner_id, staff_id=staff_id, db=db, payload=payload
+        store_id=store_id, owner_id=owner_id, staff_id=staff_id, db=db, request=request
     )
 
 
@@ -124,30 +128,37 @@ async def onboard_owner_staff(
     response_model_exclude_defaults=True,
 )
 async def store_personnel(
+    request: Request,
+    db: DatabaseDep,
     store_id: int,
-    position: str = Query("owners", enum=["staffs", "owners"]),
+    position: OwnerStaff = Query(OwnerStaff.owner),
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await store_service.view_store_owners_staffs(
-        store_id=store_id, view=position, page=page, limit=limit, db=db, payload=payload
+        store_id=store_id,
+        view=position.value,
+        page=page,
+        limit=limit,
+        db=db,
+        request=request,
     )
 
 
 @router.get(
     "/view_personal_stores",
-    response_model=StandardResponse[List[PersonalStoreResponse]],
+    response_model=StandardResponse[list[PersonalStoreResponse]],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
 async def view_stores(
-    position: str = Query("owner", enum=["staff", "owner"]),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request,
+    db: DatabaseDep,
+    position: OwnerStaff = Query(OwnerStaff.owner),
 ):
-    return await store_service.view_store(position=position, db=db, payload=payload)
+    return await store_service.view_store(
+        position=position.value, db=db, request=request
+    )
 
 
 @router.get(
@@ -158,17 +169,15 @@ async def view_stores(
 )
 async def view_stores_global(
     search_value: str,
-    search: str = Query(
-        "category", enum=["category", "sub_category", "store_name", "product_name"]
-    ),
+    db: DatabaseDep,
+    search: StoreFilterEnum = Query(StoreFilterEnum.category),
     seed: float = 0.5,
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await store_service.search_stores(
         search_value=search_value,
-        search=search,
+        search=search.value,
         seed=seed,
         page=page,
         limit=limit,
@@ -182,13 +191,10 @@ async def view_stores_global(
     response_model_exclude_none=True,
 )
 async def delete_staff_by_id(
-    store_id: int,
-    staff_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request, store_id: int, staff_id: int, db: DatabaseDep
 ):
     return await store_service.remove_staff(
-        store_id=store_id, staff_id=staff_id, db=db, payload=payload
+        store_id=store_id, staff_id=staff_id, db=db, request=request
     )
 
 
@@ -198,11 +204,11 @@ async def delete_staff_by_id(
     response_model_exclude_none=True,
 )
 async def delete_store_by_id(
+    request: Request,
     store_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-    get_supabase=Depends(_supabase),
+    db: DatabaseDep,
+    get_supabase: SupabaseDep,
 ):
     return await store_service.remove_store(
-        store_id=store_id, db=db, payload=payload, get_supabase=get_supabase
+        store_id=store_id, db=db, request=request, get_supabase=get_supabase
     )
