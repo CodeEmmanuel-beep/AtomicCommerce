@@ -1,10 +1,13 @@
-from fastapi import Request, APIRouter, Query
+from fastapi import Request, APIRouter, Query, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database.get import async_db
+from app.database.get import get_db
+from typing import Annotated
 from app.services import sub_category_service
 from app.api.v1.schemas import StandardResponse, PaginatedMetadata, SubCategoryResponse
 
 router = APIRouter(prefix="/sub_category", tags=["Sub Category"])
+
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post(
@@ -13,7 +16,7 @@ router = APIRouter(prefix="/sub_category", tags=["Sub Category"])
     response_model_exclude_none=True,
 )
 async def create_a_sub_category(
-    request: Request, category_id: int, name: str, db: AsyncSession = async_db
+    request: Request, category_id: int, name: str, db: DatabaseDep
 ):
     return await sub_category_service.sub_category(
         category_id=category_id, name=name, db=db, request=request
@@ -27,10 +30,10 @@ async def create_a_sub_category(
     response_model_exclude_defaults=True,
 )
 async def sub_category_list(
+    db: DatabaseDep,
     category_id: int | None = None,
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
-    db: AsyncSession = async_db,
 ):
     return await sub_category_service.retrieve(
         category_id=category_id, db=db, page=page, limit=limit
@@ -43,7 +46,7 @@ async def sub_category_list(
     response_model_exclude_none=True,
 )
 async def delete_one_sub_category(
-    request: Request, sub_category_id: int, db: AsyncSession = async_db
+    request: Request, sub_category_id: int, db: DatabaseDep
 ):
     return await sub_category_service.delete_sub_category(
         sub_category_id=sub_category_id, db=db, request=request
