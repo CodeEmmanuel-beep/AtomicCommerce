@@ -28,7 +28,7 @@ async def create_a_category(name: str, request: Request, db: AsyncSession = asyn
 )
 async def category_list(
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
+    limit: int = Query(10, ge=1, le=100),
     db: AsyncSession = async_db,
 ):
     return await category_service.retrieve(db=db, page=page, limit=limit)
