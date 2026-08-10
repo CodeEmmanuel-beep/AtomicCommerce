@@ -8,9 +8,10 @@ from app.api.v1.schemas import (
 from app.models import Cart, CartItem, Product, Inventory, Store
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from sqlalchemy import select, func, delete, exists, and_
+from sqlalchemy import select, func, delete, exists
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
+from app.utils.helper import unique_id
 from app.utils.redis import cache, cached, cart_invalidation, cache_version
 
 logger = get_logger("cart")
@@ -18,12 +19,12 @@ logger = get_logger("cart")
 
 async def add_item_to_cart(
     store_id,
+    request,
     product_id,
     quantity,
     db,
-    payload,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at create_cart function")
         raise HTTPException(
@@ -122,14 +123,15 @@ async def add_item_to_cart(
     ).scalar()
     if not available:
         logger.warning(
-            "User: '%s' attempted to add product: '%s' to cart: '%s', but the product is out of stock or the requested quantity is not available",
+            "User: '%s' attempted to add product: '%s' to cart: '%s' from store: '%s', but the product is either out of stock, the requested quantity is not available, or the store does not exist",
             user_id,
             product_id,
             cart.id,
+            store_id,
         )
         raise HTTPException(
             status_code=400,
-            detail="required quantity not available or product out of stock",
+            detail="required quantity not available or product out of stock or store not found",
         )
     cartitem = next(
         (item for item in cart.cartitems if item.product_id == product_id), None
@@ -168,16 +170,12 @@ async def add_item_to_cart(
     )
 
 
-async def retrieve_cart(store_id, page, limit, db, payload):
-    user_id = payload.get("user_id")
+async def retrieve_cart(store_id, request, page, limit, db):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at the retrieve_cart function")
         raise HTTPException(status_code=401, detail="not a registered buyer")
     offset = (page - 1) * limit
-    if page < 1 or limit < 1:
-        raise HTTPException(
-            status_code=400, detail="page number and limit must be greater than 0"
-        )
     version = await cache_version("cart_key")
     cart_keys = f"carts:v{version}:{user_id}:{store_id}:{page}:{limit}"
     cached_data = await cache(cart_keys)
@@ -218,8 +216,8 @@ async def retrieve_cart(store_id, page, limit, db, payload):
     return full_data
 
 
-async def edit_quantity(store_id, cart_id, cartitem_id, new_quantity, db, payload):
-    user_id = payload.get("user_id")
+async def edit_quantity(store_id, request, cart_id, cartitem_id, new_quantity, db):
+    user_id = unique_id(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="register and continue")
     logger.info(
@@ -265,9 +263,9 @@ async def edit_quantity(store_id, cart_id, cartitem_id, new_quantity, db, payloa
         await db.rollback()
         logger.exception("database error at edit_quantity function")
         raise HTTPException(status_code=400, detail="database error")
-    except Exception as e:
+    except Exception:
         await db.rollback()
-        logger.exception(f"Failed to commit: {e}")
+        logger.exception("Failed to commit")
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info(
         f"Cart item {cartitem_id} quantity updated successfully in cart {cart_id} for user {user_id}"
@@ -277,8 +275,8 @@ async def edit_quantity(store_id, cart_id, cartitem_id, new_quantity, db, payloa
     )
 
 
-async def update_cart(cart_id, store_id, db, payload):
-    user_id = payload.get("user_id")
+async def update_cart(cart_id, store_id, request, db):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt to access update_cart endpoint")
         raise HTTPException(status_code=401, detail="not authorized")
@@ -335,10 +333,10 @@ async def delete_one(
     store_id,
     cart_id,
     cartitem_id,
+    request,
     db,
-    payload,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="not authorized")
     logger.warning(f"Attempting to delete cart item {cartitem_id} from cart {cart_id}")
@@ -391,10 +389,10 @@ async def delete_one(
 async def delete_all(
     store_id,
     cart_id,
+    request,
     db,
-    payload,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="not authorized")
     logger.info(f"Attempting to delete cart {cart_id}")
