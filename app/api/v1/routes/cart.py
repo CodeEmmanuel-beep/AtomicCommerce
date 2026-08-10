@@ -1,13 +1,15 @@
 from app.api.v1.schemas import (
     StandardResponse,
 )
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query, Request, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services import cart_service
-from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
+from typing import Annotated
 
 router = APIRouter(prefix="/cart", tags=["Cart"])
+
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post(
@@ -18,16 +20,16 @@ router = APIRouter(prefix="/cart", tags=["Cart"])
 async def add_cartitem(
     store_id: int,
     product_id: int,
+    request: Request,
+    db: DatabaseDep,
     quantity: int = Query(1, ge=1),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
 ):
     return await cart_service.add_item_to_cart(
         store_id=store_id,
         product_id=product_id,
+        request=request,
         quantity=quantity,
         db=db,
-        payload=payload,
     )
 
 
@@ -39,15 +41,15 @@ async def add_cartitem(
 )
 async def get_cart(
     store_id: int,
+    request: Request,
+    db: DatabaseDep,
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await cart_service.retrieve_cart(
         store_id=store_id,
+        request=request,
         db=db,
-        payload=payload,
         page=page,
         limit=limit,
     )
@@ -62,17 +64,17 @@ async def change_quanity(
     store_id: int,
     cart_id: int,
     cartitem_id: int,
+    request: Request,
+    db: DatabaseDep,
     new_quantity: int = Query(1, ge=1),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
 ):
     return await cart_service.edit_quantity(
         cart_id=cart_id,
         store_id=store_id,
         cartitem_id=cartitem_id,
+        request=request,
         new_quantity=new_quantity,
         db=db,
-        payload=payload,
     )
 
 
@@ -81,14 +83,9 @@ async def change_quanity(
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
-async def update__cart(
-    store_id: int,
-    cart_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
+async def update__cart(store_id: int, cart_id: int, request: Request, db: DatabaseDep):
     return await cart_service.update_cart(
-        cart_id=cart_id, store_id=store_id, db=db, payload=payload
+        request=request, cart_id=cart_id, store_id=store_id, db=db
     )
 
 
@@ -98,18 +95,14 @@ async def update__cart(
     response_model_exclude_none=True,
 )
 async def delete_one(
-    store_id: int,
-    cart_id: int,
-    cartitem_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    store_id: int, cart_id: int, cartitem_id: int, request: Request, db: DatabaseDep
 ):
     return await cart_service.delete_one(
         cart_id=cart_id,
         store_id=store_id,
         cartitem_id=cartitem_id,
         db=db,
-        payload=payload,
+        request=request,
     )
 
 
@@ -118,12 +111,7 @@ async def delete_one(
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
-async def delete_cart(
-    store_id: int,
-    cart_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
+async def delete_cart(store_id: int, cart_id: int, request: Request, db: DatabaseDep):
     return await cart_service.delete_all(
-        cart_id=cart_id, store_id=store_id, db=db, payload=payload
+        cart_id=cart_id, store_id=store_id, request=request, db=db
     )
