@@ -4,7 +4,7 @@ from app.logs.logger import get_logger
 from sqlalchemy import select, func
 from app.utils.redis import (
     order_address_invalidation,
-    order_invalidation,
+    order_global_invalidation,
     cache,
     cached,
 )
@@ -15,23 +15,24 @@ from app.api.v1.schemas import (
     PaginatedResponse,
     AddressResponse,
 )
+from app.utils.helper import unique_id
 from sqlalchemy.exc import IntegrityError
 
 logger = get_logger("delivery_address")
 
 
 async def delivery_address(
-    store_id, order_id, delivery_address, background_task, db, payload
+    store_id, order_id, request, delivery_address, background_task, db
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
-        logger.error("Unauthorized attempt to add delivery address")
+        logger.warning("Unauthorized attempt to add delivery address")
         raise HTTPException(status_code=401, detail="not authorized")
     stmt = (
         select(Order)
         .where(
             Order.id == order_id,
-            ~Order.order_delete,
+            Order.order_delete.is_(False),
             Order.store_id == store_id,
             Order.user_id == user_id,
         )
@@ -39,7 +40,7 @@ async def delivery_address(
     )
     order = (await db.execute(stmt)).scalar_one_or_none()
     if not order:
-        logger.error(
+        logger.warning(
             f"Order with order_id: {order_id} not found for adding delivery address"
         )
         raise HTTPException(status_code=404, detail="no order found")
@@ -69,7 +70,7 @@ async def delivery_address(
         await db.rollback()
         logger.exception("error while adding delivery address")
         raise HTTPException(status_code=500, detail="internal server error")
-    background_task.add_task(order_invalidation, user_id)
+    background_task.add_task(order_global_invalidation, store_id)
     background_task.add_task(order_address_invalidation, user_id)
     logger.info(f"Delivery address added successfully for order_id: {order_id}")
     return StandardResponse(
@@ -77,8 +78,8 @@ async def delivery_address(
     )
 
 
-async def view_delivery_address(store_id, page, limit, db, payload):
-    user_id = payload.get("user_id")
+async def view_delivery_address(store_id, request, page, limit, db):
+    user_id = unique_id(request)
     if not user_id:
         logger.error("Unauthorized attempt to view delivery address")
         raise HTTPException(status_code=401, detail="not authorized")
@@ -115,7 +116,7 @@ async def view_delivery_address(store_id, page, limit, db, payload):
             .where(
                 Order.store_id == store_id,
                 Order.user_id == user_id,
-                ~Address.is_deleted,
+                Address.is_deleted.is_(False),
             )
         )
     ).scalar() or 0
@@ -132,9 +133,9 @@ async def view_delivery_address(store_id, page, limit, db, payload):
 
 
 async def choose_order_address(
-    store_id, order_id, address_id, db, payload, background_task
+    store_id, order_id, request, address_id, db, background_task
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.error("Unauthorized attempt to choose delivery address")
         raise HTTPException(status_code=401, detail="not authorized")
@@ -168,7 +169,9 @@ async def choose_order_address(
                 )
             )
         ).scalar_one_or_none()
-        if not address or not any(order.user_id == user_id for order in address.orders):
+        if not address or not any(
+            order.user_id == user_id for order in (address.orders or [])
+        ):
             logger.warning(
                 "user: %s tried choosing a non existent address: %s for order: %s",
                 user_id,
@@ -207,15 +210,16 @@ async def choose_order_address(
         await db.rollback()
         logger.exception("error while choosing delivery address")
         raise HTTPException(status_code=500, detail="internal server error")
-    background_task.add_task(order_invalidation, user_id)
+    background_task.add_task(order_global_invalidation, store_id)
+    background_task.add_task(order_address_invalidation, user_id)
     logger.info(f"Delivery address chosen successfully for order_id: {order_id}")
     return StandardResponse(
         status="success", message="delivery address chosen successfully", data=None
     )
 
 
-async def remove_delivery_address(store_id, address_id, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def remove_delivery_address(store_id, request, address_id, background_task, db):
+    user_id = unique_id(request)
     if not user_id:
         logger.error("Unauthorized attempt to delete delivery address")
         raise HTTPException(status_code=401, detail="not authorized")
@@ -266,7 +270,7 @@ async def remove_delivery_address(store_id, address_id, background_task, db, pay
         await db.rollback()
         logger.exception("error while deleting delivery address")
         raise HTTPException(status_code=500, detail="internal server error")
-    background_task.add_task(order_invalidation, user_id)
+    background_task.add_task(order_global_invalidation, store_id)
     background_task.add_task(order_address_invalidation, user_id)
     logger.info(f"Delivery address successfully deleted address_id: {address_id}")
     return StandardResponse(
