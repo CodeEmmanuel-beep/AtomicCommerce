@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Request, Query, Depends
 from app.database.get import get_db
 from app.services import delivery_address_service
 from app.api.v1.schemas import (
@@ -7,10 +7,12 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
     StandardResponse,
 )
-from app.auth.verify_jwt import verify_token
+from typing import Annotated
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/delivery_address", tags=["Delivery Address"])
+
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post(
@@ -21,18 +23,18 @@ router = APIRouter(prefix="/delivery_address", tags=["Delivery Address"])
 async def create_address(
     store_id: int,
     order_id: int,
+    request: Request,
+    db: DatabaseDep,
     delivery_address: AddressDetails,
     background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
 ):
     return await delivery_address_service.delivery_address(
         store_id=store_id,
+        request=request,
         order_id=order_id,
         delivery_address=delivery_address,
         background_task=background_task,
         db=db,
-        payload=payload,
     )
 
 
@@ -44,13 +46,13 @@ async def create_address(
 )
 async def get_delivery_address(
     store_id: int,
+    request: Request,
+    db: DatabaseDep,
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await delivery_address_service.view_delivery_address(
-        store_id=store_id, page=page, limit=limit, db=db, payload=payload
+        store_id=store_id, request=request, page=page, limit=limit, db=db
     )
 
 
@@ -63,16 +65,16 @@ async def pick_delivery_address(
     store_id: int,
     order_id: int,
     address_id: int,
+    request: Request,
     background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    db: DatabaseDep,
 ):
     return await delivery_address_service.choose_order_address(
         store_id=store_id,
         order_id=order_id,
         address_id=address_id,
+        request=request,
         db=db,
-        payload=payload,
         background_task=background_task,
     )
 
@@ -85,14 +87,14 @@ async def pick_delivery_address(
 async def delete_address(
     store_id: int,
     address_id: int,
+    request: Request,
     background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    db: DatabaseDep,
 ):
     return await delivery_address_service.remove_delivery_address(
         store_id=store_id,
         address_id=address_id,
+        request=request,
         background_task=background_task,
         db=db,
-        payload=payload,
     )
