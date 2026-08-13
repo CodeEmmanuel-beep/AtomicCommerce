@@ -96,6 +96,11 @@ async def stripe_webhook(request, background_task):
         "charge.refunded",
         "refund.updated",
     )
+    if event["type"] == "invoice.upcoming":
+        logger.info(
+            f"Received invoice.upcoming preview for subscription {invoice_metadata}:{subscription_metadata} . No action required."
+        )
+        return {"status": "ignored"}
     if not any([is_membership, is_order_payment, is_order_refund]):
         logger.warning(
             f"Received unhandled payload category. Event: {event['type']}, Metadata: {metadata}"
@@ -396,10 +401,8 @@ async def stripe_webhook(request, background_task):
             )
             if event["type"] in VALID_SUCCESS_EVENTS:
                 order_status = OrderStatus.processing
-            elif event["type"] in VALID_FAILURE_EVENTS:
-                order_status = OrderStatus.pending
             else:
-                order_status = None
+                order_status = OrderStatus.pending
             transaction_id_case = case(
                 (event_type.in_(VALID_SUCCESS_EVENTS), actual_transaction_id),
                 (
