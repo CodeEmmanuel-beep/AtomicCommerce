@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from sqlalchemy import select, func, or_, exists
+from sqlalchemy import select, func, exists
 from sqlalchemy.exc import IntegrityError
 from app.models import (
     Subscription,
@@ -9,10 +9,9 @@ from app.models import (
     Order,
     Membership,
     PaymentStatus,
-    store_owners,
-    store_staffs,
     Refund,
     Store,
+    OrderStatus,
 )
 from decimal import Decimal
 from app.api.v1.schemas import (
@@ -21,13 +20,15 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
     StandardResponse,
     PaginatedResponse,
+    CursorPaginatedResponse,
 )
 from dateutil.relativedelta import relativedelta
 from app.database.config import settings
 from app.database.get import AsyncSessionLocal
 from datetime import datetime, timezone
 from app.utils.redis import cache, cached
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, contains_eager
+from app.utils.helper import unique_id, user_role, store_auth
 import stripe
 
 logger = get_logger("payment")
@@ -79,10 +80,10 @@ async def create_payment(
     membership_id,
     order_id,
     currency,
-    payload,
+    request,
     one_time_subscription,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized access.")
     async with AsyncSessionLocal() as session:
@@ -177,7 +178,7 @@ async def create_payment(
                             }
                         ],
                         "mode": "payment",
-                        "success_url": "http://localhost:8000/docs/?session_id={CHECKOUT_SESSION_ID}",
+                        "success_url": "https://atomiccommerce.local/docs/?session_id={CHECKOUT_SESSION_ID}",
                         "cancel_url": "https://yourdomain.com/cancel",
                     }
                 )
@@ -311,7 +312,7 @@ async def create_payment(
                             }
                         ],
                         "mode": "payment",
-                        "success_url": "http://localhost:8000/docs/member?session_id={CHECKOUT_SESSION_ID}",
+                        "success_url": "https://atomiccommerce.local/docs/member?session_id={CHECKOUT_SESSION_ID}",
                         "cancel_url": "https://yourdomain.com/cancel",
                     }
                 )
@@ -375,11 +376,11 @@ async def create_payment(
             ).scalar_one_or_none()
             if not sub:
                 logger.warning(
-                    f"user_id: {user_id} attempted to create payment for subscription_plan without a membership"
+                    f"user_id: {user_id} attempted to create payment for subscription_plan without a membership or subscription plan"
                 )
                 raise HTTPException(
                     status_code=404,
-                    detail="register as a member before subscribing to a plan.",
+                    detail="register as a member or update membership before subscribing to a plan.",
                 )
             if sub.status == SubscriptionStatus.active:
                 raise HTTPException(
@@ -411,7 +412,7 @@ async def create_payment(
                             }
                         ],
                         "mode": "subscription",
-                        "success_url": "http://localhost:8000/docs/member?session_id={CHECKOUT_SESSION_ID}",
+                        "success_url": "https://atomiccommerce.local/docs/member?session_id={CHECKOUT_SESSION_ID}",
                         "cancel_url": "https://yourdomain.com/cancel",
                     }
                 )
@@ -464,8 +465,8 @@ async def create_payment(
                 )
 
 
-async def update_payment(sub_id, db, payload):
-    user_id = payload.get("user_id")
+async def update_payment(sub_id, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at update_payment endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -485,7 +486,7 @@ async def update_payment(sub_id, db, payload):
     portal_session = await stripe_client.v1.billing_portal.sessions.create_async(
         params={
             "customer": str(sub.customer_id),
-            "return_url": "http://localhost:8000/docs",
+            "return_url": "https://atomiccommerce.local/docs",
         }
     )
     data = {"billing_portal_url": portal_session.url}
@@ -496,14 +497,22 @@ async def update_payment(sub_id, db, payload):
     )
 
 
-async def charge_refund(payment_id, amount, reason, db, payload):
-    user_id = payload.get("user_id")
-    role = payload.get("role")
-    allowed_roles = ["Admin", "Owner"]
+async def charge_refund(payment_id, amount, reason, db, request):
+    user_id = unique_id(request)
+    role = user_role(request)
+    allowed_roles = ("Admin", "Owner")
     if not user_id or role not in allowed_roles:
-        logger.error("possible security and financial breach at charge_refund endpoint")
+        logger.error(
+            "possible security and financial breach at charge_refund endpoint by user %s",
+            user_id,
+        )
         raise HTTPException(status_code=401, detail="Luke 13:3")
-    stmt = select(Payment).where(Payment.id == payment_id).with_for_update()
+    stmt = (
+        select(Payment)
+        .options(selectinload(Payment.order))
+        .where(Payment.id == payment_id)
+        .with_for_update()
+    )
     result = await db.execute(stmt)
     payment = result.scalar_one_or_none()
     if not payment:
@@ -518,7 +527,10 @@ async def charge_refund(payment_id, amount, reason, db, payload):
         )
         raise HTTPException(status_code=400, detail="payment was not successful")
     if amount > payment.total_amount:
-        logger.warning("user: %s, tried overrefunding", user_id)
+        logger.warning(
+            "user: %s, tried overrefunding",
+            user_id,
+        )
         raise HTTPException(
             status_code=400, detail="Refund amount exceeds the original payment"
         )
@@ -530,7 +542,14 @@ async def charge_refund(payment_id, amount, reason, db, payload):
         )
     ).scalar()
     remaining = payment.total_amount - refunded_so_far
+    total_refund = amount + refunded_so_far
     if amount > remaining:
+        logger.warning(
+            "user: %s, tried overrefunding subsequent payments %s, %s",
+            user_id,
+            amount,
+            remaining,
+        )
         raise HTTPException(
             status_code=400, detail="Refund amount exceeds remaining refundable balance"
         )
@@ -547,6 +566,7 @@ async def charge_refund(payment_id, amount, reason, db, payload):
             }
         )
     except stripe.StripeError as e:
+        await db.rollback()
         logger.error(f"stripe refund failed: {str(e)}")
         raise HTTPException(
             status_code=400,
@@ -562,6 +582,14 @@ async def charge_refund(payment_id, amount, reason, db, payload):
             refund_amount=amount,
         )
         db.add(refund_log)
+        if total_refund >= payment.total_amount:
+            payment.order.status = OrderStatus.pending
+        logger.info(
+            "order status %s total refund %s total amount %s",
+            payment.order.status,
+            total_refund,
+            payment.total_amount,
+        )
         await db.commit()
     except Exception as db_err:
         logger.critical(
@@ -573,61 +601,48 @@ async def charge_refund(payment_id, amount, reason, db, payload):
     return StandardResponse(status="success", message="refund logged", data=data)
 
 
-async def get_payment(store_id, payment_status, time_frame, page, limit, db, payload):
-    user_id = payload.get("user_id")
-    role = payload.get("role")
-    allowed_roles = ["Admin", "Owner"]
+async def get_payment(
+    store_id, payment_status, time_frame, cursor_id, limit, db, request
+):
+    user_id = unique_id(request)
+    role = user_role(request)
+    allowed_roles = ("Admin", "Owner")
     if not user_id:
         logger.warning("unauthorized attempt at get_payment endpoint")
         raise HTTPException(status_code=401, detail="unauthorized attempt")
-    cache_key = f"payment_list:{store_id}:{payment_status}:{time_frame}:{page}:{limit}"
+    if role not in allowed_roles:
+        await store_auth(store_id=store_id, db=db, request=request)
+    status_map = {
+        "success": PaymentStatus.SUCCESS.value,
+        "pending": PaymentStatus.PENDING.value,
+        "refunds": PaymentStatus.REFUNDED.value,
+        "failed": PaymentStatus.FAILED.value,
+    }
+    status_value = status_map.get(payment_status, None)
+    if not status_value:
+        raise HTTPException(status_code=400, detail="invalid payment status selected")
+    cache_key = (
+        f"payment_list:{store_id}:{payment_status}:{time_frame}:{cursor_id}:{limit}"
+    )
     payment_cache = await cache(cache_key)
     if payment_cache:
         logger.info(
-            f"cache hit at get_payment endpoint for payment_status: {payment_status}, page:{page}"
+            "cache hit at get_payment endpoint for payment_status: %s", payment_status
         )
         return StandardResponse(**payment_cache)
-    row = (
-        await db.execute(
-            select(
-                Store,
-                or_(
-                    exists().where(
-                        store_owners.c.users_id == user_id,
-                        store_owners.c.stores_id == store_id,
-                    ),
-                    exists().where(
-                        store_staffs.c.users_id == user_id,
-                        store_staffs.c.stores_id == store_id,
-                    ),
-                ),
-            ).where(Store.id == store_id)
-        )
-    ).fetchone()
-    store, auth = row if row else (None, False)
-    if not auth and role not in allowed_roles:
-        logger.warning(
-            "user: %s, tried accessing get_payment endpoint without appropriate credentials",
-            user_id,
-        )
-        raise HTTPException(status_code=403, detail="restricted access")
-    if not store:
+    store_time = (
+        await db.execute(select(Store.founded).where(Store.id == store_id))
+    ).scalar_one_or_none()
+    if not store_time:
         logger.warning(
             "user: %s, search for payment history for a store that does not exist store: %s",
             user_id,
             store_id,
         )
         raise HTTPException(status_code=404, detail="store not found")
-    offset = (page - 1) * limit
-    payment_list_stmt = (
-        select(Payment)
-        .join(Order, Payment.order_id == Order.id)
-        .options(selectinload(Payment.order).selectinload(Order.store))
-        .where(Order.store_id == store_id)
-    )
     now = datetime.now(timezone.utc)
     time_map = {
-        "total": store.founded,
+        "total": store_time,
         "1 year": now - relativedelta(years=1),
         "6 months": now - relativedelta(months=6),
         "3 months": now - relativedelta(months=3),
@@ -636,78 +651,68 @@ async def get_payment(store_id, payment_status, time_frame, page, limit, db, pay
     }
     time_period = time_map.get(time_frame)
     if not time_period:
-        return StandardResponse(
-            status="error", message="invalid time frame selected", data=None
+        raise HTTPException(status_code=400, detail="invalid time frame selected")
+    if store_time > time_period:
+        raise HTTPException(
+            status_code=400, detail=f"store's existence is below {time_frame}"
         )
-    if store.founded > time_period:
-        return StandardResponse(
-            status="error",
-            message=f"store's existence is below {time_frame}",
-            data=None,
-        )
-    status_map = {
-        "approved": PaymentStatus.SUCCESS.value,
-        "pending": PaymentStatus.PENDING.value,
-        "refunds": PaymentStatus.REFUNDED.value,
-        "failed": PaymentStatus.FAILED.value,
-    }
-    status_value = status_map.get(payment_status, None)
-    if not status_value:
-        return StandardResponse(
-            status="error", message="invalid payment status selected", data=None
-        )
-    if status_value == PaymentStatus.REFUNDED.value:
-        payment_list_stmt = payment_list_stmt.options(selectinload(Payment.refunds))
-    payment_list = payment_list_stmt.where(
-        Payment.payment_status == status_value, Payment.payment_date >= time_period
-    ).order_by(Payment.payment_date.desc())
-    result = (
-        (await db.execute(payment_list.offset(offset).limit(limit))).scalars().all()
+    is_refunded = status_value == PaymentStatus.REFUNDED.value
+    payment_list_stmt = (
+        select(Payment)
+        .join(Order, Payment.order_id == Order.id)
+        .options(contains_eager(Payment.order))
+        .where(Order.store_id == store_id)
     )
+    if cursor_id is not None:
+        payment_list_stmt = payment_list_stmt.where(Payment.id > cursor_id)
+    if is_refunded:
+        payment_list_stmt = payment_list_stmt.options(selectinload(Payment.refunds))
+    payment_list = (
+        payment_list_stmt.where(
+            Payment.payment_status == status_value, Payment.payment_date >= time_period
+        )
+        .order_by(Payment.id.asc())
+        .limit(limit + 1)
+    )
+    result = (await db.execute(payment_list)).scalars().all()
     if not result:
         logger.info(
             f"store: {store_id}, has no {payment_status} payments in the past {time_frame}"
         )
-        return StandardResponse(
-            status="success",
-            message=f"this store has no {payment_status} payments for the past {time_frame}",
-            data=None,
-        )
-    total = (
-        await db.execute(
-            select(func.count(Payment.id))
-            .join(Order, Payment.order_id == Order.id)
-            .where(
-                Order.store_id == store_id,
-                Payment.payment_status == status_value,
-                Payment.payment_date >= time_period,
-            )
-        )
-    ).scalar() or 0
-    logger.info("total '%s', payments is: %s", payment_status, total)
+    has_more = len(result) > limit
+    if has_more:
+        result = result[:limit]
+    next_cursor = result[-1].id if result else None
     items = []
     for pay in result:
         paid = PaymentResponse.model_validate(pay)
-        if status_value == PaymentStatus.REFUNDED.value:
-            paid.total_refund = paid.total_refund = (
-                Decimal(sum([r.refund_amount for r in pay.refunds]))
-                if pay.refunds
-                else None
+        if is_refunded:
+            paid.total_refund = sum(
+                (Decimal(str(r.refund_amount)) for r in pay.refunds), Decimal("0.00")
             )
         items.append(paid)
     data = PaginatedMetadata[PaymentResponse](
         items=items,
-        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+        cursor_pagination=CursorPaginatedResponse(
+            next_cursor=next_cursor, limit=limit, has_more=has_more
+        ),
     )
     full_response = StandardResponse(
         status="success", message=f"{payment_status} payments", data=data
     )
     await cached(cache_key, full_response, ttl=300)
+    logger.info(
+        "user %s queried %s payments within %s for store %s, data returned successfully",
+        user_id,
+        payment_status,
+        time_frame,
+        store_id,
+    )
     return full_response
 
 
-async def get_personal_receipt_list(store_id, payment_status, page, limit, db, payload):
-    user_id = payload.get("user_id")
+async def get_personal_receipt_list(store_id, payment_status, page, limit, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at get_payment endpoint")
         raise HTTPException(status_code=401, detail="unauthorized attempt")
@@ -718,55 +723,16 @@ async def get_personal_receipt_list(store_id, payment_status, page, limit, db, p
             f"cache hit at get_personal_payment_list endpoint for payment_status: {payment_status}, page:{page}"
         )
         return StandardResponse(**payment_cache)
-    store = (
-        await db.execute(
-            select(
-                exists().where(Store.id == store_id),
-            )
-        )
-    ).scalar()
-    if not store:
-        logger.warning(
-            "user: %s, search for payment history for a store that does not exist store: %s",
-            user_id,
-            store_id,
-        )
-        raise HTTPException(status_code=404, detail="store not found")
-    offset = (page - 1) * limit
-    payment_list_stmt = (
-        select(Payment)
-        .join(Order, Payment.order_id == Order.id)
-        .options(selectinload(Payment.order).selectinload(Order.store))
-        .where(Order.store_id == store_id, Payment.user_id == user_id)
-    )
     status_map = {
-        "approved": PaymentStatus.SUCCESS.value,
+        "success": PaymentStatus.SUCCESS.value,
         "pending": PaymentStatus.PENDING.value,
-        "refunds": PaymentStatus.REFUNDED.value,
+        "refunded": PaymentStatus.REFUNDED.value,
         "failed": PaymentStatus.FAILED.value,
     }
     status_value = status_map.get(payment_status, None)
     if not status_value:
-        return StandardResponse(
-            status="error", message="invalid payment status selected", data=None
-        )
-    if status_value == PaymentStatus.REFUNDED.value:
-        payment_list_stmt = payment_list_stmt.options(selectinload(Payment.refunds))
-    payment_list = payment_list_stmt.where(
-        Payment.payment_status == status_value
-    ).order_by(Payment.payment_date.desc())
-    result = (
-        (await db.execute(payment_list.offset(offset).limit(limit))).scalars().all()
-    )
-    if not result:
-        logger.info(
-            f"user: {user_id}, has no {payment_status} payments for store: {store_id}"
-        )
-        return StandardResponse(
-            status="success",
-            message=f"you have no {payment_status} payments for store {store_id}",
-            data=None,
-        )
+        raise HTTPException(status_code=400, detail="invalid payment status selected")
+    offset = (page - 1) * limit
     total = (
         await db.execute(
             select(func.count(Payment.id))
@@ -778,15 +744,53 @@ async def get_personal_receipt_list(store_id, payment_status, page, limit, db, p
             )
         )
     ).scalar() or 0
+    if total == 0:
+        store_exists = (
+            await db.execute(select(exists().where(Store.id == store_id)))
+        ).scalar()
+        if not store_exists:
+            logger.warning(
+                "user: %s searched non-existent store: %s", user_id, store_id
+            )
+            raise HTTPException(status_code=404, detail="store not found")
+
+        logger.info(
+            "user: %s has no %s payments for store: %s",
+            user_id,
+            payment_status,
+            store_id,
+        )
+        empty_data = PaginatedMetadata[PaymentResponse](
+            items=[],
+            pagination=PaginatedResponse(page=page, limit=limit, total=0),
+        )
+        full_response = StandardResponse(
+            status="success", message=f"{payment_status} payments", data=empty_data
+        )
+        await cached(cache_key, full_response, ttl=300)
+        return full_response
     logger.info("total '%s', payments is: %s", payment_status, total)
+    is_refunded = status_value == PaymentStatus.REFUNDED.value
+    payment_list_stmt = (
+        select(Payment)
+        .join(Order, Payment.order_id == Order.id)
+        .options(contains_eager(Payment.order))
+        .where(Order.store_id == store_id, Payment.user_id == user_id)
+    )
+    if is_refunded:
+        payment_list_stmt = payment_list_stmt.options(selectinload(Payment.refunds))
+    payment_list = payment_list_stmt.where(
+        Payment.payment_status == status_value
+    ).order_by(Payment.payment_date.desc())
+    result = (
+        (await db.execute(payment_list.offset(offset).limit(limit))).scalars().all()
+    )
     items = []
     for pay in result:
         paid = PaymentResponse.model_validate(pay)
-        if status_value == PaymentStatus.REFUNDED.value:
-            paid.total_refund = (
-                Decimal(sum([r.refund_amount for r in pay.refunds]))
-                if pay.refunds
-                else None
+        if is_refunded:
+            paid.total_refund = sum(
+                (Decimal(str(r.refund_amount)) for r in pay.refunds), Decimal("0.00")
             )
         items.append(paid)
     data = PaginatedMetadata[PaymentResponse](
@@ -797,11 +801,17 @@ async def get_personal_receipt_list(store_id, payment_status, page, limit, db, p
         status="success", message=f"{payment_status} payments", data=data
     )
     await cached(cache_key, full_response, ttl=300)
+    logger.info(
+        "user %s queried %s payments for store %s, data returned successfully",
+        user_id,
+        payment_status,
+        store_id,
+    )
     return full_response
 
 
-async def get_personal_receipt(store_id, order_id, db, payload):
-    user_id = payload.get("user_id")
+async def get_personal_receipt(store_id, order_id, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at get_payment endpoint")
         raise HTTPException(status_code=401, detail="unauthorized attempt")
@@ -810,20 +820,6 @@ async def get_personal_receipt(store_id, order_id, db, payload):
     if payment_cache:
         logger.info("cache hit at get_personal_payment endpoint")
         return StandardResponse(**payment_cache)
-    store = (
-        await db.execute(
-            select(
-                exists().where(Store.id == store_id),
-            )
-        )
-    ).scalar()
-    if not store:
-        logger.warning(
-            "user: %s, search for payment history for a store that does not exist store: %s",
-            user_id,
-            store_id,
-        )
-        raise HTTPException(status_code=404, detail="store not found")
     payment_stmt = (
         select(Payment)
         .join(Order, Payment.order_id == Order.id)
@@ -836,6 +832,20 @@ async def get_personal_receipt(store_id, order_id, db, payload):
     result = (await db.execute(payment_stmt)).scalar_one_or_none()
     if not result:
         logger.info(f"user: {user_id}, has no payment receipt for order: {order_id}")
+        store = (
+            await db.execute(
+                select(
+                    exists().where(Store.id == store_id),
+                )
+            )
+        ).scalar()
+        if not store:
+            logger.warning(
+                "user: %s, search for payment history for a store that does not exist store: %s",
+                user_id,
+                store_id,
+            )
+            raise HTTPException(status_code=404, detail="store not found")
         return StandardResponse(
             status="success",
             message=f"you have no payment receipt for order {order_id}",
@@ -843,13 +853,17 @@ async def get_personal_receipt(store_id, order_id, db, payload):
         )
     paid = PaymentResponse.model_validate(result)
     if result.payment_status == PaymentStatus.REFUNDED.value:
-        paid.total_refund = (
-            Decimal(sum([r.refund_amount for r in result.refunds]))
-            if result.refunds
-            else None
+        paid.total_refund = sum(
+            (Decimal(str(r.refund_amount)) for r in result.refunds), Decimal("0.00")
         )
     full_response = StandardResponse(
         status="success", message=f"payment for order: '{order_id}", data=paid
     )
     await cached(cache_key, full_response, ttl=300)
+    logger.info(
+        "user %s queried payment for order %s in store %s, data returned successfully",
+        user_id,
+        order_id,
+        store_id,
+    )
     return full_response
