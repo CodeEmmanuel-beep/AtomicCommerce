@@ -1,28 +1,37 @@
-from fastapi import APIRouter, Query, Depends, Request, BackgroundTasks
+from fastapi import APIRouter, Query, Request, BackgroundTasks, Depends
 from app.services import payment_service, stripe_webhook_service
-from app.auth.verify_jwt import verify_token
-from app.api.v1.schemas import PaymentResponse, StandardResponse, PaginatedMetadata
+from app.api.v1.schemas import (
+    PaymentResponse,
+    StandardResponse,
+    PaginatedMetadata,
+    SubscriptionTypeEnum,
+    TimeFrameEnum,
+)
+from typing import Annotated
+from app.models import PaymentStatus
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.get import get_db
 from decimal import Decimal
 
 router = APIRouter(prefix="/payment", tags=["Payment"])
 
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
+
 
 @router.post("/make_payment")
 async def initiate_payment(
+    request: Request,
     membership_id: int | None = None,
     order_id: int | None = None,
     currency: str = "usd",
-    payload: dict = Depends(verify_token),
-    one_time_subscription: str = Query("one_time", enum=["one_time", "subscription"]),
+    one_time_subscription: SubscriptionTypeEnum = Query(SubscriptionTypeEnum.one_time),
 ):
     return await payment_service.create_payment(
         membership_id=membership_id,
         order_id=order_id,
         currency=currency,
-        payload=payload,
-        one_time_subscription=one_time_subscription,
+        request=request,
+        one_time_subscription=one_time_subscription.value,
     )
 
 
@@ -34,13 +43,9 @@ async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
 
 
 @router.put("/update_membership/{subscription_id}")
-async def update_plan(
-    subscription_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
+async def update_plan(request: Request, subscription_id: int, db: DatabaseDep):
     return await payment_service.update_payment(
-        sub_id=subscription_id, db=db, payload=payload
+        sub_id=subscription_id, db=db, request=request
     )
 
 
@@ -51,39 +56,31 @@ async def update_plan(
     response_model_exclude_defaults=True,
 )
 async def get_store_payment_list(
+    request: Request,
     store_id: int,
-    payment_status: str = Query(
-        "approved", enum=["failed", "pending", "refunds", "approved"]
-    ),
-    time_frame: str = Query(
-        "1 week", enum=["1 month", "3 months", "6 months", "1 year", "1 week", "total"]
-    ),
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    db: DatabaseDep,
+    payment_status: PaymentStatus = Query(PaymentStatus.SUCCESS),
+    time_frame: TimeFrameEnum = Query(TimeFrameEnum.one_week),
+    cursor_id: int | None = Query(None, ge=1),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await payment_service.get_payment(
         store_id=store_id,
-        payment_status=payment_status,
-        time_frame=time_frame,
-        page=page,
+        payment_status=payment_status.value,
+        time_frame=time_frame.value,
+        cursor_id=cursor_id,
         limit=limit,
         db=db,
-        payload=payload,
+        request=request,
     )
 
 
 @router.post("/refund_client")
 async def log_refund(
-    payment_id: int,
-    amount: Decimal,
-    reason: str,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request, payment_id: int, amount: Decimal, reason: str, db: DatabaseDep
 ):
     return await payment_service.charge_refund(
-        payment_id=payment_id, amount=amount, reason=reason, db=db, payload=payload
+        payment_id=payment_id, amount=amount, reason=reason, db=db, request=request
     )
 
 
@@ -94,22 +91,20 @@ async def log_refund(
     response_model_exclude_defaults=True,
 )
 async def get_personal_payment_list(
+    request: Request,
     store_id: int,
-    payment_status: str = Query(
-        "approved", enum=["failed", "pending", "refunds", "approved"]
-    ),
+    db: DatabaseDep,
+    payment_status: PaymentStatus = Query(PaymentStatus.SUCCESS),
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await payment_service.get_personal_receipt_list(
         store_id=store_id,
-        payment_status=payment_status,
+        payment_status=payment_status.value,
         page=page,
         limit=limit,
         db=db,
-        payload=payload,
+        request=request,
     )
 
 
@@ -120,14 +115,8 @@ async def get_personal_payment_list(
     response_model_exclude_defaults=True,
 )
 async def get_personal_payment(
-    store_id: int,
-    order_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request, store_id: int, order_id: int, db: DatabaseDep
 ):
     return await payment_service.get_personal_receipt(
-        store_id=store_id,
-        order_id=order_id,
-        db=db,
-        payload=payload,
+        store_id=store_id, order_id=order_id, db=db, request=request
     )
