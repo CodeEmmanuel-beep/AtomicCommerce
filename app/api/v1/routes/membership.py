@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, Request, Query, BackgroundTasks, Depends
 from app.database.get import get_db
+from app.models import MembershipType
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.auth.verify_jwt import verify_token
 from app.services import membership_service
 from app.api.v1.schemas import (
     StandardResponse,
@@ -9,9 +9,14 @@ from app.api.v1.schemas import (
     MembershipRes,
     MembershipResponse,
     SubscriptionResponse,
+    MemberStatus,
+    SubscriptionTypeEnum,
 )
+from typing import Annotated
 
 router = APIRouter(prefix="/member", tags=["Membership"])
+
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post(
@@ -21,19 +26,19 @@ router = APIRouter(prefix="/member", tags=["Membership"])
 )
 async def membership(
     store_id: int,
+    request: Request,
+    db: DatabaseDep,
     background_task: BackgroundTasks,
-    membership_type: str = Query("Regular", enum=["Standard", "Premium", "Regular"]),
-    activation_type: str = Query("subscription", enum=["one_time", "subscription"]),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    membership_type: MembershipType = Query(MembershipType.Standard),
+    activation_type: SubscriptionTypeEnum = Query(SubscriptionTypeEnum.subscription),
 ):
     return await membership_service.make_member(
         store_id=store_id,
         background_task=background_task,
-        membership_type=membership_type,
-        activation_type=activation_type,
+        membership_type=membership_type.value,
+        activation_type=activation_type.value,
         db=db,
-        payload=payload,
+        request=request,
     )
 
 
@@ -44,19 +49,19 @@ async def membership(
 )
 async def update_membership_type(
     store_id: int,
+    request: Request,
     background_task: BackgroundTasks,
-    membership_type: str = Query("Regular", enum=["Standard", "Premium", "Regular"]),
-    activation_type: str = Query("subscription", enum=["one_time", "subscription"]),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    db: DatabaseDep,
+    membership_type: MembershipType = Query(MembershipType.Standard),
+    activation_type: SubscriptionTypeEnum = Query(SubscriptionTypeEnum.subscription),
 ):
     return await membership_service.update(
         store_id=store_id,
         background_task=background_task,
-        membership_type=membership_type,
-        activation_type=activation_type,
+        membership_type=membership_type.value,
+        activation_type=activation_type.value,
         db=db,
-        payload=payload,
+        request=request,
     )
 
 
@@ -66,13 +71,9 @@ async def update_membership_type(
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def view_profile(
-    store_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
+async def view_profile(store_id: int, request: Request, db: DatabaseDep):
     return await membership_service.view_membership(
-        store_id=store_id, db=db, payload=payload
+        store_id=store_id, db=db, request=request
     )
 
 
@@ -82,13 +83,9 @@ async def view_profile(
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def view_subscription_data(
-    member_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
+async def view_subscription_data(member_id: int, request: Request, db: DatabaseDep):
     return await membership_service.view_subscription(
-        member_id=member_id, db=db, payload=payload
+        member_id=member_id, db=db, request=request
     )
 
 
@@ -98,11 +95,8 @@ async def view_subscription_data(
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def view_member_list(
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-):
-    return await membership_service.view_memberships(db=db, payload=payload)
+async def view_member_list(request: Request, db: DatabaseDep):
+    return await membership_service.view_memberships(db=db, request=request)
 
 
 @router.get(
@@ -113,26 +107,61 @@ async def view_member_list(
 )
 async def selected_members(
     store_id: int,
-    member_status: str = Query(
-        "active_members",
-        enum=[
-            "inactive_members",
-            "deleted_members",
-            "active_members",
-        ],
-    ),
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request,
+    db: DatabaseDep,
+    member_status: MemberStatus = Query(MemberStatus.active_members),
+    cursor_id: int = Query(None, ge=1),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await membership_service.view_selected_members(
         store_id=store_id,
+        request=request,
         db=db,
-        member_status=member_status,
-        payload=payload,
-        page=page,
+        member_status=member_status.value,
+        cursor_id=cursor_id,
         limit=limit,
+    )
+
+
+@router.get(
+    "/members_subscription_list/{store_id}",
+    response_model=StandardResponse[PaginatedMetadata[SubscriptionResponse]],
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
+async def subscription_list(
+    store_id: int,
+    request: Request,
+    db: DatabaseDep,
+    cursor_id: int = Query(None, ge=1),
+    limit: int = Query(10, ge=1, le=100),
+):
+    return await membership_service.view_members_subscriptions(
+        store_id=store_id,
+        request=request,
+        db=db,
+        cursor_id=cursor_id,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/member_subscription/{store_id}/{member_id}",
+    response_model=StandardResponse[SubscriptionResponse],
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
+async def subscription(
+    store_id: int,
+    member_id: int,
+    request: Request,
+    db: DatabaseDep,
+):
+    return await membership_service.view_member_subscription(
+        store_id=store_id,
+        request=request,
+        db=db,
+        member_id=member_id,
     )
 
 
@@ -142,13 +171,10 @@ async def selected_members(
     response_model_exclude_none=True,
 )
 async def restore_deleted_member(
-    store_id: int,
-    membership_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    store_id: int, request: Request, membership_id: int, db: DatabaseDep
 ):
     return await membership_service.restore_membership(
-        store_id=store_id, membership_id=membership_id, db=db, payload=payload
+        store_id=store_id, membership_id=membership_id, db=db, request=request
     )
 
 
@@ -159,15 +185,15 @@ async def restore_deleted_member(
 )
 async def delete_membership(
     store_id: int,
+    request: Request,
+    db: DatabaseDep,
     background_task: BackgroundTasks,
     membership_id: int | None = None,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
 ):
     return await membership_service.delete_member(
         store_id=store_id,
         background_task=background_task,
         membership_id=membership_id,
         db=db,
-        payload=payload,
+        request=request,
     )
