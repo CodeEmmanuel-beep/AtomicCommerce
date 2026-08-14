@@ -1,5 +1,5 @@
 from app.logs.logger import get_logger
-from fastapi import HTTPException
+from fastapi import HTTPException, Response, status
 from app.models import (
     Membership,
     Store,
@@ -16,35 +16,36 @@ from app.api.v1.schemas import (
     SubscriptionResponse,
     MembershipRes,
     PaginatedMetadata,
-    PaginatedResponse,
+    CursorPaginatedResponse,
 )
 from datetime import datetime, timezone
-from sqlalchemy import select, func, or_, exists
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, or_, exists
+from sqlalchemy.orm import selectinload, contains_eager
 from app.utils.redis import (
     cache,
     cache_version,
     cached,
-    member_invalidation,
     member_global_invalidation,
 )
-from app.utils.helper import store_auth
+from app.utils.helper import store_auth, unique_id
 from app.database.config import settings
 
 logger = get_logger("membership")
 
 
 async def make_member(
-    store_id, background_task, membership_type, activation_type, db, payload
+    store_id, background_task, membership_type, activation_type, db, request
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized user tried to access make_member endpoint")
         raise HTTPException(
             status_code=401, detail="you need to register to apply for membership"
         )
     store_exists = (
-        await db.execute(select(exists().where(Store.id == store_id)))
+        await db.execute(
+            select(exists().where(Store.id == store_id, Store.is_deleted.is_(False)))
+        )
     ).scalar()
     if not store_exists:
         logger.warning(
@@ -66,16 +67,6 @@ async def make_member(
                 detail="this ID has a deleted membership. Contact support to reactivate.",
             )
         raise HTTPException(status_code=400, detail="already a member of this store.")
-    if membership_type not in ("Standard", "Regular", "Premium"):
-        raise HTTPException(
-            status_code=400,
-            detail="membership_type should be either Standard, Regular or Premium",
-        )
-    if activation_type not in ("one_time", "subscription"):
-        raise HTTPException(
-            status_code=400,
-            detail="activation_type must be either 'one_time' or 'subscription'",
-        )
     try:
         member = Membership(
             user_id=user_id,
@@ -117,14 +108,14 @@ async def make_member(
     logger.info(
         f"member crerated with user_id: '{user_id}' and membership_type: '{membership_type}'"
     )
-    background_task.add_task(member_global_invalidation)
+    background_task.add_task(member_global_invalidation, store_id)
     return StandardResponse(status="success", message="membership created", data=None)
 
 
 async def update(
-    store_id, membership_type, background_task, activation_type, db, payload
+    store_id, membership_type, background_task, activation_type, db, request
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized user tried to assess make_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -141,6 +132,8 @@ async def update(
         )
         row = (await db.execute(stmt)).fetchone()
         member, subscribe = row or (None, None)
+        price_map = None
+        plan_map = None
         if not member:
             logger.warning(
                 f"user: {user_id} tried updating their membership without being a member"
@@ -161,26 +154,32 @@ async def update(
                 message="existing subscription found. Use the 'Update Plan' portal to manage it.",
                 data=None,
             )
-        member.membership_type = SubscriptionPlan[membership_type]
-        subscribe.plan_name = membership_type
         if activation_type == "one_time":
             price_map = {
                 "Standard": settings.Standard_Price,
                 "Regular": settings.Regular_Price,
                 "Premium": settings.Premium_Price,
             }
-            subscribe.plan_price = price_map[membership_type]
-            subscribe.price_id = None
+            target_price = price_map[membership_type]
+            target_plan = None
         if activation_type == "subscription":
-            price_map = {
+            plan_map = {
                 "Standard": settings.Standard,
                 "Regular": settings.Regular,
                 "Premium": settings.Premium,
             }
-            subscribe.price_id = price_map[membership_type]
-            subscribe.plan_price = None
+            target_plan = plan_map[membership_type]
+            target_price = None
+        same_type = subscribe.plan_name == membership_type
+        same_price = subscribe.price_id == target_plan
+        same_plan = subscribe.plan_price == target_price
+        if same_type and same_price and same_plan:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        member.membership_type = SubscriptionPlan[membership_type]
+        subscribe.plan_name = membership_type
+        subscribe.price_id = target_plan
+        subscribe.plan_price = target_price
         await db.commit()
-        background_task.add_task(member_invalidation, user_id)
     except HTTPException:
         await db.rollback()
         raise
@@ -199,19 +198,19 @@ async def update(
     logger.info(
         f"user: {user_id} successfully updated their membership_type to '{membership_type}'"
     )
-    background_task.add_task(member_global_invalidation)
-    background_task.add_task(member_invalidation)
+    background_task.add_task(member_global_invalidation, store_id)
     return StandardResponse(
         status="success", message="membership type updated", data=None
     )
 
 
-async def view_membership(store_id, db, payload):
-    user_id = payload.get("user_id")
+async def view_membership(store_id, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt to access view_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
-    cache_key = f"membership:{user_id}:{store_id}"
+    version = await cache_version(f"store_member_key:{store_id}")
+    cache_key = f"membership:v{version}:{user_id}:{store_id}"
     cached_member = await cache(cache_key)
     if cached_member:
         logger.info("cached hit at view_member endpoint user %s", user_id)
@@ -237,13 +236,13 @@ async def view_membership(store_id, db, payload):
     full_response = StandardResponse(
         status="success", message="membership information", data=member_data
     )
-    await cached(cache_key, full_response, ttl=1800)
+    await cached(cache_key, full_response, ttl=18000)
     logger.info("member's data cached successfully member_id: %s", member.id)
     return full_response
 
 
-async def view_subscription(member_id, db, payload):
-    user_id = payload.get("user_id")
+async def view_subscription(member_id, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt to access view_subscription endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -255,6 +254,7 @@ async def view_subscription(member_id, db, payload):
     stmt = (
         select(Subscription)
         .join(Membership, Membership.id == Subscription.membership_id)
+        .options(contains_eager(Subscription.membership))
         .where(
             Membership.user_id == user_id,
             Subscription.membership_id == member_id,
@@ -277,8 +277,89 @@ async def view_subscription(member_id, db, payload):
     return full_response
 
 
-async def view_memberships(db, payload):
-    user_id = payload.get("user_id")
+async def view_member_subscription(store_id, member_id, db, request):
+    user_id = await store_auth(request=request, store_id=store_id, db=db)
+    if not user_id:
+        logger.warning(
+            "Unauthorized or forbidden access attempt to view_subscription endpoint"
+        )
+        raise HTTPException(status_code=403, detail="Access denied for this store")
+    version = await cache_version(f"store_subscriptions:{store_id}")
+    cache_key = f"subscription:v{version}:{member_id}:{user_id}"
+    cached_member = await cache(cache_key)
+    if cached_member:
+        logger.info("cached hit at view_subscription endpoint user %s", user_id)
+        return StandardResponse(**cached_member)
+    stmt = (
+        select(Subscription)
+        .join(Membership, Membership.id == Subscription.membership_id)
+        .options(contains_eager(Subscription.membership))
+        .where(
+            Membership.store_id == store_id,
+            Subscription.membership_id == member_id,
+            Membership.is_deleted.is_(False),
+        )
+    )
+    subscription = (await db.execute(stmt)).scalar_one_or_none()
+    if not subscription:
+        logger.warning(
+            "query attempt at view_subscription endpoint returned null, user %s",
+            user_id,
+        )
+        raise HTTPException(status_code=404, detail="subscription not found")
+    subscription_data = SubscriptionResponse.model_validate(subscription)
+    full_response = StandardResponse(
+        status="success", message="subscription information", data=subscription_data
+    )
+    await cached(cache_key, full_response, ttl=60)
+    logger.info("subscription data cached successfully")
+    return full_response
+
+
+async def view_members_subscriptions(cursor_id, store_id, db, limit, request):
+    user_id = await store_auth(store_id=store_id, db=db, request=request)
+    if not user_id:
+        logger.warning("unauthorized attempt to access view_subscription endpoint")
+        raise HTTPException(status_code=401, detail="not a registered user")
+    version = await cache_version(f"store_subscriptions:{store_id}")
+    cache_key = f"subscription:v{version}:{user_id}:{store_id}:{cursor_id}:{limit}"
+    cached_member = await cache(cache_key)
+    if cached_member:
+        logger.info("cached hit at view_subscription endpoint user %s", user_id)
+        return StandardResponse(**cached_member)
+    stmt = (
+        select(Subscription)
+        .join(Membership, Membership.id == Subscription.membership_id)
+        .options(contains_eager(Subscription.membership))
+        .where(
+            Membership.store_id == store_id,
+            Membership.is_deleted.is_(False),
+        )
+        .order_by(Subscription.id.asc())
+    )
+    if cursor_id is not None:
+        stmt = stmt.where(Subscription.id > cursor_id)
+    subscription = (await db.execute(stmt.limit(limit + 1))).scalars().all()
+    has_more = len(subscription) > limit
+    if has_more:
+        subscription = subscription[:limit]
+    next_cursor = subscription[-1].id if subscription else None
+    subscription_data = PaginatedMetadata[SubscriptionResponse](
+        items=[SubscriptionResponse.model_validate(sub) for sub in subscription],
+        cursor_pagination=CursorPaginatedResponse(
+            next_cursor=next_cursor, limit=limit, has_more=has_more
+        ),
+    )
+    full_response = StandardResponse(
+        status="success", message="subscription information", data=subscription_data
+    )
+    await cached(cache_key, full_response, ttl=300)
+    logger.info("subscription data cached successfully")
+    return full_response
+
+
+async def view_memberships(db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt to access view_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -315,17 +396,12 @@ async def view_memberships(db, payload):
         message="stores where you are a member",
         data=store_map,
     )
-    await cached(cache_key, full_response, ttl=1800)
+    await cached(cache_key, full_response, ttl=360)
     logger.info("Cached %s memberships for user %s", len(members), user_id)
     return full_response
 
 
-async def view_selected_members(store_id, member_status, page, limit, db, payload):
-    user_id = payload.get("user_id")
-    if not user_id:
-        logger.warning("unauthorized attempt to access view_active_members endpoint")
-        raise HTTPException(status_code=401, detail="not a registered user")
-    offset = (page - 1) * limit
+async def view_selected_members(store_id, member_status, cursor_id, limit, db, request):
     if member_status not in [
         "active_members",
         "inactive_members",
@@ -333,19 +409,14 @@ async def view_selected_members(store_id, member_status, page, limit, db, payloa
     ]:
         raise HTTPException(
             status_code=400,
-            detail="member_status should be either 'active_members','inactive_members','paused_members' or 'deleted_members'",
+            detail="member_status should be either 'active_members','inactive_members', or 'deleted_members'",
         )
-    context = {
-        "active_members": "active",
-        "deleted_members": "deleted",
-        "inactive_members": "inactive",
-    }[member_status]
-    await store_auth(store_id, db, payload)
-    version = await cache_version("member_key")
-    cache_key = f"membership:v{version}:{member_status}:{store_id}:{page}:{limit}"
+    user_id = await store_auth(store_id, db, request)
+    version = await cache_version(f"store_member_key:{store_id}")
+    cache_key = f"membership:v{version}:{member_status}:{store_id}:{cursor_id}:{limit}"
     cached_member = await cache(cache_key)
     if cached_member:
-        logger.info("cached hit at view_active_members endpoint user %s", user_id)
+        logger.info("cached hit at view_selected_members endpoint user %s", user_id)
         return StandardResponse(**cached_member)
     base_filter = {
         "active_members": (
@@ -361,43 +432,33 @@ async def view_selected_members(store_id, member_status, page, limit, db, payloa
             Membership.is_deleted.is_(True),
         ),
     }[member_status]
-    total = (
-        await db.execute(
-            select(func.count(Membership.id)).where(
-                *base_filter,
-                Membership.store_id == store_id,
-            )
-        )
-    ).scalar() or 0
-    logger.info(f"total number of {context} members: %s", total)
-    if total == 0:
-        logger.info(f"{context} members search returned an empty list")
-        response = StandardResponse(
-            status="success", message=f"no {context} member found", data={}
-        )
-        await cached(cache_key, response, ttl=360)
-        return response
-    logger.info(f"total number of {context} members %s", total)
     store_membership = (
         select(Membership)
         .options(selectinload(Membership.user))
         .where(Membership.store_id == store_id, *base_filter)
-        .offset(offset)
-        .limit(limit)
+        .order_by(Membership.id.asc())
     )
-    member = (await db.execute(store_membership)).scalars().all()
+    if cursor_id is not None:
+        store_membership = store_membership.where(Membership.id > cursor_id)
+    member = (await db.execute(store_membership.limit(limit + 1))).scalars().all()
+    has_more = len(member) > limit
+    if has_more:
+        member = member[:limit]
+    next_cursor = member[-1].id if member else None
     data = PaginatedMetadata[MembershipRes](
         items=[MembershipRes.model_validate(mem) for mem in member],
-        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+        cursor_pagination=CursorPaginatedResponse(
+            next_cursor=next_cursor, limit=limit, has_more=has_more
+        ),
     )
     response = StandardResponse(status="success", message=f"{member_status}", data=data)
-    await cached(cache_key, response, ttl=360)
-    logger.info(f"{context} members data cached successfully for admin: %s", user_id)
+    await cached(cache_key, response, ttl=18000)
+    logger.info("%s data cached successfully for admin: %s", member_status, user_id)
     return response
 
 
-async def restore_membership(store_id, membership_id, db, payload):
-    user_id = payload.get("user_id")
+async def restore_membership(store_id, membership_id, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt to access restore_membership endpoint")
         raise HTTPException(status_code=401, detail="not authorized")
@@ -455,17 +516,17 @@ async def restore_membership(store_id, membership_id, db, payload):
         )
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("membership restored for membership_id: %s", membership_id)
-    await member_global_invalidation()
+    await member_global_invalidation(store_id)
     return StandardResponse(status="success", message="membership restored", data=None)
 
 
-async def delete_member(store_id, membership_id, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def delete_member(store_id, membership_id, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt to access delete_member endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
     if membership_id:
-        await store_auth(store_id, db, payload)
+        await store_auth(store_id, db, request)
         base_filter = Membership.id == membership_id
     else:
         base_filter = Membership.user_id == user_id
@@ -492,6 +553,7 @@ async def delete_member(store_id, membership_id, background_task, db, payload):
         member.delete_date = datetime.now(timezone.utc)
         if membership_id:
             target_user = member.user_id
+        target_member = member.id
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -500,16 +562,15 @@ async def delete_member(store_id, membership_id, background_task, db, payload):
         await db.rollback()
         logger.error(
             "database error occured while deleting membership user affected: %s",
-            user_id,
+            target_user,
         )
         raise HTTPException(status_code=400, detail="database error")
     except Exception:
         await db.rollback()
         logger.exception(
-            "error occured while deleting membership user affected: %s", user_id
+            "error occured while deleting membership user affected: %s", target_user
         )
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info(f"user: {target_user} deleted their membership")
-    background_task.add_task(member_global_invalidation)
-    background_task.add_task(member_invalidation, target_user)
+    logger.info("membership: %s deleted", target_member)
+    background_task.add_task(member_global_invalidation, store_id)
     return StandardResponse(status="success", message="membership deleted", data=None)
