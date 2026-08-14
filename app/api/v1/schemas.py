@@ -690,6 +690,7 @@ class MembershipResponse(BaseModel):
 
 class MembershipRes(BaseModel):
     user: ProfileResponse
+    id: int
     membership_type: str
     start_date: datetime
     pause_date: datetime | None = None
