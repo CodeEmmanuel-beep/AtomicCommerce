@@ -145,20 +145,6 @@ async def cart_global_invalidation(store_id):
     return value
 
 
-async def member_invalidation(user_id: int):
-    cursor = 0
-    pattern = f"membership:{user_id}:*"
-    delete = False
-    while True:
-        cursor, keys = await redis_client.scan(cursor=cursor, match=pattern, count=1000)
-        if keys:
-            await redis_client.unlink(*keys)
-            delete = True
-        if cursor == 0 or cursor == b"0":
-            break
-    return delete
-
-
 async def member_global_invalidation(store_id):
     value = await redis_client.incr(f"store_member_key:{store_id}")
     await redis_client.expire(f"store_member_key:{store_id}", 18000)
