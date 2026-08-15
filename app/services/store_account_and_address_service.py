@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from app.logs.logger import get_logger
-from sqlalchemy import select, exists, func
+from sqlalchemy import select, exists, func, desc, asc
 from app.models import Store, StoreAccount, store_owners, Address, AccountVerification
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -10,7 +10,9 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
     PaginatedResponse,
     StandardResponse,
+    StoreAccountsList,
 )
+from app.utils.helper import unique_id, user_role
 from datetime import datetime, timezone
 from app.utils.redis import cache, cached
 
@@ -27,10 +29,10 @@ async def add_finance_details(
     identification_number,
     tax_identification_number,
     db,
-    payload,
+    request,
     cipher,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at add_finance_details endpoint")
         raise HTTPException(
@@ -89,7 +91,9 @@ async def add_finance_details(
         await db.rollback()
         logger.exception("error while adding finance details for store '%s'", store_id)
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info("finance details added to store: %s successfully", store_id)
+    logger.info(
+        "finance details added to store: %s by user: %s successfully", store_id, user_id
+    )
     return StandardResponse(
         status="success", message="finance details added", data=None
     )
@@ -105,10 +109,10 @@ async def edit_finance_details(
     identification_number,
     tax_identification_number,
     db,
-    payload,
+    request,
     cipher,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at add_finance_details endpoint")
         raise HTTPException(
@@ -176,25 +180,20 @@ async def edit_finance_details(
     )
 
 
-async def verify_store_account(status, reason, slug, db, payload):
-    user_id = payload.get("user_id")
-    owner = payload.get("role")
+async def verify_store_account(status, reason, slug, db, request):
+    user_id = unique_id(request)
+    owner = user_role(request)
     if not user_id or owner != "Owner":
         logger.warning("unauthorized attempt at verify_store_account endpoint")
         raise HTTPException(status_code=401, detail="restricted access")
-    if status not in ("verify", "reject"):
-        logger.warning("Invalid status '%s' from user %s", status, user_id)
-        raise HTTPException(
-            status_code=400, detail="status must be either 'verify' or 'reject'."
-        )
-    if status == "reject" and (not reason or not reason.strip()):
+    if status == AccountVerification.rejected and (not reason or not reason.strip()):
         raise HTTPException(
             status_code=400,
             detail="A reason must be provided when rejecting a store account.",
         )
     message = {
-        "verify": "Store account successfully verified",
-        "reject": "Store account successfully rejected",
+        AccountVerification.verified: "Store account successfully verified",
+        AccountVerification.rejected: "Store account successfully rejected",
     }[status]
     try:
         verify = (
@@ -216,7 +215,7 @@ async def verify_store_account(status, reason, slug, db, payload):
             raise HTTPException(
                 status_code=400, detail="store account not eligible for verification"
             )
-        if status == "verify":
+        if status == AccountVerification.verified:
             verify.verification_status = AccountVerification.verified
             verify.verified_at = datetime.now(timezone.utc)
             if verify.rejected_reason is not None:
@@ -243,15 +242,95 @@ async def verify_store_account(status, reason, slug, db, payload):
     return StandardResponse(status="success", message=message, data=None)
 
 
-async def view_financial_details(store_id, db, payload, cipher):
-    user_id = payload.get("user_id")
-    role = payload.get("role")
+async def view_stores_account(db, limit, page, request, status, chronology, cipher):
+    user_id = unique_id(request)
+    role = user_role(request)
+    if role not in ("Owner", "Admin"):
+        logger.warning(
+            "user %s tried viewing stores account list without authorization", user_id
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    offset = (page - 1) * limit
+    total = (
+        await db.execute(
+            select(func.count(StoreAccount.id)).where(
+                StoreAccount.verification_status == status
+            )
+        )
+    ).scalar() or 0
+    if offset >= total:
+        empty_response = PaginatedMetadata[StoreAccountsList](
+            items=[], pagination=PaginatedResponse(page=page, limit=limit, total=0)
+        )
+        logger.info("AtomicCommerce has no %s payout accounts", status.value)
+        return StandardResponse(
+            status="success", message=f"{status.value} accounts", data=empty_response
+        )
+    ordering = desc if chronology == "desc" else asc
+    stmt = (
+        select(StoreAccount)
+        .where(StoreAccount.verification_status == status)
+        .order_by(ordering(StoreAccount.submitted_at))
+    )
+    account_list = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
+    logger.info("validating account list")
+    data = PaginatedMetadata[StoreAccountsList](
+        items=[
+            StoreAccountsList.model_validate(acc, context={"cipher": cipher})
+            for acc in account_list
+        ],
+        pagination=PaginatedResponse(page=page, limit=limit, total=total),
+    )
+    logger.info(
+        "user %s successfully retrieved %s account details", user_id, status.value
+    )
+    return StandardResponse(
+        status="success", message=f"{status.value} accounts", data=data
+    )
+
+
+async def store_financial_details(store_id, db, request, cipher):
+    user_id = unique_id(request)
+    role = user_role(request)
+    if not user_id:
+        logger.warning("unauthorized attempt at store_financial_details endpoint")
+        raise HTTPException(
+            status_code=401, detail="unauthorized, you must be a registered user"
+        )
+    allowed_roles = ("Owner", "Admin")
+    if role not in allowed_roles:
+        logger.warning(
+            "user: %s, attempted to bypass a restricted access in view financial details endpoint for store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=403, detail="restricted access")
+    store_account = (
+        await db.execute(select(StoreAccount).where(StoreAccount.store_id == store_id))
+    ).scalar_one_or_none()
+    if not store_account:
+        logger.warning(
+            "user: %s, tried to view a non-existent finance details of store: %s",
+            user_id,
+            store_id,
+        )
+        raise HTTPException(status_code=404, detail="store account not found")
+    data = StoreAccountsList.model_validate(store_account, context={"cipher": cipher})
+    logger.info(
+        "store: %s, successfully returned data, sensitive fields decrypted for user: %s",
+        store_id,
+        user_id,
+    )
+    return StandardResponse(status="success", message="store account", data=data)
+
+
+async def view_financial_details(store_id, db, request, cipher):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at view_financial_details endpoint")
         raise HTTPException(
             status_code=401, detail="unauthorized, you must be a registered user"
         )
-    allowed_roles = ["Owner", "Admin"]
     store_account = (
         await db.execute(
             select(StoreAccount)
@@ -267,7 +346,7 @@ async def view_financial_details(store_id, db, payload, cipher):
         )
         raise HTTPException(status_code=404, detail="store account not found")
     owner_id = [owner.id for owner in store_account.store.user_owners]
-    if user_id not in owner_id and role not in allowed_roles:
+    if user_id not in owner_id:
         logger.warning(
             "user: %s, attempted to bypass a restricted access in view financial details endpoint for store: %s",
             user_id,
@@ -285,8 +364,8 @@ async def view_financial_details(store_id, db, payload, cipher):
     return StandardResponse(status="success", message="store account", data=data)
 
 
-async def add_address(store_id, address_details, db, payload):
-    user_id = payload.get("user_id")
+async def add_address(store_id, address_details, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at add_address endpoint")
         raise HTTPException(
@@ -369,15 +448,15 @@ async def view_store_addresses(store_id, page, limit, db):
     full_response = StandardResponse(
         status="success", message="store addresses retrieved", data=data
     )
-    await cached(cache_key, full_response, ttl=300)
+    await cached(cache_key, full_response, ttl=60)
     logger.info(
         "data returned at view store addresses endpoint for store: %s", store_id
     )
     return full_response
 
 
-async def remove_address(store_id, address_id, db, payload):
-    user_id = payload.get("user_id")
+async def remove_address(store_id, address_id, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at delete_address endpoint")
         raise HTTPException(
