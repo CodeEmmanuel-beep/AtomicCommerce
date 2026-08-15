@@ -28,6 +28,11 @@ class QueryEnum(str, Enum):
     No = "No"
 
 
+class ChronologyEnum(str, Enum):
+    desc = "desc"
+    asc = "asc"
+
+
 class AddSwapEnum(str, Enum):
     add = "add"
     swap = "swap"
@@ -145,6 +150,56 @@ class UserResponse(BaseModel):
     email: str
     nationality: str
     address: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StoreAccountsList(BaseModel):
+    bank_name: str
+    account_type: str
+    account_holder_name: str
+    account_number: str
+    type_of_id: str
+    identification_number: str
+    tax_identification_number: str | None = None
+    submitted_at: datetime | None = None
+    updated_at: datetime | None = None
+    verification_status: str = Field(default="pending")
+    verified_at: datetime | None = None
+    rejected_reason: str | None = None
+    previous_rejected_reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def decryption(cls, data: Any, info: ValidationInfo) -> Any:
+        context = info.context
+        if not context:
+            raise ValueError("Validation context is missing. Cannot decrypt data.")
+        cipher = context.get("cipher")
+        if not cipher:
+            raise ValueError("cipher key not found")
+        sensitive_fields = [
+            "account_number",
+            "tax_identification_number",
+            "identification_number",
+        ]
+        for field in sensitive_fields:
+            value = (
+                data.get(field, None)
+                if isinstance(data, dict)
+                else getattr(data, field, None)
+            )
+            if value is None:
+                continue
+            try:
+                decrypted_field = cipher.decrypt(value).decode()
+                if isinstance(data, dict):
+                    data[field] = decrypted_field
+                else:
+                    setattr(data, field, decrypted_field)
+            except Exception:
+                raise ValueError("error decrypting sensitive field: %s", field)
+        return data
 
     model_config = ConfigDict(from_attributes=True)
 
