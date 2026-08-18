@@ -17,9 +17,10 @@ from sqlalchemy import (
     Date,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, ENUM as PG_ENUM
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, ENUM as PG_ENUM
 from enum import Enum
 from sqlalchemy.orm import relationship, mapped_column, Mapped, declarative_base
+from sqlalchemy.schema import Computed
 from sqlalchemy import func
 from decimal import Decimal
 from datetime import datetime, date
@@ -91,11 +92,11 @@ class User(Base):
 
     __table_args__ = (
         Index(
-            "idx_deactivated_users", "id", postgresql_where=text("is_active = False")
+            "idx_deactivated_users", "id", postgresql_where=text("is_active IS False")
         ),
-        Index("idx_banned_users", "id", postgresql_where=text("is_banned = True")),
+        Index("idx_banned_users", "id", postgresql_where=text("is_banned IS True")),
         Index(
-            "idx_indefinite_ban", "id", postgresql_where=text("indefinite_ban = True")
+            "idx_indefinite_ban", "id", postgresql_where=text("indefinite_ban IS True")
         ),
         CheckConstraint(
             """
@@ -367,45 +368,56 @@ class Reply(Base):
     react = relationship("React", back_populates="reply", cascade="all, delete-orphan")
 
 
-class ProductSize(str, Enum):
-    small = "small"
-    medium = "medium"
-    large = "large"
-    extra_large = "extra_large"
-
-
 class Product(Base):
     __tablename__ = "product"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
-    product_name: Mapped[str] = mapped_column(String, index=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"))
+    product_name: Mapped[str] = mapped_column(String)
     primary_image: Mapped[str] = mapped_column(String, nullable=False)
-    product_price: Mapped[Decimal] = mapped_column(Numeric(precision=12, scale=2))
-    product_type: Mapped[str] = mapped_column(String)
     avg_rating: Mapped[Decimal] = mapped_column(
         Numeric(precision=3, scale=2), default=0
     )
     review_count: Mapped[int] = mapped_column(Integer, default=0)
     product_description: Mapped[str] = mapped_column(Text)
-    product_size: Mapped[ProductSize] = mapped_column(
-        SQLEnum(ProductSize), default=ProductSize.small, index=True
-    )
-    category_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("category.id"), index=True
-    )
-    sub_category_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("subcategory.id"), index=True
-    )
+    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("category.id"))
+    sub_category_id: Mapped[int] = mapped_column(Integer, ForeignKey("subcategory.id"))
     product_availability: Mapped[str] = mapped_column(String, default="available")
+    created_by: Mapped[int] = mapped_column(Integer, nullable=False)
+    search_vector: Mapped[str | None] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('english',product_name)", persisted=True)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    deleted_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    orderitem = relationship("OrderItem", back_populates="product", uselist=False)
+    __table_args__ = (
+        Index("idx_gin_search_vector", "search_vector", postgresql_using="gin"),
+        Index(
+            "idx_product_store_active",
+            "store_id",
+            postgresql_where=text("is_deleted IS False"),
+        ),
+        Index(
+            "idx_product_category_active",
+            "category_id",
+            "sub_category_id",
+            postgresql_where=text("is_deleted IS False"),
+        ),
+    )
+    productvariants = relationship("ProductVariant", back_populates="product")
+    orderitem = relationship("OrderItem", back_populates="product")
     store = relationship("Store", back_populates="products")
     review = relationship("Review", back_populates="product")
     replies = relationship("Reply", back_populates="product")
-    cartitems = relationship("CartItem", back_populates="product", uselist=False)
+    cartitems = relationship("CartItem", back_populates="product")
     category = relationship("Category", back_populates="products")
-    inventory = relationship("Inventory", back_populates="product", uselist=False)
     sub_category = relationship("SubCategory", back_populates="products")
     product_images = relationship("ProductImage", back_populates="product")
     notifications = relationship("Notification", back_populates="product")
@@ -424,25 +436,68 @@ class ProductImage(Base):
     store = relationship("Store", back_populates="product_images")
 
 
-class Inventory(Base):
-    __tablename__ = "inventory"
+class ProductVariant(Base):
+    __tablename__ = "productvariant"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     product_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("product.id"), index=True
     )
+    primary_image: Mapped[str] = mapped_column(String)
+    sku: Mapped[str] = mapped_column(String, unique=True)
+    price: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
+    attributes: Mapped[dict] = mapped_column(JSONB)
+    created_by: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    deleted_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    __table_args__ = (Index("idx_attributes", "attributes", postgresql_using="gin"),)
+    product = relationship("Product", back_populates="productvariants")
+    inventory = relationship("Inventory", back_populates="variant", uselist=False)
+    vimage = relationship("VariantImage", back_populates="variant")
+
+
+class VariantImage(Base):
+    __tablename__ = "variantimage"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    variant_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("productvariant.id"), index=True
+    )
+    image: Mapped[str] = mapped_column(String)
+
+    variant = relationship("ProductVariant", back_populates="vimage")
+
+
+class Inventory(Base):
+    __tablename__ = "inventory"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    variant_id: Mapped[int] = mapped_column(Integer, ForeignKey("productvariant.id"))
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
     stock_quantity: Mapped[int] = mapped_column(Integer, default=0)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    deleted_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_updated: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     __table_args__ = (
-        UniqueConstraint("store_id", "product_id", name="store_product_inventory"),
+        UniqueConstraint("store_id", "variant_id", name="uq_store_variant_inventory"),
         CheckConstraint("stock_quantity >= 0", name="positive_quantity"),
     )
-    product = relationship("Product", back_populates="inventory")
     store = relationship("Store", back_populates="inventories")
+    variant = relationship("ProductVariant", back_populates="inventory")
 
 
 class PaymentStatus(str, Enum):
