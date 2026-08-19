@@ -6,6 +6,7 @@ from pydantic import (
     model_validator,
     field_validator,
     ValidationInfo,
+    field_serializer,
 )
 from typing import TypeVar, Generic, Any
 from datetime import datetime, date
@@ -26,6 +27,12 @@ class LoginResponse(BaseModel):
 class QueryEnum(str, Enum):
     Yes = "Yes"
     No = "No"
+
+
+class ProductSearch(str, Enum):
+    product_name = "product_name"
+    category = "category"
+    sub_category = "sub_category"
 
 
 class ChronologyEnum(str, Enum):
@@ -82,7 +89,6 @@ class SupportCustomerEnum(str, Enum):
 
 
 class ProductFilterEnum(str, Enum):
-    cheap = "cheap"
     latest = "latest"
     quality = "quality"
 
@@ -398,13 +404,6 @@ class Chat(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ProductSize(str, Enum):
-    small = "small"
-    medium = "medium"
-    large = "large"
-    extra_large = "extra large"
-
-
 class InventoryObj(BaseModel):
     stock_quantity: int
 
@@ -462,6 +461,7 @@ class InventoryResponse(BaseModel):
 
 class Cart_OrderProductResponse(BaseModel):
     id: int
+    store_id: int
     product_name: str
     primary_image: str
     product_price: Decimal
@@ -474,14 +474,31 @@ class Cart_OrderProductResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class StoreRes(BaseModel):
+    id: int
+    business_logo: str | None = None
+    store_photo: str
+    store_name: str
+
+    @field_serializer("business_logo", "store_photo", mode="plain")
+    @classmethod
+    def resolve_public_url(cls, value: str | None = None) -> str | None:
+        if not value:
+            return None
+        if value.startswith(("http://", "https://")):
+            return value
+        return get_public_url(value)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProductRes(BaseModel):
     id: int
+    store_id: int
     product_name: str
     primary_image: str
-    product_price: Decimal
     product_availability: str
     avg_rating: Decimal = Field(default=Decimal("0.00"))
-    inventory: InventoryObj | None = None
 
     @field_validator("primary_image", mode="before")
     @classmethod
@@ -495,14 +512,10 @@ class ProductResponse(BaseModel):
     id: int
     product_name: str
     primary_image: str
-    product_type: str
-    product_price: Decimal
     avg_rating: Decimal = Field(default=Decimal("0.00"))
     review_count: int = Field(default=0)
-    product_size: str
     product_description: str
     product_availability: str
-    inventory: InventoryObj | None = None
 
     @field_validator("primary_image", mode="before")
     @classmethod
