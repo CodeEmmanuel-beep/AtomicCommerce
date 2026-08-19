@@ -227,7 +227,16 @@ class Store(Base):
     store_description: Mapped[str | None] = mapped_column(String, nullable=True)
     slug: Mapped[str | None] = mapped_column(String(255), nullable=False, unique=True)
     category_name: Mapped[str] = mapped_column(String, index=True)
-    sub_category: Mapped[list] = mapped_column(JSONB, index=True)
+    sub_category: Mapped[list] = mapped_column(JSONB)
+    searchable_text: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "setweight(to_tsvector('english', coalesce(store_name, '')), 'A') || "
+            "setweight(to_tsvector('english', coalesce(sub_category::text, '')), 'B') || "
+            "setweight(to_tsvector('english', coalesce(category_name, '')), 'C')",
+            persisted=True,
+        ),
+    )
     category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("category.id"), index=True
     )
@@ -242,11 +251,27 @@ class Store(Base):
     tax_rate: Mapped[float] = mapped_column(Float, default=0, nullable=False)
     store_contact: Mapped[str | None] = mapped_column(String, nullable=True)
     approved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_by: Mapped[int] = mapped_column(Integer, nullable=False)
     founded: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    updated_by: Mapped[int] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    deleted_by: Mapped[int] = mapped_column(Integer, nullable=True)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    __table_args__ = (
+        Index(
+            "idx_searchable_text_ts",
+            "searchable_text",
+            postgresql_using="gin",
+            postgresql_ops={"sub_category": "jsonb_path_ops"},
+        ),
+        Index("idx_sub_category_gin", "sub_category", postgresql_using="gin"),
+    )
     tickets = relationship("Ticket", back_populates="store")
     user_owners = relationship("User", secondary=store_owners, back_populates="owners")
     user_staffs = relationship("User", secondary=store_staffs, back_populates="staffs")
@@ -383,6 +408,9 @@ class Product(Base):
     sub_category_id: Mapped[int] = mapped_column(Integer, ForeignKey("subcategory.id"))
     product_availability: Mapped[str] = mapped_column(String, default="out_of_stock")
     created_by: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     searchable_text: Mapped[str] = mapped_column(
         TSVECTOR,
         Computed(
@@ -390,9 +418,6 @@ class Product(Base):
             "setweight(to_tsvector('english', coalesce(product_description, '')), 'B')",
             persisted=True,
         ),
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
     )
     updated_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
