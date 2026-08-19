@@ -8,20 +8,32 @@ from app.api.v1.schemas import (
     StandardResponse,
     PaginatedResponse,
     ProductImageResponse,
+    CursorPaginatedResponse,
+    StoreRes,
 )
 from app.database.config import settings
-from app.models import Product, Category, Inventory, ProductImage, SubCategory, Store
+from app.models import (
+    Product,
+    Category,
+    Inventory,
+    ProductImage,
+    SubCategory,
+    Store,
+    ProductVariant,
+    VariantImage,
+)
 from sqlalchemy import select, func, cast, update, String, delete
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy.exc import IntegrityError
-import asyncio
+from datetime import datetime, timezone
 from app.utils.redis import (
     cart_global_invalidation,
     order_global_invalidation,
-    product_invalidation,
+    store_products_invalidation,
     cache_version,
     cached,
     cache,
+    product_version_invalidation,
 )
 from app.utils.helper import file_generator, upload_photo_helper, store_auth
 from app.utils.supabase_url import cleaned_up
@@ -33,24 +45,39 @@ async def create(
     store_id,
     sub_category_name,
     product_name,
-    product_type,
-    product_size,
     product_description,
-    product_price,
     primary_image,
     get_supabase,
     db,
-    payload,
+    request,
+    background_tasks,
 ):
-    user_id = await store_auth(store_id, db, payload)
+    user_id = await store_auth(store_id, db, request)
     stmt = select(Store).where(Store.id == store_id)
     eligible = (await db.execute(stmt)).scalar_one_or_none()
     if not eligible:
         logger.warning(
-            "unauthorized attempt to query store: %s",
+            "invalid attempt to query non existent store: %s",
             store_id,
         )
-        raise HTTPException(status_code=403, detail="not authorized")
+        raise HTTPException(status_code=404, detail="store not found")
+    if sub_category_name.strip() not in [s.strip() for s in eligible.sub_category]:
+        logger.warning("user: %s, entered an invalid sub_category", user_id)
+        raise HTTPException(
+            status_code=409,
+            detail="your store is not registered under this sub_category",
+        )
+    sub_category = (
+        await db.execute(
+            select(SubCategory.id).where(
+                func.trim(SubCategory.name) == sub_category_name.strip(),
+                SubCategory.category_id == eligible.category_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not sub_category:
+        logger.warning("user: %s, entered an invalid sub_category", user_id)
+        raise HTTPException(status_code=404, detail="sub_category not found")
     filename = None
     files_allowed = ("image/jpeg", "image/png", "image/webp")
     try:
@@ -70,60 +97,21 @@ async def create(
             raise HTTPException(
                 status_code=500, detail="error uploading product primary image"
             )
-        logger.info("saved product primary image")
-    except Exception as e:
-        logger.exception("could not save product image")
-        if filename:
-            await cleaned_up(
-                get_supabase,
-                filename,
-                context_1="error removing orphaned product images",
-                context_2="successfully removed orphaned product images",
-            )
-        if isinstance(e, HTTPException):
-            raise e
-        raise HTTPException(
-            status_code=500, detail="could not save product primary image"
+        logger.info("saved product image, uploaded by user: %s", user_id)
+        primary_image = filename
+        new_product = Product(
+            store_id=eligible.id,
+            product_name=product_name,
+            primary_image=filename,
+            created_by=user_id,
+            product_description=product_description,
+            category_id=eligible.category_id,
+            sub_category_id=sub_category,
         )
-    logger.info("saved product images, uploaded by user: %s", user_id)
-    primary_image = filename
-    if sub_category_name.strip() not in [s.strip() for s in eligible.sub_category]:
-        logger.warning("user: %s, entered an unvalid sub_category", user_id)
-        raise HTTPException(
-            status_code=409,
-            detail="your store is not registered under this sub_category",
-        )
-    sub_category = (
-        await db.execute(
-            select(SubCategory.id).where(
-                func.trim(SubCategory.name) == sub_category_name.strip(),
-                SubCategory.category_id == eligible.category_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if not sub_category:
-        logger.warning("user: %s, entered an unvalid sub_category", user_id)
-        raise HTTPException(status_code=404, detail="sub_category not found")
-    new_product = Product(
-        store_id=eligible.id,
-        product_name=product_name,
-        primary_image=filename,
-        product_type=product_type,
-        product_size=product_size,
-        product_description=product_description,
-        product_price=product_price,
-        category_id=eligible.category_id,
-        sub_category_id=sub_category,
-    )
-    try:
         db.add(new_product)
         await db.commit()
-        await asyncio.gather(
-            cart_global_invalidation(),
-            order_global_invalidation(),
-            product_invalidation(),
-        )
     except HTTPException:
+        await db.rollback()
         if filename:
             await cleaned_up(
                 get_supabase,
@@ -154,6 +142,10 @@ async def create(
             )
         logger.exception("error while saving product data")
         raise HTTPException(status_code=500, detail="internal server error")
+    background_tasks.add_task(cart_global_invalidation, store_id)
+    background_tasks.add_task(order_global_invalidation, store_id)
+    background_tasks.add_task(store_products_invalidation, store_id)
+    logger.info("product created successfully by user %s", user_id)
     return StandardResponse(
         status="success", message="product added to shelve", data=None
     )
@@ -164,10 +156,10 @@ async def add_image(
     store_id,
     image,
     db,
-    payload,
+    request,
     get_supabase,
 ):
-    user_id = await store_auth(store_id, db, payload)
+    user_id = await store_auth(store_id, db, request)
     stmt = (
         select(Store)
         .options(selectinload(Store.products))
@@ -201,7 +193,7 @@ async def add_image(
         )
         raise HTTPException(status_code=400, detail="maximum of 5 images allowed")
     filename = None
-    filename = await upload_photo_helper(image, payload, get_supabase)
+    filename = await upload_photo_helper(image, request, get_supabase)
     new_images = ProductImage(store_id=store_id, product_id=product_id, image=filename)
     try:
         db.add(new_images)
@@ -251,8 +243,8 @@ async def view_product_pics(store_id, product_id, db):
     return response
 
 
-async def delete_images(store_id, product_id, image_id, db, payload, get_supabase):
-    user_id = await store_auth(store_id, db, payload)
+async def delete_images(store_id, product_id, image_id, db, request, get_supabase):
+    user_id = await store_auth(store_id, db, request)
     delete_img = (
         await db.execute(
             select(ProductImage).where(
@@ -299,38 +291,18 @@ async def product_change(
     product_id,
     primary_image,
     product_name,
-    product_price,
-    product_size,
-    product_type,
     product_description,
     db,
-    payload,
+    request,
     get_supabase,
+    background_tasks,
 ):
-    user_id = await store_auth(store_id, db, payload)
-    stmt = (
-        select(Product)
-        .where(
-            Product.store_id == store_id,
-            Product.id == product_id,
-            Product.is_deleted.is_(False),
-        )
-        .with_for_update()
-    )
-    product = (await db.execute(stmt)).scalar_one_or_none()
-    if not product:
-        logger.warning(
-            "user: %s, tried editing a non existent product, product_id: %s",
-            user_id,
-            product_id,
-        )
-        raise HTTPException(status_code=404, detail="product not found")
+    user_id = await store_auth(store_id, db, request)
     filename = None
     old_photo = None
     has_changed = False
     if primary_image:
         try:
-            old_photo = product.primary_image
             allowed_types = ("image/jpeg", "image/png", "image/webp")
             if primary_image.content_type not in allowed_types:
                 logger.warning(
@@ -350,10 +322,7 @@ async def product_change(
                 logger.error("error updating product primary image %s", response)
                 raise HTTPException(status_code=500, detail="internal server error")
             logger.info("updated product primary image")
-            product.primary_image = filename
-            has_changed = True
-        except Exception as e:
-            await db.rollback()
+        except HTTPException:
             if filename:
                 await cleaned_up(
                     get_supabase,
@@ -361,30 +330,52 @@ async def product_change(
                     context_1="error removing orphaned product images",
                     context_2="successfully removed orphaned product images",
                 )
-            if isinstance(e, HTTPException):
-                raise e
+            raise
+        except Exception:
+            if filename:
+                await cleaned_up(
+                    get_supabase,
+                    filename,
+                    context_1="error removing orphaned product images",
+                    context_2="successfully removed orphaned product images",
+                )
             logger.exception("error updating product images")
             raise HTTPException(status_code=500, detail="error saving product image")
-    update_fields = {
-        "product_name": product_name,
-        "product_price": product_price,
-        "product_size": product_size,
-        "product_type": product_type,
-        "product_description": product_description,
-    }
-    for attr, field in update_fields.items():
-        if field is not None:
-            setattr(product, attr, field)
-            has_changed = True
-    if not has_changed:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
     try:
-        await db.commit()
-        await asyncio.gather(
-            cart_global_invalidation(),
-            order_global_invalidation(),
-            product_invalidation(),
+        stmt = (
+            select(Product)
+            .where(
+                Product.store_id == store_id,
+                Product.id == product_id,
+                Product.is_deleted.is_(False),
+            )
+            .with_for_update()
         )
+        product = (await db.execute(stmt)).scalar_one_or_none()
+        if not product:
+            logger.warning(
+                "user: %s, tried editing a non existent product, product_id: %s",
+                user_id,
+                product_id,
+            )
+            raise HTTPException(status_code=404, detail="product not found")
+        if filename:
+            old_photo = product.primary_image
+            product.primary_image = filename
+            has_changed = True
+        update_fields = {
+            "product_name": product_name,
+            "product_description": product_description,
+        }
+        for attr, field in update_fields.items():
+            if field is not None:
+                setattr(product, attr, field)
+                has_changed = True
+        if not has_changed:
+            await db.rollback()
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        product.updated_by = user_id
+        await db.commit()
         if old_photo:
             await cleaned_up(
                 get_supabase,
@@ -394,6 +385,7 @@ async def product_change(
             )
         logger.info("successfully updated product data")
     except HTTPException:
+        await db.rollback()
         if filename:
             await cleaned_up(
                 get_supabase,
@@ -424,53 +416,104 @@ async def product_change(
             )
         logger.exception("error occurred while updating product data")
         raise HTTPException(status_code=500, detail="internal server error")
+    background_tasks.add_task(cart_global_invalidation, store_id)
+    background_tasks.add_task(order_global_invalidation, store_id)
+    background_tasks.add_task(product_version_invalidation, product_id)
+    logger.info("user %s edited product %s successfully", user_id, product_id)
     return StandardResponse(
         status="success", message="product updated successfully", data=None
     )
 
 
-async def list_products(
-    seed,
+async def store_product(
     db,
-    page,
-    limit,
+    store_id,
+    product_id,
 ):
-    offset = (page - 1) * limit
-    version = await cache_version("product_key")
-    cache_key = f"product:{version}:{seed}:{page}:{limit}"
+    version = await cache_version(f"product_key:{product_id}")
+    cache_key = f"product:{version}:{store_id}:{product_id}"
     product_cache = await cache(cache_key)
-    if product_cache and isinstance(product_cache, dict):
-        logger.info("Cache hit for products")
+    if product_cache:
+        logger.info("Cache hit for product %s in store: %s", product_id, store_id)
         return StandardResponse(**product_cache)
-    total = None
-    async with db as conn:
-        stmt = (
-            select(Product)
-            .options(selectinload(Product.inventory))
-            .where(Product.is_deleted.is_(False))
-            .order_by(func.md5(func.concat(cast(Product.id, String), str(seed))))
+    stmt = (
+        select(Product)
+        .options(selectinload(Product.store))
+        .where(
+            Product.is_deleted.is_(False),
+            Product.store_id == store_id,
+            Product.id == product_id,
         )
-        products = (
-            (await conn.execute(stmt.offset(offset).limit(limit))).scalars().all()
-        )
-        total = (await conn.execute(select(func.count(Product.id)))).scalar() or 0
-        logger.info("total products in the market: %s", total)
-    if not products:
-        logger.warning("all products queried, but none found")
-        return StandardResponse(
-            status="success", message="there is no product available", data=None
-        )
-    data = PaginatedMetadata[ProductResponse](
-        items=[ProductResponse.model_validate(product) for product in products],
-        pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
+    product = (await db.execute(stmt)).scalar_one_or_none()
+    if not product:
+        logger.warning("Product %s not found in store %s", product_id, store_id)
+        raise HTTPException(status_code=404, detail="Product not found")
+    data = ProductResponse.model_validate(product)
     full_response = StandardResponse(
         status="success", message="products data", data=data
     )
-    await cached(cache_key, full_response, ttl=600)
-    logger.info("Product data cached")
+    await cached(cache_key, full_response, ttl=7200)
     logger.info(
-        f"all products fetched successfully page={page}, limit={limit}, total={total}"
+        "product %s of store %s fetched successfully",
+        product_id,
+        store_id,
+    )
+    return full_response
+
+
+async def list_store_products(
+    seed,
+    db,
+    store_id,
+    cursor_id,
+    limit,
+):
+    version = await cache_version(f"store_product_key:{store_id}")
+    cache_key = f"store_product:{version}:{store_id}:{seed}:{cursor_id}:{limit}"
+    product_cache = await cache(cache_key)
+    if product_cache:
+        logger.info("Cache hit for products in store: %s", store_id)
+        return StandardResponse(**product_cache)
+    stmt = (
+        select(Product)
+        .options(joinedload(Product.store))
+        .where(Product.is_deleted.is_(False), Product.store_id == store_id)
+        .order_by(Product.id.asc())
+    )
+    if cursor_id is not None:
+        stmt = stmt.where(Product.id > cursor_id)
+    products = (await db.execute(stmt.limit(limit + 1))).unique().scalars().all()
+    has_more = len(products) > limit
+    if has_more:
+        products = products[:limit]
+    next_cursor = products[-1].id if products else None
+    if products:
+        store_data = StoreRes.model_validate(products[0].store)
+    else:
+        store_obj = await db.get(Store, store_id)
+        if not store_obj or store_obj.is_deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Store not found"
+            )
+        store_data = StoreRes.model_validate(store_obj)
+    data = PaginatedMetadata[ProductResponse](
+        items=[ProductResponse.model_validate(product) for product in products],
+        cursor_pagination=CursorPaginatedResponse(
+            next_cursor=next_cursor, limit=limit, has_more=has_more
+        ),
+    )
+    full_response = StandardResponse(
+        status="success",
+        message="products data",
+        data={"store": store_data, "products": data},
+    )
+    await cached(cache_key, full_response, ttl=7200)
+    logger.info(
+        "products of store %s fetched successfully, cursor_id: %s, limit: %s",
+        store_id,
+        cursor_id,
+        limit,
     )
     return full_response
 
@@ -485,8 +528,8 @@ async def search_product(
     normalized_product = product_name.strip().lower() if product_name else ""
     normalized_category = category.strip().lower() if category else ""
     normalized_sub_category = sub_category.strip().lower() if sub_category else ""
-    version = await cache_version("product_key")
-    cache_key = f"product:{version}:{filters}:{normalized_product}:{normalized_category}:{normalized_sub_category}:{page}:{limit}"
+    version = await cache_version("search_product_key")
+    cache_key = f"platform_product:{version}:{filters}:{normalized_product}:{normalized_category}:{normalized_sub_category}:{page}:{limit}"
     product_cache = await cache(cache_key)
     if product_cache:
         logger.info("Cache hit for searched products")
@@ -508,29 +551,29 @@ async def search_product(
     )
     if product_name is not None:
         logger.info("filtering products by product name %s", product_name)
-        stmt = stmt.where(Product.product_name.ilike(f"%{product_name}%"))
+        stmt = stmt.where(
+            Product.search_vector.bool_op("@@")(
+                func.plainto_tsquery("english", product_name)
+            )
+        )
     if category is not None:
         logger.info("filltering products by category %s", category)
         stmt = stmt.where(Category.name.ilike(f"%{category}%"))
     if sub_category is not None:
         logger.info("filltering products by sub_category %s", sub_category)
         stmt = stmt.where(SubCategory.name.ilike(f"%{sub_category}%"))
+    if filters == "latest":
+        stmt = stmt.outerjoin(Inventory, Product.id == Inventory.product_id)
     total = (
         await db.execute(select(func.count()).select_from(stmt.subquery()))
     ).scalar() or 0
     logger.info("total products querried %s", total)
-    if filters == "latest":
-        stmt = stmt.outerjoin(Inventory, Product.id == Inventory.product_id)
-    stmt = stmt.options(selectinload(Product.inventory))
+    stmt = stmt.options(selectinload(Product.store))
     result = (
         (await db.execute(stmt.order_by(*order).offset(offset).limit(limit)))
         .scalars()
         .all()
     )
-    if not result:
-        return StandardResponse(
-            status="success", message="your search has returned 0 result", data=None
-        )
     data = PaginatedMetadata[ProductResponse](
         items=[ProductResponse.model_validate(res) for res in result],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
@@ -539,52 +582,69 @@ async def search_product(
         status="success", message="products data", data=data
     )
     await cached(cache_key, full_response, ttl=600)
-    logger.info("cached searched products")
+    logger.info("global search for products returned data successfully")
     return full_response
 
 
-async def delete_one(store_id, product_id, background_task, db, payload, get_supabase):
-    user_id = await store_auth(store_id, db, payload)
-    stmt = (
-        select(Product)
-        .options(selectinload(Product.product_images))
-        .where(
-            Product.store_id == store_id,
-            Product.id == product_id,
-            Product.is_deleted.is_(False),
-        )
-        .with_for_update()
-    )
-    product = (await db.execute(stmt)).scalar_one_or_none()
-    if not product:
-        logger.warning(
-            "user: %s, tried editing a non existent product, product_id: %s",
-            user_id,
-            product_id,
-        )
-        raise HTTPException(status_code=404, detail="product not found")
-    product.is_deleted = True
-    (
-        await db.execute(
-            update(Inventory)
-            .where(Inventory.product_id == product_id)
-            .values(is_deleted=True)
-        )
-    )
-    files_to_delete = [p.image for p in product.product_images if p]
-    data_id = product.id
-    await db.execute(delete(ProductImage).where(ProductImage.product_id == product_id))
+async def delete_one(store_id, product_id, background_task, db, request, get_supabase):
+    user_id = await store_auth(store_id, db, request)
     try:
+        stmt = (
+            select(Product)
+            .options(
+                selectinload(Product.product_images),
+                selectinload(Product.productvariants).selectinload(
+                    ProductVariant.vimage
+                ),
+            )
+            .where(
+                Product.store_id == store_id,
+                Product.id == product_id,
+                Product.is_deleted.is_(False),
+            )
+            .with_for_update()
+        )
+        product = (await db.execute(stmt)).scalar_one_or_none()
+        if not product:
+            logger.warning(
+                "user: %s, tried editing a non existent product, product_id: %s",
+                user_id,
+                product_id,
+            )
+            raise HTTPException(status_code=404, detail="product not found")
+        now = datetime.now(timezone.utc)
+        product.is_deleted = True
+        product.deleted_by = user_id
+        product.deleted_at = now
+        files_to_delete = [p.image for p in product.product_images if p]
+        for variant in product.productvariants:
+            files_to_delete.extend([v.image for v in variant.vimage if v])
+        rows = await db.execute(
+            update(ProductVariant)
+            .where(ProductVariant.product_id == product_id)
+            .values(is_deleted=True, deleted_at=now, deleted_by=user_id)
+            .returning(ProductVariant.id)
+        )
+        variant_ids = rows.scalars().all()
+        await db.execute(
+            delete(ProductImage).where(ProductImage.product_id == product_id)
+        )
+        if variant_ids:
+            (
+                await db.execute(
+                    update(Inventory)
+                    .where(Inventory.variant_id.in_(variant_ids))
+                    .values(is_deleted=True, deleted_at=now, deleted_by=user_id)
+                )
+            )
+            await db.execute(
+                delete(VariantImage).where(VariantImage.variant_id.in_(variant_ids))
+            )
         await db.commit()
-        background_task.add_task(
-            cart_global_invalidation,
-        )
-        background_task.add_task(
-            order_global_invalidation,
-        )
-        background_task.add_task(
-            product_invalidation,
-        )
+        background_task.add_task(cart_global_invalidation, store_id)
+        background_task.add_task(order_global_invalidation, store_id)
+        background_task.add_task(product_version_invalidation, product_id)
+        background_task.add_task(store_products_invalidation, store_id)
         if files_to_delete:
             background_task.add_task(
                 cleaned_up,
@@ -593,6 +653,9 @@ async def delete_one(store_id, product_id, background_task, db, payload, get_sup
                 context_1="error removing orphaned product images",
                 context_2="successfully removed orphaned product images",
             )
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.exception(
@@ -611,7 +674,7 @@ async def delete_one(store_id, product_id, background_task, db, payload, get_sup
         status="success",
         message="deleted product",
         data={
-            "id": data_id,
+            "id": product_id,
             "user_id": user_id,
             "deleted": True,
         },
