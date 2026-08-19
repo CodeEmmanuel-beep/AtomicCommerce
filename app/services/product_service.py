@@ -37,6 +37,7 @@ from app.utils.redis import (
 )
 from app.utils.helper import file_generator, upload_photo_helper, store_auth
 from app.utils.supabase_url import cleaned_up
+import re
 
 logger = get_logger("products")
 
@@ -451,7 +452,7 @@ async def store_product(
         raise HTTPException(status_code=404, detail="Product not found")
     data = ProductResponse.model_validate(product)
     full_response = StandardResponse(
-        status="success", message="products data", data=data
+        status="success", message="product data", data=data
     )
     await cached(cache_key, full_response, ttl=7200)
     logger.info(
@@ -518,64 +519,77 @@ async def list_store_products(
     return full_response
 
 
-async def search_product(
-    seed, filters, product_name, category, sub_category, page, limit, db
-):
+async def search_product(seed, filters, search, search_value, page, limit, db):
     offset = (page - 1) * limit
-    if not product_name and not category and not sub_category:
+    if not search_value:
         logger.error("user tried to execute an empty request")
-        raise HTTPException(status_code=400, detail="all fields can not be left blank")
-    normalized_product = product_name.strip().lower() if product_name else ""
-    normalized_category = category.strip().lower() if category else ""
-    normalized_sub_category = sub_category.strip().lower() if sub_category else ""
+        raise HTTPException(
+            status_code=400, detail="you can not seaaarch a blank field"
+        )
+    clean_search = search_value.strip()
+    sanitized = re.sub(r"[^\w\s]", "", clean_search)
+    formatted_words = [words for words in sanitized.split() if words]
+    if not formatted_words:
+        raise HTTPException(
+            status_code=400, detail="search query contains no valid search terms"
+        )
+    ts_query_str = " & ".join(f"{word}:*" for word in formatted_words)
     version = await cache_version("search_product_key")
-    cache_key = f"platform_product:{version}:{filters}:{normalized_product}:{normalized_category}:{normalized_sub_category}:{page}:{limit}"
+    cache_key = f"platform_product:{version}:{filters}:{search}:{ts_query_str}:{clean_search}:{page}:{limit}"
     product_cache = await cache(cache_key)
     if product_cache:
         logger.info("Cache hit for searched products")
         return StandardResponse(**product_cache)
     order_map = {
         None: (func.md5(func.concat(cast(Product.id, String), str(seed))),),
-        "cheap": (Product.product_price.asc(),),
         "quality": (Product.avg_rating.desc(), Product.review_count.desc()),
-        "latest": (Inventory.last_updated.desc(),),
+        "latest": (Product.created_at.desc(),),
     }
     if filters not in order_map:
         raise HTTPException(status_code=400, detail="invalid filter")
     order = order_map[filters]
-    stmt = (
-        select(Product)
-        .join(Category, Product.category_id == Category.id)
-        .join(SubCategory, Product.sub_category_id == SubCategory.id)
-        .where(Product.is_deleted.is_(False))
-    )
-    if product_name is not None:
-        logger.info("filtering products by product name %s", product_name)
-        stmt = stmt.where(
-            Product.search_vector.bool_op("@@")(
-                func.plainto_tsquery("english", product_name)
-            )
+    stmt = select(
+        Product,
+    ).where(Product.is_deleted.is_(False))
+    ranking = None
+    if search == "product_name":
+        ts_query = func.to_tsquery("english", ts_query_str)
+        logger.info("filtering products by product name %s", ts_query_str)
+        ranking = func.ts_rank(Product.searchable_text, ts_query)
+        stmt = stmt.add_columns(ranking).where(
+            Product.searchable_text.op("@@")(ts_query)
         )
-    if category is not None:
-        logger.info("filltering products by category %s", category)
-        stmt = stmt.where(Category.name.ilike(f"%{category}%"))
-    if sub_category is not None:
-        logger.info("filltering products by sub_category %s", sub_category)
-        stmt = stmt.where(SubCategory.name.ilike(f"%{sub_category}%"))
-    if filters == "latest":
-        stmt = stmt.outerjoin(Inventory, Product.id == Inventory.product_id)
+    elif search == "category":
+        logger.info("filltering products by category %s", clean_search)
+        stmt = stmt.join(Category, Product.category_id == Category.id).where(
+            Category.name.ilike(f"%{clean_search}%")
+        )
+    elif search == "sub_category":
+        logger.info("filltering products by sub_category %s", clean_search)
+        stmt = stmt.join(SubCategory, Product.sub_category_id == SubCategory.id).where(
+            SubCategory.name.ilike(f"%{clean_search}%")
+        )
     total = (
         await db.execute(select(func.count()).select_from(stmt.subquery()))
     ).scalar() or 0
     logger.info("total products querried %s", total)
     stmt = stmt.options(selectinload(Product.store))
+    if ranking is not None:
+        ordering = (
+            ranking.desc(),
+            *order,
+            Product.id.asc(),
+        )
+    else:
+        ordering = (
+            *order,
+            Product.id.asc(),
+        )
     result = (
-        (await db.execute(stmt.order_by(*order).offset(offset).limit(limit)))
-        .scalars()
-        .all()
-    )
+        await db.execute(stmt.order_by(*ordering).offset(offset).limit(limit))
+    ).all()
     data = PaginatedMetadata[ProductResponse](
-        items=[ProductResponse.model_validate(res) for res in result],
+        items=[ProductResponse.model_validate(res[0]) for res in result],
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     full_response = StandardResponse(
