@@ -16,6 +16,7 @@ from app.api.v1.schemas import (
     ProductResponse,
     StandardResponse,
     ProductFilterEnum,
+    ProductSearch,
 )
 from app.services import product_service
 from app.utils.supabase_url import _supabase
@@ -155,20 +156,18 @@ async def store_products(
 )
 async def search(
     db: DatabaseDep,
+    search_value: str,
     seed: float = 0.5,
     filters: ProductFilterEnum = Query(None),
-    product_name: str | None = None,
-    category: str | None = None,
-    sub_category: str | None = None,
+    search: ProductSearch = Query(ProductSearch.product_name),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
 ):
     return await product_service.search_product(
         seed=seed,
         filters=filters.value if filters else None,
-        sub_category=sub_category,
-        product_name=product_name,
-        category=category,
+        search_value=search_value,
+        search=search.value,
         page=page,
         limit=limit,
         db=db,
