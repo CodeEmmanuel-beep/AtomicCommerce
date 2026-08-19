@@ -47,47 +47,47 @@ async def cached(key: str, data, ttl=60):
     await redis_client.set(key, orjson.dumps(payload), ex=ttl)
 
 
-async def product_invalidation(product_id):
-    value = await redis_client.incr(f"product_key:{product_id}")
-    await redis_client.expire(f"product_key:{product_id}", 18000)
+async def store_products_invalidation(store_id):
+    value = await redis_client.incr(f"store_product_key:{store_id}")
+    await redis_client.expire(f"store_product_key:{store_id}", 9000)
     return value
 
 
 async def product_review_invalidation(product_id: int):
     value = await redis_client.incr(f"product_review_key:{product_id}")
-    await redis_client.expire(f"product_review_key:{product_id}", 18000)
+    await redis_client.expire(f"product_review_key:{product_id}", 7200)
     return value
 
 
 async def product_reply_invalidation(product_id: int):
     version_key = f"product_reply_key:{product_id}"
     value = await redis_client.incr(version_key)
-    await redis_client.expire(version_key, 18000)
+    await redis_client.expire(version_key, 7200)
     return value
 
 
 async def store_review_invalidation(store_id: int):
     value = await redis_client.incr(f"store_review_key:{store_id}")
-    await redis_client.expire(f"store_review_key:{store_id}", 18000)
+    await redis_client.expire(f"store_review_key:{store_id}", 7200)
     return value
 
 
 async def store_reply_invalidation(store_id: int):
     value = await redis_client.incr(f"store_reply_key:{store_id}")
-    await redis_client.expire(f"store_reply_key:{store_id}", 18000)
+    await redis_client.expire(f"store_reply_key:{store_id}", 7200)
     return value
 
 
 async def store_invalidation_global():
     value = await redis_client.incr("store_key")
-    await redis_client.expire("store_key", 18000)
+    await redis_client.expire("store_key", 18100)
     return value
 
 
 async def profile_global_invalidation():
     version = "profile_keys"
     value = await redis_client.incr(version)
-    await redis_client.expire(version, 18000)
+    await redis_client.expire(version, 4500)
     return value
 
 
@@ -105,7 +105,7 @@ async def store_invalidation(user_id: int):
     return delete
 
 
-async def notification_invalidation(user_id: Optional[int]):
+async def notification_invalidation(user_id: int | None = None):
     cursor = 0
     pattern = f"notification:{user_id}:*"
     delete = False
@@ -121,7 +121,7 @@ async def notification_invalidation(user_id: Optional[int]):
 
 async def order_global_invalidation(store_id):
     value = await redis_client.incr(f"store_order_key:{store_id}")
-    await redis_client.expire(f"store_order_key:{store_id}", 18000)
+    await redis_client.expire(f"store_order_key:{store_id}", 4000)
     return value
 
 
@@ -139,15 +139,21 @@ async def cart_invalidation(user_id: int):
     return delete
 
 
+async def product_version_invalidation(product_id):
+    value = await redis_client.incr(f"product_key:{product_id}")
+    await redis_client.expire(f"product_key:{product_id}", 9000)
+    return value
+
+
 async def cart_global_invalidation(store_id):
     value = await redis_client.incr(f"store_cart_key:{store_id}")
-    await redis_client.expire(f"store_cart_key:{store_id}", 18000)
+    await redis_client.expire(f"store_cart_key:{store_id}", 4000)
     return value
 
 
 async def member_global_invalidation(store_id):
     value = await redis_client.incr(f"store_member_key:{store_id}")
-    await redis_client.expire(f"store_member_key:{store_id}", 18000)
+    await redis_client.expire(f"store_member_key:{store_id}", 18100)
     return value
 
 
