@@ -381,10 +381,15 @@ class Product(Base):
     product_description: Mapped[str] = mapped_column(Text)
     category_id: Mapped[int] = mapped_column(Integer, ForeignKey("category.id"))
     sub_category_id: Mapped[int] = mapped_column(Integer, ForeignKey("subcategory.id"))
-    product_availability: Mapped[str] = mapped_column(String, default="available")
+    product_availability: Mapped[str] = mapped_column(String, default="out_of_stock")
     created_by: Mapped[int] = mapped_column(Integer, nullable=False)
-    search_vector: Mapped[str | None] = mapped_column(
-        TSVECTOR, Computed("to_tsvector('english',product_name)", persisted=True)
+    searchable_text: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "setweight(to_tsvector('english', coalesce(product_name, '')), 'A') || "
+            "setweight(to_tsvector('english', coalesce(product_description, '')), 'B')",
+            persisted=True,
+        ),
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -398,7 +403,7 @@ class Product(Base):
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
-        Index("idx_gin_search_vector", "search_vector", postgresql_using="gin"),
+        Index("idx_gin_searchable_text", "searchable_text", postgresql_using="gin"),
         Index(
             "idx_product_store_active",
             "store_id",
@@ -765,8 +770,23 @@ class Category(Base):
     __tablename__ = "category"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String, unique=True)
+    created_by: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    deleted_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
+    __table_args__ = (
+        Index(
+            "idx_category_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+            postgresql_where=text("is_deleted IS False"),
+        ),
+    )
     products = relationship("Product", back_populates="category")
     stores = relationship("Store", back_populates="category")
     sub_categories = relationship("SubCategory", back_populates="category")
@@ -779,8 +799,23 @@ class SubCategory(Base):
         Integer, ForeignKey("category.id"), index=True
     )
     name: Mapped[str] = mapped_column(String, unique=True)
+    created_by: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    deleted_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
+    __table_args__ = (
+        Index(
+            "idx_subcategory_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+            postgresql_where=text("is_deleted IS False"),
+        ),
+    )
     products = relationship("Product", back_populates="sub_category")
     category = relationship("Category", back_populates="sub_categories")
 
