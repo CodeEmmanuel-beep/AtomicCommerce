@@ -1,48 +1,58 @@
-from fastapi import APIRouter, Depends, Query, UploadFile, File, BackgroundTasks, Form
+from fastapi import (
+    APIRouter,
+    Depends,
+    Query,
+    UploadFile,
+    File,
+    BackgroundTasks,
+    Form,
+    Request,
+    Depends,
+)
 from app.database.get import get_db
-from app.auth.verify_jwt import verify_token
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.schemas import (
     PaginatedMetadata,
     ProductResponse,
     StandardResponse,
+    ProductFilterEnum,
 )
 from app.services import product_service
 from app.utils.supabase_url import _supabase
 from decimal import Decimal
+from typing import Annotated
+from supabase import AsyncClient
 
 router = APIRouter(prefix="/product", tags=["Products"])
+
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
+
+SupabaseDep = Annotated[AsyncClient, Depends(_supabase)]
 
 
 @router.post(
     "/add_product", response_model=StandardResponse, response_model_exclude_none=True
 )
 async def create_product(
+    request: Request,
+    db: DatabaseDep,
+    get_supabase: SupabaseDep,
+    background_task: BackgroundTasks,
     store_id: int = Form(...),
     sub_category_name: str = Form(...),
     primary_image: UploadFile = File(...),
     product_name: str = Form(...),
-    product_type: str = Form(...),
-    product_size: str = Query(
-        "small", enum=["small", "medium", "large", "extra_large"]
-    ),
-    product_price: Decimal = Form(...),
     product_description: str = Form(...),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-    get_supabase=Depends(_supabase),
 ):
     return await product_service.create(
         primary_image=primary_image,
         store_id=store_id,
         sub_category_name=sub_category_name,
         product_name=product_name,
-        product_type=product_type,
-        product_size=product_size,
-        product_price=product_price,
         product_description=product_description,
         db=db,
-        payload=payload,
+        request=request,
+        background_tasks=background_task,
         get_supabase=get_supabase,
     )
 
@@ -51,19 +61,19 @@ async def create_product(
     "/product_images", response_model=StandardResponse, response_model_exclude_none=True
 )
 async def upload_product_images(
+    request: Request,
+    db: DatabaseDep,
+    get_supabase: SupabaseDep,
     store_id: int = Form(...),
     product_id: int = Form(...),
     image: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-    get_supabase=Depends(_supabase),
 ):
     return await product_service.add_image(
         image=image,
         store_id=store_id,
         product_id=product_id,
         db=db,
-        payload=payload,
+        request=request,
         get_supabase=get_supabase,
     )
 
@@ -74,11 +84,7 @@ async def upload_product_images(
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def product_images_list(
-    store_id: int,
-    product_id: int,
-    db: AsyncSession = Depends(get_db),
-):
+async def product_images_list(store_id: int, product_id: int, db: DatabaseDep):
     return await product_service.view_product_pics(
         store_id=store_id, product_id=product_id, db=db
     )
@@ -88,46 +94,57 @@ async def product_images_list(
     "/edit_product", response_model=StandardResponse, response_model_exclude_none=True
 )
 async def product_change(
+    request: Request,
+    db: DatabaseDep,
+    get_supabase: SupabaseDep,
     store_id: int,
     product_id: int,
+    background_task: BackgroundTasks,
     primary_image: UploadFile = File(None),
-    product_name: str = Form(None),
-    product_type: str = Form(None),
-    product_size: str = Query(None, enum=["small", "medium", "large", "extra_large"]),
-    product_price: Decimal = Form(None),
-    product_description: str = Form(None),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-    get_supabse=Depends(_supabase),
+    product_name: str | None = Form(None),
+    product_description: str | None = Form(None),
 ):
     return await product_service.product_change(
         store_id=store_id,
         product_id=product_id,
         primary_image=primary_image,
         product_name=product_name,
-        product_type=product_type,
-        product_size=product_size,
-        product_price=product_price,
         product_description=product_description,
         db=db,
-        payload=payload,
-        get_supabase=get_supabse,
+        request=request,
+        get_supabase=get_supabase,
+        background_tasks=background_task,
     )
 
 
 @router.get(
-    "/list",
-    response_model=StandardResponse[PaginatedMetadata[ProductResponse]],
+    "/store_product/{store_id}/{product_id}",
+    response_model=StandardResponse[ProductResponse],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def list_products(
+async def get_store_product(db: DatabaseDep, store_id: int, product_id: int):
+    return await product_service.store_product(
+        store_id=store_id, db=db, product_id=product_id
+    )
+
+
+@router.get(
+    "/store_products_list",
+    response_model=StandardResponse,
+    response_model_exclude_none=True,
+    response_model_exclude_defaults=True,
+)
+async def store_products(
+    db: DatabaseDep,
+    store_id: int,
     seed: float = 0.5,
-    db: AsyncSession = Depends(get_db),
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
+    cursor_id: int | None = Query(None, ge=1),
+    limit: int = Query(10, ge=1, le=100),
 ):
-    return await product_service.list_products(seed=seed, db=db, page=page, limit=limit)
+    return await product_service.list_store_products(
+        seed=seed, store_id=store_id, db=db, cursor_id=cursor_id, limit=limit
+    )
 
 
 @router.get(
@@ -137,18 +154,18 @@ async def list_products(
     response_model_exclude_defaults=True,
 )
 async def search(
+    db: DatabaseDep,
     seed: float = 0.5,
-    filters: str = Query(None, enum=["cheap", "quality", "latest"]),
+    filters: ProductFilterEnum = Query(None),
     product_name: str | None = None,
     category: str | None = None,
     sub_category: str | None = None,
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await product_service.search_product(
         seed=seed,
-        filters=filters,
+        filters=filters.value if filters else None,
         sub_category=sub_category,
         product_name=product_name,
         category=category,
@@ -164,19 +181,19 @@ async def search(
     response_model_exclude_none=True,
 )
 async def delete_image(
+    request: Request,
     store_id: int,
     product_id: int,
     image_id: int,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-    get_supabase=Depends(_supabase),
+    db: DatabaseDep,
+    get_supabase: SupabaseDep,
 ):
     return await product_service.delete_images(
         store_id=store_id,
         product_id=product_id,
         image_id=image_id,
         db=db,
-        payload=payload,
+        request=request,
         get_supabase=get_supabase,
     )
 
@@ -187,18 +204,18 @@ async def delete_image(
     response_model_exclude_none=True,
 )
 async def delete_product(
+    request: Request,
     store_id: int,
     product_id: int,
     background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
-    get_supabase=Depends(_supabase),
+    db: DatabaseDep,
+    get_supabase: SupabaseDep,
 ):
     return await product_service.delete_one(
         store_id=store_id,
         product_id=product_id,
         background_task=background_task,
         db=db,
-        payload=payload,
+        request=request,
         get_supabase=get_supabase,
     )
