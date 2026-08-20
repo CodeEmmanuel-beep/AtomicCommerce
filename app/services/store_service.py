@@ -10,6 +10,8 @@ from app.models import (
     Inventory,
     SubCategory,
     ProductImage,
+    ProductVariant,
+    VariantImage,
 )
 from app.api.v1.schemas import (
     StoreResponse,
@@ -178,12 +180,14 @@ async def store_creation(
         raise HTTPException(
             status_code=400, detail="all owners must be registered users"
         )
+    filename = None
     try:
         filename = await upload_photo_helper(store_photo, request, get_supabase)
         new_store = Store(
             store_photo=filename,
             store_name=store_name,
             slug=store_slug,
+            created_by=user_id,
             category_name=category,
             sub_category=sub_category,
             category_id=category_id,
@@ -201,7 +205,7 @@ async def store_creation(
                 context_1="error removing orphaned store photo",
                 context_2="successfully removed orphaned store photo",
             )
-            raise
+        raise
     except IntegrityError:
         await db.rollback()
         if filename:
@@ -224,7 +228,7 @@ async def store_creation(
             )
         logger.exception("error while creating store for user '%s'", user_id)
         raise HTTPException(status_code=500, detail="internal server error")
-    logger.info("store: %s, created successfully", new_store.id)
+    logger.info("store created successfully by user %s", user_id)
     return StandardResponse(status="success", message="store created", data=None)
 
 
@@ -377,6 +381,7 @@ async def store_update(
                 setattr(store_map, attr, field)
                 has_changed = True
         if has_changed:
+            store_map.updated_by = user_id
             await db.commit()
             if old_photo:
                 await cleaned_up(
@@ -518,11 +523,19 @@ async def view_store(position, db, request):
 
 async def search_stores(search, search_value, seed, page, limit, db):
     offset = (page - 1) * limit
+    clean_search = search_value.strip()
+    sanitized = re.sub(r"[^\w\s]", "", clean_search)
+    formatted_words = [word for word in sanitized.split() if word]
+    if not formatted_words:
+        logger.error("user tried to execute an empty request")
+        raise HTTPException(status_code=400, detail="you can not search a blank field")
+    ts_query_str = " & ".join(f"{word}:*" for word in formatted_words)
     version = await cache_version("store_key")
     cache_key = (
-        f"store_global_view:v{version}:{seed}:{search}:{search_value}:{page}:{limit}"
+        f"store_global_view:v{version}:{seed}:{search}:{ts_query_str}:{page}:{limit}"
     )
     store_cache = await cache(cache_key)
+    ts_query = func.to_tsquery("english", ts_query_str)
     if store_cache:
         logger.info(f"cache hit for {search_value} at search stores endpoint")
         return StandardResponse(**store_cache)
@@ -530,7 +543,7 @@ async def search_stores(search, search_value, seed, page, limit, db):
         select(Product)
         .where(
             Product.store_id == Store.id,
-            Product.product_name.ilike(f"%{search_value}%"),
+            Product.searchable_text.op("@@")(ts_query),
             Product.is_deleted.is_(False),
         )
         .order_by(Product.id.desc())
@@ -540,35 +553,30 @@ async def search_stores(search, search_value, seed, page, limit, db):
     )
     product_aliase = aliased(Product, inner_stmt, name="product_aliase")
     filter_column = {
-        "category": Store.category_name.ilike(f"%{search_value}%"),
-        "sub_category": cast(Store.sub_category, String).ilike(f"%{search_value}%"),
-        "store_name": Store.store_name.ilike(f"%{search_value}%"),
-        "product_name": product_aliase.product_name.ilike(f"%{search_value}%"),
+        "store": Store.searchable_text.op("@@")(ts_query),
+        "product": product_aliase.searchable_text.op("@@")(ts_query),
     }[search]
+    if search == "product":
+        added_column = func.ts_rank(product_aliase.searchable_text, ts_query)
+    else:
+        added_column = func.ts_rank(Store.searchable_text, ts_query)
     stmt = (
-        select(Store, product_aliase)
+        select(Store, product_aliase, added_column)
         .outerjoin(product_aliase, Store.id == product_aliase.store_id)
-        .options(selectinload(product_aliase.inventory))
         .where(
             filter_column,
             Store.approved.is_(True),
             Store.is_deleted.is_(False),
         )
-        .order_by(func.md5(func.concat(cast(Store.id, String), str(seed))))
+        .order_by(
+            added_column.desc(),
+            func.md5(func.concat(cast(Store.id, String), str(seed))),
+            Store.id.asc(),
+        )
     )
     rows = (await db.execute(stmt.offset(offset).limit(limit))).all()
-    if not rows:
-        logger.info(
-            "search for '%s' stores returned an empty list",
-            search_value,
-        )
-        return StandardResponse(
-            status="success",
-            message="no store available under this search",
-            data=None,
-        )
-    count_stmt = select(func.count(func.distinct(Store.id)))
-    if search == "product_name":
+    count_stmt = select(func.count(func.distinct(Store.id))).select_from(Store)
+    if search == "product":
         count_stmt = count_stmt.outerjoin(
             product_aliase, Store.id == product_aliase.store_id
         )
@@ -583,7 +591,7 @@ async def search_stores(search, search_value, seed, page, limit, db):
     ).scalar() or 0
     logger.info("total stores found is '%s'", total)
     items = []
-    for s_type, prod in rows:
+    for s_type, prod, _ in rows:
         data = StoreResponse.model_validate(s_type)
         data.business_logo = (
             get_public_url(s_type.business_logo) if s_type.business_logo else None
@@ -603,7 +611,7 @@ async def search_stores(search, search_value, seed, page, limit, db):
         message=f"available '{search_value}' stores",
         data=data_obj,
     )
-    await cached(cache_key, response, ttl=36000)
+    await cached(cache_key, response, ttl=18000)
     logger.info("search for stores returned data")
     return response
 
@@ -910,7 +918,7 @@ async def remove_staff(store_id, staff_id, db, request):
     return StandardResponse(status="success", message="personnel deleted", data=None)
 
 
-async def remove_store(store_id, db, request, get_supabase):
+async def remove_store(store_id, db, request, get_supabase, background_task):
     user_id = unique_id(request)
     role = user_role(request)
     if not user_id:
@@ -919,61 +927,101 @@ async def remove_store(store_id, db, request, get_supabase):
             status_code=401, detail="only registered users can access this endpoint"
         )
     allowed_roles = ("Owner", "Admin")
-    store_check = (
-        await db.execute(
-            select(Store)
-            .options(
-                selectinload(Store.user_owners),
-                selectinload(Store.account),
-                selectinload(Store.products).selectinload(Product.product_images),
-            )
-            .where(
-                Store.id == store_id,
-                Store.is_deleted.is_(False),
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if not store_check:
-        logger.error(
-            "user: %s, tried accessing a non existent store at the delete_store endpoint",
-            user_id,
-        )
-        raise HTTPException(status_code=404, detail="store not found")
-    owner_id = any(owner.id == user_id for owner in store_check.user_owners)
-    if not owner_id and role not in allowed_roles:
-        logger.warning(
-            "user: %s attempted a restricted endpoint (deleted store)", user_id
-        )
-        raise HTTPException(status_code=403, detail="restricted access")
-    store_check.is_deleted = True
-    store_check.approved = False
-    store_check.account.is_deleted = True
-    (
-        await db.execute(
-            update(Address).where(Address.store_id == store_id).values(is_deleted=True)
-        )
-    )
-    (
-        await db.execute(
-            update(Product).where(Product.store_id == store_id).values(is_deleted=True)
-        )
-    )
-    (
-        await db.execute(
-            update(Inventory)
-            .where(Inventory.store_id == store_id)
-            .values(is_deleted=True)
-        )
-    )
-    files_to_delete = []
-    for s_p in store_check.products:
-        if s_p.product_images:
-            files_to_delete.extend(p.image for p in s_p.product_images if p)
-    await db.execute(delete(ProductImage).where(ProductImage.store_id == store_id))
     try:
+        store_check = (
+            await db.execute(
+                select(Store)
+                .options(
+                    selectinload(Store.user_owners),
+                    selectinload(Store.account),
+                )
+                .where(
+                    Store.id == store_id,
+                    Store.is_deleted.is_(False),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if not store_check:
+            logger.error(
+                "user: %s, tried accessing a non existent store at the delete_store endpoint",
+                user_id,
+            )
+            raise HTTPException(status_code=404, detail="store not found")
+        owner_id = any(owner.id == user_id for owner in store_check.user_owners)
+        if not owner_id and role not in allowed_roles:
+            logger.warning(
+                "user: %s attempted a restricted endpoint (deleted store)", user_id
+            )
+            raise HTTPException(status_code=403, detail="restricted access")
+        now = datetime.now(timezone.utc)
+        store_check.is_deleted = True
+        store_check.deleted_by = user_id
+        store_check.deleted_at = now
+        store_check.approved = False
+        if store_check.account:
+            store_check.account.is_deleted = True
+        product_images_result = (
+            (
+                await db.execute(
+                    select(ProductImage.image).where(ProductImage.store_id == store_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        product_images = [img for img in product_images_result if img]
+        variant_images_result = (
+            (
+                await db.execute(
+                    select(VariantImage.image)
+                    .join(ProductVariant, VariantImage.variant_id == ProductVariant.id)
+                    .join(Product, ProductVariant.product_id == Product.id)
+                    .where(Product.store_id == store_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        variant_images = [img for img in variant_images_result if img]
+        files_to_delete = product_images + variant_images
+        (
+            await db.execute(
+                update(Address)
+                .where(Address.store_id == store_id)
+                .values(is_deleted=True)
+            )
+        )
+        product_list = await db.execute(
+            update(Product)
+            .where(Product.store_id == store_id)
+            .values(is_deleted=True, deleted_by=user_id, deleted_at=now)
+        ).returning(Product.id)
+        product_ids = product_list.scalars().all()
+        (
+            await db.execute(
+                update(Inventory)
+                .where(Inventory.store_id == store_id)
+                .values(is_deleted=True, deleted_by=user_id, deleted_at=now)
+            )
+        )
+        await db.execute(delete(ProductImage).where(ProductImage.store_id == store_id))
+        if product_ids:
+            variant_list = await db.execute(
+                update(ProductVariant)
+                .where(ProductVariant.product_id.in_(product_ids))
+                .values(is_deleted=True, deleted_by=user_id, deleted_at=now)
+                .returning(ProductVariant.id)
+            )
+            variant_ids = variant_list.scalars().all()
+            if variant_ids:
+                await db.execute(
+                    delete(VariantImage).where(VariantImage.variant_id.in_(variant_ids))
+                )
         await db.commit()
-        await store_invalidation_global()
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError:
         await db.rollback()
         logger.error(
@@ -995,5 +1043,6 @@ async def remove_store(store_id, db, request, get_supabase):
             context_1="error removing orphaned product images from storage",
             context_2="successfully removed orphaned product images from storage",
         )
+    background_task.add_task(store_invalidation_global)
     logger.info("store '%s', deleted", store_id)
     return StandardResponse(status="success", message="store deleted", data=None)
