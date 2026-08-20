@@ -265,12 +265,16 @@ class Store(Base):
 
     __table_args__ = (
         Index(
-            "idx_searchable_text_ts",
+            "idx_searchable_text",
             "searchable_text",
+            postgresql_using="gin",
+        ),
+        Index(
+            "idx_sub_category",
+            "sub_category",
             postgresql_using="gin",
             postgresql_ops={"sub_category": "jsonb_path_ops"},
         ),
-        Index("idx_sub_category_gin", "sub_category", postgresql_using="gin"),
     )
     tickets = relationship("Ticket", back_populates="store")
     user_owners = relationship("User", secondary=store_owners, back_populates="owners")
