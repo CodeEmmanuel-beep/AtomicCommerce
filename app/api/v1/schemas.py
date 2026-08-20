@@ -52,10 +52,8 @@ class UserState(str, Enum):
 
 
 class StoreFilterEnum(str, Enum):
-    category = "category"
-    sub_category = "sub_category"
-    store_name = "store_name"
-    product_name = "product_name"
+    store = "store"
+    product = "product"
 
 
 class OwnerStaff(str, Enum):
