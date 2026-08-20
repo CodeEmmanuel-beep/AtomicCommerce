@@ -1,4 +1,13 @@
-from fastapi import UploadFile, File, APIRouter, Depends, Query, Form, Request
+from fastapi import (
+    UploadFile,
+    File,
+    APIRouter,
+    Depends,
+    Query,
+    Form,
+    Request,
+    BackgroundTasks,
+)
 from app.services import store_service
 from app.api.v1.schemas import (
     StandardResponse,
@@ -170,7 +179,7 @@ async def view_stores(
 async def view_stores_global(
     search_value: str,
     db: DatabaseDep,
-    search: StoreFilterEnum = Query(StoreFilterEnum.category),
+    search: StoreFilterEnum = Query(StoreFilterEnum.store),
     seed: float = 0.5,
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
@@ -208,7 +217,12 @@ async def delete_store_by_id(
     store_id: int,
     db: DatabaseDep,
     get_supabase: SupabaseDep,
+    background_task: BackgroundTasks,
 ):
     return await store_service.remove_store(
-        store_id=store_id, db=db, request=request, get_supabase=get_supabase
+        store_id=store_id,
+        db=db,
+        request=request,
+        get_supabase=get_supabase,
+        background_task=background_task,
     )
