@@ -89,19 +89,19 @@ async def upload_photo_helper(photo, request, get_supabase, bucket: str | None =
     allowed_types = ("image/jpeg", "image/webp", "image/png")
     total_size = 0
     file_byte = b""
-    with BytesIO() as buffer:
-        try:
-            if photo.content_type not in allowed_types:
-                logger.warning(
-                    "user '%s', tried uploading an invalid file type: %s",
-                    user_id,
-                    photo.content_type,
-                )
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
-                )
-            filename = f"{uuid.uuid4()}_{secure_filename(photo.filename)}"
+    if photo.content_type not in allowed_types:
+        logger.warning(
+            "user '%s', tried uploading an invalid file type: %s",
+            user_id,
+            photo.content_type,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file type. Only JPG, PNG, WEBP allowed.",
+        )
+    filename = f"{uuid.uuid4()}_{secure_filename(photo.filename)}"
+    try:
+        with BytesIO() as buffer:
             while chunk := await photo.read(1024 * 1024):
                 total_size += len(chunk)
                 if total_size > max_size:
@@ -130,26 +130,25 @@ async def upload_photo_helper(photo, request, get_supabase, bucket: str | None =
                 raise HTTPException(status_code=500, detail="error uploading photo")
             logger.info("user: %s, successfully uploaded photo: %s", user_id, filename)
             return filename
-        except HTTPException:
-            if filename:
-                await cleaned_up(
-                    get_supabase,
-                    filename,
-                    context_1="error removing orphaned photo",
-                    context_2="successfully removed orphaned photo",
-                )
-            raise
-        except Exception:
-            logger.exception("error saving photo")
-            if filename:
-                await cleaned_up(
-                    get_supabase,
-                    filename,
-                    context_1="error removing orphaned photo",
-                    context_2="successfully removed orphaned photo",
-                )
-                logger.exception("error saving photo")
-                raise HTTPException(status_code=500, detail="error saving photo")
+    except HTTPException:
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                context_1="error removing orphaned photo",
+                context_2="successfully removed orphaned photo",
+            )
+        raise
+    except Exception:
+        logger.exception("error saving photo")
+        if filename:
+            await cleaned_up(
+                get_supabase,
+                filename,
+                context_1="error removing orphaned photo",
+                context_2="successfully removed orphaned photo",
+            )
+        raise HTTPException(status_code=500, detail="error saving photo")
 
 
 async def pre_file_generator(file, user_id):
