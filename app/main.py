@@ -28,6 +28,7 @@ from app.api.v1.routes import (
     profile,
     store_account_and_address,
     notifications,
+    product_variant,
 )
 from app.utils.redis import (
     run_router,
@@ -246,6 +247,7 @@ app.include_router(profile.router)
 app.include_router(category.router)
 app.include_router(sub_category.router)
 app.include_router(product.router)
+app.include_router(product_variant.router)
 app.include_router(inventory.router)
 app.include_router(cart.router)
 app.include_router(order.router)
