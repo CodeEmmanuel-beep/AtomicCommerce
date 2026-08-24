@@ -465,6 +465,9 @@ class ProductImage(Base):
         Integer, ForeignKey("product.id"), index=True
     )
     image: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
     product = relationship("Product", back_populates="product_images")
     store = relationship("Store", back_populates="product_images")
@@ -476,7 +479,6 @@ class ProductVariant(Base):
     product_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("product.id"), index=True
     )
-    primary_image: Mapped[str] = mapped_column(String)
     sku: Mapped[str] = mapped_column(String, unique=True)
     price: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     attributes: Mapped[dict] = mapped_column(JSONB)
@@ -507,6 +509,9 @@ class VariantImage(Base):
         Integer, ForeignKey("productvariant.id"), index=True
     )
     image: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
     variant = relationship("ProductVariant", back_populates="vimage")
 
