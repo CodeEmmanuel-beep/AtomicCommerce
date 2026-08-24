@@ -12,6 +12,7 @@ from io import BytesIO
 from app.models import React
 from app.api.v1.schemas import ReactionsSummary
 from sqlalchemy.ext.asyncio import AsyncSession
+import copy
 
 logger = get_logger("helper")
 
@@ -49,6 +50,16 @@ def unique_name(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="not authenticated")
     return user["sub"]
+
+
+def deep_merge(d1, d2) -> dict:
+    result = copy.deepcopy(d1)
+    for k, v in d2.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
 
 
 async def react_summary(
