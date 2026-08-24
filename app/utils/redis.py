@@ -47,7 +47,7 @@ async def cached(key: str, data, ttl=60):
     await redis_client.set(key, orjson.dumps(payload), ex=ttl)
 
 
-async def store_products_invalidation(store_id):
+async def store_products_invalidation(store_id: int):
     value = await redis_client.incr(f"store_product_key:{store_id}")
     await redis_client.expire(f"store_product_key:{store_id}", 9000)
     return value
@@ -81,6 +81,24 @@ async def store_reply_invalidation(store_id: int):
 async def store_invalidation_global():
     value = await redis_client.incr("store_key")
     await redis_client.expire("store_key", 18100)
+    return value
+
+
+async def product_variant_invalidation(variant_id: int | str | list):
+    if isinstance(variant_id, (str, int)):
+        variant_id = [variant_id]
+    for v_id in variant_id:
+        value = await redis_client.incr(f"variant_key:{v_id}")
+        await redis_client.expire(f"variant_key:{v_id}", 7300)
+    return value
+
+
+async def product_variants_invalidation(product_id: str | int | list):
+    if isinstance(product_id, (str, int)):
+        product_id = [product_id]
+    for p_id in product_id:
+        value = await redis_client.incr(f"product_variant_key:{p_id}")
+        await redis_client.expire(f"product_variant_key:{p_id}", 7300)
     return value
 
 
@@ -119,7 +137,7 @@ async def notification_invalidation(user_id: int | None = None):
     return delete
 
 
-async def order_global_invalidation(store_id):
+async def order_global_invalidation(store_id: int):
     value = await redis_client.incr(f"store_order_key:{store_id}")
     await redis_client.expire(f"store_order_key:{store_id}", 4000)
     return value
@@ -139,25 +157,28 @@ async def cart_invalidation(user_id: int):
     return delete
 
 
-async def product_version_invalidation(product_id):
-    value = await redis_client.incr(f"product_key:{product_id}")
-    await redis_client.expire(f"product_key:{product_id}", 9000)
+async def product_version_invalidation(product_id: str | int | list):
+    if isinstance(product_id, (str, int)):
+        product_id = [product_id]
+    for p_id in product_id:
+        value = await redis_client.incr(f"product_key:{p_id}")
+        await redis_client.expire(f"product_key:{p_id}", 9000)
     return value
 
 
-async def cart_global_invalidation(store_id):
+async def cart_global_invalidation(store_id: int):
     value = await redis_client.incr(f"store_cart_key:{store_id}")
     await redis_client.expire(f"store_cart_key:{store_id}", 4000)
     return value
 
 
-async def member_global_invalidation(store_id):
+async def member_global_invalidation(store_id: int):
     value = await redis_client.incr(f"store_member_key:{store_id}")
     await redis_client.expire(f"store_member_key:{store_id}", 18100)
     return value
 
 
-async def order_address_invalidation(user_id):
+async def order_address_invalidation(user_id: int):
     cursor = 0
     pattern = f"delivery_address:{user_id}:*"
     delete = False
