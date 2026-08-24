@@ -13,6 +13,7 @@ from datetime import datetime, date
 from app.utils.supabase_url import get_public_url
 from decimal import Decimal
 from enum import Enum
+import orjson
 
 T = TypeVar("T")
 
@@ -158,7 +159,28 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProductVariantRequest(BaseModel):
+    id: int | None = None
+    store_id: int
+    product_id: int | None = None
+    attributes: dict | Any | None = None
+    sku: str | None = None
+    price: Decimal | None = None
+
+
+class ProductVariantResponse(BaseModel):
+    id: int
+    product_id: int
+    primary_image: str | None = None
+    attributes: dict | Any
+    sku: str
+    price: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class StoreAccountsList(BaseModel):
+    id: int
     bank_name: str
     account_type: str
     account_holder_name: str
@@ -252,6 +274,7 @@ class NotificationResponse(BaseModel):
 
 
 class StoreAccountResponse(BaseModel):
+    id: int
     bank_name: str
     account_type: str
     account_holder_name: str
