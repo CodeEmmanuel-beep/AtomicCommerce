@@ -13,14 +13,6 @@ def verify_password(plain_password: str, hash_password: str):
 
 
 def hashed_password(password):
-    if len(password) < 8:
-        raise HTTPException(
-            status_code=400, detail="password should be atleast 8 characters"
-        )
-    if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
-        raise HTTPException(
-            status_code=400, detail="password should be letters and numbers"
-        )
     return password_context.hash(password)
 
 
