@@ -289,8 +289,8 @@ class Store(Base):
     inventories = relationship("Inventory", back_populates="store")
     carts = relationship("Cart", back_populates="store")
     membership = relationship("Membership", back_populates="store", uselist=False)
-    product_images = relationship("ProductImage", back_populates="store")
     notifications = relationship("Notification", back_populates="store")
+    productvariants = relationship("ProductVariant", back_populates="store")
 
 
 class Address(Base):
@@ -446,31 +446,12 @@ class Product(Base):
         ),
     )
     productvariants = relationship("ProductVariant", back_populates="product")
-    orderitem = relationship("OrderItem", back_populates="product")
     store = relationship("Store", back_populates="products")
     review = relationship("Review", back_populates="product")
     replies = relationship("Reply", back_populates="product")
-    cartitems = relationship("CartItem", back_populates="product")
     category = relationship("Category", back_populates="products")
     sub_category = relationship("SubCategory", back_populates="products")
-    product_images = relationship("ProductImage", back_populates="product")
     notifications = relationship("Notification", back_populates="product")
-
-
-class ProductImage(Base):
-    __tablename__ = "product_image"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
-    product_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("product.id"), index=True
-    )
-    image: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
-    product = relationship("Product", back_populates="product_images")
-    store = relationship("Store", back_populates="product_images")
 
 
 class ProductVariant(Base):
@@ -479,7 +460,8 @@ class ProductVariant(Base):
     product_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("product.id"), index=True
     )
-    sku: Mapped[str] = mapped_column(String, unique=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"), index=True)
+    sku: Mapped[str] = mapped_column(String, index=True)
     price: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2))
     attributes: Mapped[dict] = mapped_column(JSONB)
     created_by: Mapped[int] = mapped_column(Integer)
@@ -496,8 +478,14 @@ class ProductVariant(Base):
     )
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    __table_args__ = (Index("idx_attributes", "attributes", postgresql_using="gin"),)
+    __table_args__ = (
+        Index("idx_attributes", "attributes", postgresql_using="gin"),
+        UniqueConstraint("store_id", "sku", name="store_sku"),
+    )
     product = relationship("Product", back_populates="productvariants")
+    cartitems = relationship("CartItem", back_populates="variant")
+    orderitems = relationship("OrderItem", back_populates="variant")
+    store = relationship("Store", back_populates="productvariants")
     inventory = relationship("Inventory", back_populates="variant", uselist=False)
     vimage = relationship("VariantImage", back_populates="variant")
 
@@ -859,9 +847,9 @@ class CartItem(Base):
     id = Column(Integer, primary_key=True)
     cart_id = Column(Integer, ForeignKey("cart.id", ondelete="CASCADE"), index=True)
     quantity = Column(Float, default=1)
-    product_id = Column(Integer, ForeignKey("product.id"), index=True)
+    variant_id = Column(Integer, ForeignKey("productvariant.id"), index=True)
 
-    product = relationship("Product", back_populates="cartitems")
+    variant = relationship("ProductVariant", back_populates="cartitems")
     cart = relationship("Cart", back_populates="cartitems")
 
 
@@ -952,11 +940,11 @@ class OrderItem(Base):
     __tablename__ = "orderitem"
     id = Column(Integer, primary_key=True)
     order_id = Column(Integer, ForeignKey("order.id"), index=True)
-    product_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("product.id"), index=True
+    variant_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("productvariant.id"), index=True
     )
     quantity = Column(Float, default=1)
     price = Column(Numeric(precision=12, scale=2))
 
-    product = relationship("Product", back_populates="orderitem")
+    variant = relationship("ProductVariant", back_populates="orderitems")
     order = relationship("Order", back_populates="orderitems")
