@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy.orm import selectinload
 from werkzeug.utils import secure_filename
 from app.logs.logger import get_logger
-from app.models import store_owners, store_staffs, Inventory, Store
+from app.models import store_owners, store_staffs, Inventory, Store, ProductVariant
 from app.utils.redis import cache
 from app.utils.supabase_url import cleaned_up
 from app.database.config import settings
@@ -212,18 +212,24 @@ async def store_auth(store_id, db, request):
 
 
 def store_inventory(store_id, inventory_id: int | None = None):
-    base_filter = [Inventory.store_id == store_id, Inventory.is_deleted.is_(False)]
+    base_filter = [
+        Inventory.store_id == store_id,
+        Inventory.is_deleted.is_(False),
+        ProductVariant.is_deleted.is_(False),
+    ]
     if inventory_id:
         base_filter.append(Inventory.id == inventory_id)
         stmt = (
             select(Inventory)
-            .options(selectinload(Inventory.product))
+            .join(ProductVariant, Inventory.variant_id == ProductVariant.id)
+            .options(selectinload(Inventory.variant))
             .where(*base_filter)
         )
     else:
         stmt = (
             select(Inventory)
-            .options(selectinload(Inventory.product))
+            .join(ProductVariant, Inventory.variant_id == ProductVariant.id)
+            .options(selectinload(Inventory.variant))
             .where(*base_filter)
         )
     return stmt
