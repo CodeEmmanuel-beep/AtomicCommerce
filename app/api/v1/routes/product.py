@@ -7,7 +7,6 @@ from fastapi import (
     BackgroundTasks,
     Form,
     Request,
-    Depends,
 )
 from app.database.get import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,10 +16,10 @@ from app.api.v1.schemas import (
     StandardResponse,
     ProductFilterEnum,
     ProductSearch,
+    SingleProductResponse,
 )
 from app.services import product_service
 from app.utils.supabase_url import _supabase
-from decimal import Decimal
 from typing import Annotated
 from supabase import AsyncClient
 
@@ -58,37 +57,14 @@ async def create_product(
     )
 
 
-@router.post(
-    "/product_images", response_model=StandardResponse, response_model_exclude_none=True
-)
-async def upload_product_images(
-    request: Request,
-    db: DatabaseDep,
-    get_supabase: SupabaseDep,
-    store_id: int = Form(...),
-    product_id: int = Form(...),
-    image: UploadFile = File(...),
-):
-    return await product_service.add_image(
-        image=image,
-        store_id=store_id,
-        product_id=product_id,
-        db=db,
-        request=request,
-        get_supabase=get_supabase,
-    )
-
-
 @router.get(
     "/view_product_images/{store_id}/{product_id}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
-async def product_images_list(store_id: int, product_id: int, db: DatabaseDep):
-    return await product_service.view_product_pics(
-        store_id=store_id, product_id=product_id, db=db
-    )
+async def product_images_list(product_id: int, db: DatabaseDep):
+    return await product_service.view_product_pics(product_id=product_id, db=db)
 
 
 @router.put(
@@ -120,7 +96,7 @@ async def product_change(
 
 @router.get(
     "/store_product/{store_id}/{product_id}",
-    response_model=StandardResponse[ProductResponse],
+    response_model=StandardResponse[SingleProductResponse],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
 )
@@ -131,7 +107,7 @@ async def get_store_product(db: DatabaseDep, store_id: int, product_id: int):
 
 
 @router.get(
-    "/store_products_list",
+    "/store_products_list/{store_id}",
     response_model=StandardResponse,
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
@@ -139,12 +115,11 @@ async def get_store_product(db: DatabaseDep, store_id: int, product_id: int):
 async def store_products(
     db: DatabaseDep,
     store_id: int,
-    seed: float = 0.5,
     cursor_id: int | None = Query(None, ge=1),
     limit: int = Query(10, ge=1, le=100),
 ):
     return await product_service.list_store_products(
-        seed=seed, store_id=store_id, db=db, cursor_id=cursor_id, limit=limit
+        store_id=store_id, db=db, cursor_id=cursor_id, limit=limit
     )
 
 
@@ -171,29 +146,6 @@ async def search(
         page=page,
         limit=limit,
         db=db,
-    )
-
-
-@router.delete(
-    "/delete_product_image/{store_id}/{product_id}/{image_id}",
-    response_model=StandardResponse,
-    response_model_exclude_none=True,
-)
-async def delete_image(
-    request: Request,
-    store_id: int,
-    product_id: int,
-    image_id: int,
-    db: DatabaseDep,
-    get_supabase: SupabaseDep,
-):
-    return await product_service.delete_images(
-        store_id=store_id,
-        product_id=product_id,
-        image_id=image_id,
-        db=db,
-        request=request,
-        get_supabase=get_supabase,
     )
 
 
