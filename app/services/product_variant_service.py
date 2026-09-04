@@ -8,13 +8,14 @@ from app.api.v1.schemas import (
     ProductImageResponse,
 )
 from app.models import (
+    Store,
     Product,
     Inventory,
     ProductVariant,
     VariantImage,
 )
 from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy import select, func, update, delete
+from sqlalchemy import select, func, update, delete, exists
 from sqlalchemy.orm import selectinload, contains_eager
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timezone
@@ -42,31 +43,52 @@ async def create_v(
     background_tasks,
 ):
     user_id = await store_auth(variant.store_id, db, request)
-    stmt = select(Product).where(
-        Product.id == variant.product_id, Product.is_deleted.is_(False)
+    clean_sku = variant.sku.lower().strip()
+    if " " in clean_sku:
+        raise HTTPException(status_code=400, detail="sku cannot contain spaces")
+    stmt = select(
+        exists(
+            select(1).select_from(Store).join(Product, Product.store_id == Store.id)
+        ).where(
+            Store.id == variant.store_id,
+            Product.id == variant.product_id,
+            Store.is_deleted.is_(False),
+            Product.is_deleted.is_(False),
+        ),
+        exists(select(1).select_from(ProductVariant)).where(
+            func.lower(func.trim(ProductVariant.sku)) == clean_sku,
+            ProductVariant.store_id == variant.store_id,
+        ),
     )
-    product = (await db.execute(stmt)).scalar_one_or_none()
-    if not product:
+    store = (await db.execute(stmt)).fetchone()
+    store_product, store_sku = store or (False, False)
+    if not store_product:
         logger.warning(
-            "invalid attempt to query non existent product: %s",
+            "user %s tried creating variant for invalid product %s in store %s",
+            user_id,
             variant.product_id,
+            variant.store_id,
         )
-        raise HTTPException(status_code=404, detail="product not found")
-    if product.sku == variant.sku:
-        raise HTTPException(status_code=400, detail="sku already in use")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="store or product not found",
+        )
+    if store_sku:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="sku already in use in this store",
+        )
     try:
         new_variant = ProductVariant(
-            product_id=product.id,
+            product_id=variant.product_id,
+            store_id=variant.store_id,
             created_by=user_id,
             price=variant.price,
             attributes=variant.attributes,
-            sku=variant.sku,
+            sku=variant.sku.strip(),
         )
         db.add(new_variant)
         await db.commit()
-    except HTTPException:
-        await db.rollback()
-        raise
     except IntegrityError:
         await db.rollback()
         logger.error("database error while saving product variant data")
@@ -234,21 +256,33 @@ async def variant_change(
     background_tasks,
 ):
     user_id = await store_auth(variant.store_id, db, request)
+    clean_sku = None
+    if variant.sku:
+        clean_sku = variant.sku.lower().strip()
+        if " " in clean_sku:
+            raise HTTPException(status_code=400, detail="sku cannot contain spaces")
     has_changed = False
     try:
         stmt = (
-            select(ProductVariant)
+            select(
+                ProductVariant,
+                exists(select(1).select_from(ProductVariant)).where(
+                    func.lower(func.trim(ProductVariant.sku)) == clean_sku,
+                    ProductVariant.store_id == variant.store_id,
+                    ProductVariant.id != variant.id,
+                ),
+            )
             .join(Product, ProductVariant.product_id == Product.id)
-            .options(selectinload(ProductVariant.product))
             .where(
-                Product.store_id == variant.store_id,
-                ProductVariant.id == variant.id,
+                ProductVariant.store_id == variant.store_id,
                 ProductVariant.is_deleted.is_(False),
                 Product.is_deleted.is_(False),
+                ProductVariant.id == variant.id,
             )
             .with_for_update(of=ProductVariant)
         )
-        product_variant = (await db.execute(stmt)).scalar_one_or_none()
+        productvariant = (await db.execute(stmt)).fetchone()
+        product_variant, sku_exists = productvariant or (None, False)
         if not product_variant:
             logger.warning(
                 "user: %s, tried editing a non existent product variant, variant_id: %s",
@@ -256,7 +290,8 @@ async def variant_change(
                 variant.id,
             )
             raise HTTPException(status_code=404, detail="product variant not found")
-        product_id = product_variant.product.id
+        if sku_exists and clean_sku:
+            raise HTTPException(status_code=400, detail="sku already in use")
         if variant.attributes is not None:
             if edit_mode == "add":
                 old_attr = product_variant.attributes or {}
@@ -268,10 +303,13 @@ async def variant_change(
                 has_changed = True
             if has_changed:
                 flag_modified(product_variant, "attributes")
-        update_fields = ["sku", "price"]
-        for field in update_fields:
-            value = getattr(variant, field, None)
-            if value and value != getattr(product_variant, field):
+        update_fields = {}
+        if variant.price is not None:
+            update_fields["price"] = variant.price
+        if variant.sku is not None:
+            update_fields["sku"] = variant.sku.strip()
+        for field, value in update_fields.items():
+            if value != getattr(product_variant, field):
                 setattr(product_variant, field, value)
                 has_changed = True
         if not has_changed:
@@ -286,16 +324,19 @@ async def variant_change(
     except IntegrityError:
         await db.rollback()
         logger.error("database error occurred while updating product data")
-        raise HTTPException(status_code=400, detail="database error")
+        raise HTTPException(
+            status_code=400,
+            detail="database error, please ensure you are not reusing old sku",
+        )
     except Exception:
         await db.rollback()
         logger.exception("error occurred while updating product data")
         raise HTTPException(status_code=500, detail="internal server error")
     background_tasks.add_task(cart_global_invalidation, variant.store_id)
     background_tasks.add_task(order_global_invalidation, variant.store_id)
-    background_tasks.add_task(product_version_invalidation, product_id)
+    background_tasks.add_task(product_version_invalidation, variant.product_id)
     background_tasks.add_task(product_variant_invalidation, variant.id)
-    background_tasks.add_task(product_variants_invalidation, product_id)
+    background_tasks.add_task(product_variants_invalidation, variant.product_id)
     logger.info("user %s edited product variant %s successfully", user_id, variant.id)
     return StandardResponse(
         status="success", message="product variant updated successfully", data=None
@@ -314,7 +355,9 @@ async def product_variant(
         return StandardResponse(**product_cache)
     stmt = (
         select(ProductVariant)
-        .options(selectinload(ProductVariant.vimage))
+        .options(
+            selectinload(ProductVariant.vimage), selectinload(ProductVariant.inventory)
+        )
         .where(
             ProductVariant.is_deleted.is_(False),
             ProductVariant.id == variant_id,
@@ -362,7 +405,9 @@ async def list_product_variants(
         return StandardResponse(**product_cache)
     stmt = (
         select(ProductVariant)
-        .options(selectinload(ProductVariant.vimage))
+        .options(
+            selectinload(ProductVariant.vimage), selectinload(ProductVariant.inventory)
+        )
         .where(
             ProductVariant.is_deleted.is_(False),
             ProductVariant.product_id == product_id,
