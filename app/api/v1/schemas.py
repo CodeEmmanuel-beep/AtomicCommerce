@@ -13,7 +13,7 @@ from datetime import datetime, date
 from app.utils.supabase_url import get_public_url
 from decimal import Decimal
 from enum import Enum
-import orjson
+import re
 
 T = TypeVar("T")
 
@@ -166,17 +166,6 @@ class ProductVariantRequest(BaseModel):
     attributes: dict | Any | None = None
     sku: str | None = None
     price: Decimal | None = None
-
-
-class ProductVariantResponse(BaseModel):
-    id: int
-    product_id: int
-    primary_image: str | None = None
-    attributes: dict | Any
-    sku: str
-    price: Decimal
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class StoreAccountsList(BaseModel):
@@ -431,6 +420,18 @@ class InventoryObj(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProductVariantResponse(BaseModel):
+    id: int
+    product_id: int
+    primary_image: str | None = None
+    attributes: dict | Any
+    sku: str
+    price: Decimal
+    inventory: InventoryObj | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProductImageResponse(BaseModel):
     id: int
     image: str
@@ -458,22 +459,16 @@ class ProductImageResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ProductInventoryResponse(BaseModel):
+class VariantInventoryResponse(BaseModel):
     id: int
-    primary_image: str
-    product_name: str
-
-    @field_validator("primary_image", mode="before")
-    @classmethod
-    def full_url(cls, value) -> str | None:
-        return get_public_url(value)
+    sku: str
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class InventoryResponse(BaseModel):
     id: int
-    product: ProductInventoryResponse
+    variant: VariantInventoryResponse
     stock_quantity: int
     last_updated: datetime
 
@@ -520,6 +515,25 @@ class ProductRes(BaseModel):
     primary_image: str
     product_availability: str
     avg_rating: Decimal = Field(default=Decimal("0.00"))
+
+    @field_validator("primary_image", mode="before")
+    @classmethod
+    def full_url(cls, value) -> str | None:
+        return get_public_url(value)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SingleProductResponse(BaseModel):
+    store: StoreRes | None = None
+    id: int
+    product_name: str
+    primary_image: str
+    avg_rating: Decimal = Field(default=Decimal("0.00"))
+    review_count: int = Field(default=0)
+    product_description: str
+    product_availability: str
+    productvariants: list | None = None
 
     @field_validator("primary_image", mode="before")
     @classmethod
@@ -607,15 +621,43 @@ class ProfileMode(BaseModel):
 
 
 class RegistrationModel(BaseModel):
-    first_name: str
-    surname: str
+    first_name: str = Field(..., min_length=1, max_length=50)
+    surname: str = Field(..., min_length=1, max_length=50)
     username: str
     email: str
     date_of_birth: date
     nationality: str
     address: str | None = None
-    password: str
+    password: str = Field(
+        ..., min_length=8, description="Password must be at least 8 characters"
+    )
     confirm_password: str
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_complexity(cls, value: str) -> str:
+        if not re.search(r"[A-Za-z]", value):
+            raise ValueError("Password must contain at least one letter")
+        if not re.search(r"\d", value):
+            raise ValueError("Password must contain at least one digit")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", value):
+            raise ValueError("Password must contain at least one special character")
+        return value
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_age(cls, value: date) -> date:
+        today = date.today()
+        if value >= today:
+            raise ValueError("Date of birth must be in the past")
+        age = (
+            today.year
+            - value.year
+            - ((today.month, today.day) < (value.month, value.day))
+        )
+        if age < 13:
+            raise ValueError("User must be at least 13 years old to register")
+        return value
 
 
 class PaymentResponse(BaseModel):
