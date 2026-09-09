@@ -13,6 +13,7 @@ from app.models import (
     User,
     OrderItem,
     OrderStatus,
+    ProductVariant,
     Order,
     Store,
 )
@@ -20,32 +21,38 @@ from fastapi import HTTPException, status, Response
 from sqlalchemy import select, func, exists, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
-from app.utils.helper import react_summary
+from app.utils.helper import react_summary, unique_id
 from app.utils.redis import (
     cache,
     cache_version,
     cached,
     product_review_invalidation,
-    product_invalidation,
+    store_products_invalidation,
+    product_version_invalidation,
 )
+from decimal import Decimal
 
 logger = get_logger("product_reviews")
 
 
-async def product_review(review, background_task, ratings, db, payload):
-    user_id = payload.get("user_id")
+async def product_review(review, background_task, ratings, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt to access product_review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
     purchase_check_stmt = select(
         exists(
             select(1)
-            .select_from(OrderItem)
+            .select_from(Product)
+            .join(ProductVariant, Product.id == ProductVariant.product_id)
+            .join(OrderItem, ProductVariant.id == OrderItem.variant_id)
             .join(Order, OrderItem.order_id == Order.id)
             .where(
-                OrderItem.product_id == review.product_id,
+                Product.id == review.product_id,
                 Order.user_id == user_id,
-                Order.status.in_((OrderStatus.processing, OrderStatus.delivered)),
+                Order.status.in_(
+                    (OrderStatus.processing, OrderStatus.shipped, OrderStatus.delivered)
+                ),
             )
         )
     )
@@ -113,11 +120,12 @@ async def product_review(review, background_task, ratings, db, payload):
             ratings=ratings,
         )
         db.add(new_review)
-        current_avg = target.avg_rating or 0
+        current_avg = Decimal(str(target.avg_rating or "0.00"))
         current_count = target.review_count or 0
+        new_ratings = Decimal(str(ratings))
         target.review_count = current_count + 1
-        new_avg = (current_avg * current_count + ratings) / (current_count + 1)
-        target.avg_rating = new_avg
+        new_avg = (current_avg * current_count + new_ratings) / (current_count + 1)
+        target.avg_rating = new_avg.quantize(Decimal("0.01"))
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -132,7 +140,8 @@ async def product_review(review, background_task, ratings, db, payload):
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("review successfully saved in database reviewer: %s", user_id)
     background_task.add_task(product_review_invalidation, review.product_id)
-    background_task.add_task(product_invalidation)
+    background_task.add_task(store_products_invalidation, review.store_id)
+    background_task.add_task(product_version_invalidation, review.product_id)
     return StandardResponse(
         status="success", message="review generated successfully", data=None
     )
@@ -191,13 +200,13 @@ async def view_reviews(product_id, page, limit, db):
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = StandardResponse(status="success", message="reviews", data=data)
-    await cached(cache_key, response, ttl=30)
+    await cached(cache_key, response, ttl=7000)
     logger.info("search for reviews successfully returned data")
     return response
 
 
-async def update_review(review, ratings, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def update_review(review, ratings, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt to access update_review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -231,17 +240,18 @@ async def update_review(review, ratings, background_task, db, payload):
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         db_review.edited = True
         if db_review.ratings != ratings:
-            former_rating = db_review.ratings
-            db_review.ratings = ratings
-            current_avg = target.avg_rating or 0
+            former_rating = Decimal(str(db_review.ratings))
+            db_review.ratings = Decimal(str(ratings))
+            new_ratings = Decimal(str(ratings))
+            current_avg = Decimal(str(target.avg_rating or "0.00"))
             current_count = target.review_count or 0
             if current_count > 0:
                 new_avg = (
-                    (current_avg * current_count) - former_rating + ratings
+                    (current_avg * current_count) - former_rating + new_ratings
                 ) / current_count
-                target.avg_rating = max(0.0, new_avg)
+                target.avg_rating = new_avg.quantize(Decimal("0.01"))
             else:
-                target.avg_rating = ratings or 0.0
+                target.avg_rating = new_ratings or Decimal(str("0.00"))
                 target.review_count = 1
         await db.commit()
     except HTTPException:
@@ -257,14 +267,15 @@ async def update_review(review, ratings, background_task, db, payload):
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("user '%s' successfully updated his review", user_id)
     background_task.add_task(product_review_invalidation, review.product_id)
-    background_task.add_task(product_invalidation)
+    background_task.add_task(store_products_invalidation, review.store_id)
+    background_task.add_task(product_version_invalidation, review.product_id)
     return StandardResponse(
         status="success", message="review edited successfully", data=None
     )
 
 
-async def delete_review(store_id, product_id, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def delete_review(store_id, product_id, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt to access delete_review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -284,20 +295,18 @@ async def delete_review(store_id, product_id, background_task, db, payload):
             logger.error("user %s, tried deleting a non existent review", user_id)
             raise HTTPException(status_code=404, detail="review not found")
         review, product = row
-        current_avg = product.avg_rating or 0
+        current_avg = Decimal(str(product.avg_rating or "0.00"))
         current_count = product.review_count or 0
-        await db.delete(review)
+        del_ratings = Decimal(str(review.ratings))
         new_total = max(0, (current_count or 0) - 1)
         if new_total > 0:
-            new_avg = ((current_avg * current_count) - review.ratings) / new_total
-            new_avg = max(0.0, new_avg)
+            new_avg = ((current_avg * current_count) - del_ratings) / new_total
+            new_avg = new_avg.quantize(Decimal("0.01"))
         else:
-            new_avg = 0.0
-        await db.execute(
-            update(Product)
-            .where(Product.id == product_id)
-            .values(avg_rating=new_avg, review_count=new_total)
-        )
+            new_avg = Decimal(str("0.00"))
+        product.avg_rating = new_avg
+        product.review_count = new_total
+        await db.delete(review)
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -312,5 +321,6 @@ async def delete_review(store_id, product_id, background_task, db, payload):
         raise HTTPException(status_code=500, detail="internal server error")
     logger.info("user %s, successfully deleted his review", user_id)
     background_task.add_task(product_review_invalidation, product_id)
-    background_task.add_task(product_invalidation)
+    background_task.add_task(store_products_invalidation, store_id)
+    background_task.add_task(product_version_invalidation, product_id)
     return StandardResponse(status="success", message="review deleted", data=None)
