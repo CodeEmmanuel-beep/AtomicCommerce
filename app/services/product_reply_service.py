@@ -17,6 +17,7 @@ from app.models import (
     Order,
     OrderItem,
     OrderStatus,
+    ProductVariant,
 )
 from sqlalchemy import select, func, exists, case
 from sqlalchemy.orm import selectinload
@@ -28,25 +29,30 @@ from app.utils.redis import (
     cache_version,
     cached,
 )
+from app.utils.helper import unique_id
 from app.utils.helper import react_summary
 
 logger = get_logger("product_reply")
 
 
-async def reply(reply, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def reply(reply, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at create reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
     purchase_check_stmt = select(
         exists(
             select(1)
-            .select_from(OrderItem)
+            .select_from(Product)
+            .join(ProductVariant, Product.id == ProductVariant.product_id)
+            .join(OrderItem, ProductVariant.id == OrderItem.variant_id)
             .join(Order, OrderItem.order_id == Order.id)
             .where(
-                OrderItem.product_id == reply.product_id,
+                Product.id == reply.product_id,
                 Order.user_id == user_id,
-                Order.status.in_((OrderStatus.processing, OrderStatus.delivered)),
+                Order.status.in_(
+                    (OrderStatus.processing, OrderStatus.shipped, OrderStatus.delivered)
+                ),
             )
         )
     )
@@ -83,9 +89,10 @@ async def reply(reply, background_task, db, payload):
             .where(
                 Review.id == reply.review_id,
                 Review.product_id == reply.product_id,
+                Product.store_id == reply.store_id,
                 Product.is_deleted.is_(False),
             )
-            .with_for_update()
+            .with_for_update(of=Review)
         )
         row = (await db.execute(stmt)).fetchone()
         if not row:
@@ -202,13 +209,13 @@ async def view_replies(product_id, review_id, page, limit, db):
         pagination=PaginatedResponse(page=page, limit=limit, total=total),
     )
     response = StandardResponse(status="success", message="replies", data=data)
-    await cached(cache_key, response, ttl=30)
+    await cached(cache_key, response, ttl=7000)
     logger.info("search for replies successfully returned data")
     return response
 
 
-async def update(reply, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def update(reply, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at edit reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -220,6 +227,7 @@ async def update(reply, background_task, db, payload):
             Reply.product_id == reply.product_id,
             Reply.id == reply.id,
             Product.is_deleted.is_(False),
+            Reply.store_id == reply.store_id,
         )
     )
     db_reply = (await db.execute(stmt)).scalar_one_or_none()
@@ -255,8 +263,8 @@ async def update(reply, background_task, db, payload):
     )
 
 
-async def delete_reply(reply_id, review_id, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def delete_reply(reply_id, review_id, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at delete_reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
