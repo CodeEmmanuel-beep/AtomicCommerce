@@ -118,8 +118,11 @@ class PersonnelResponse(BaseModel):
     @field_validator("profile_picture", mode="before")
     @classmethod
     def render_picture(cls, value) -> str | None:
-        if value:
-            return get_public_url(value)
+        if not value:
+            return None
+        if value.startswith(("http://", "https://")):
+            return value
+        return get_public_url(value)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -135,8 +138,11 @@ class ProfileResponse(BaseModel):
     @field_validator("profile_picture", mode="before")
     @classmethod
     def render_picture(cls, value) -> str | None:
-        if value:
-            return get_public_url(value)
+        if not value:
+            return None
+        if value.startswith(("http://", "https://")):
+            return value
+        return get_public_url(value)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -514,6 +520,10 @@ class ProductRes(BaseModel):
     @field_validator("primary_image", mode="before")
     @classmethod
     def full_url(cls, value) -> str | None:
+        if not value:
+            return None
+        if value.startswith(("http://", "https://")):
+            return value
         return get_public_url(value)
 
     model_config = ConfigDict(from_attributes=True)
@@ -533,6 +543,10 @@ class SingleProductResponse(BaseModel):
     @field_validator("primary_image", mode="before")
     @classmethod
     def full_url(cls, value) -> str | None:
+        if not value:
+            return None
+        if value.startswith(("http://", "https://")):
+            return value
         return get_public_url(value)
 
     model_config = ConfigDict(from_attributes=True)
@@ -550,6 +564,10 @@ class ProductResponse(BaseModel):
     @field_validator("primary_image", mode="before")
     @classmethod
     def full_url(cls, value) -> str | None:
+        if not value:
+            return None
+        if value.startswith(("http://", "https://")):
+            return value
         return get_public_url(value)
 
     model_config = ConfigDict(from_attributes=True)
@@ -693,8 +711,8 @@ class ProductReviewResponse(BaseModel):
     product_id: int
     user: ProfileResponse
     edited: bool = Field(default=False)
-    review_text: str
     ratings: int
+    review_text: str
     product_reply_count: int = Field(default=0)
     product_review_reaction_count: int = Field(default=0)
     reactions: ReactionsSummary = Field(default_factory=ReactionsSummary)
