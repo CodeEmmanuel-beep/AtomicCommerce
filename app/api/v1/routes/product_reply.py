@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, Request, Query, BackgroundTasks, Depends
 from app.services import product_reply_service
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.schemas import (
@@ -7,10 +7,12 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
     ReplyResponse,
 )
-from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
+from typing import Annotated
 
 router = APIRouter(prefix="/product_replies", tags=["Product Reply"])
+
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post(
@@ -19,13 +21,10 @@ router = APIRouter(prefix="/product_replies", tags=["Product Reply"])
     response_model_exclude_none=True,
 )
 async def post_product_reply(
-    reply: Reply,
-    background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request, reply: Reply, background_task: BackgroundTasks, db: DatabaseDep
 ):
     return await product_reply_service.reply(
-        reply=reply, background_task=background_task, db=db, payload=payload
+        reply=reply, background_task=background_task, db=db, request=request
     )
 
 
@@ -38,9 +37,9 @@ async def post_product_reply(
 async def product_reply_list(
     product_id: int,
     review_id: int,
+    db: DatabaseDep,
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await product_reply_service.view_replies(
         product_id=product_id,
@@ -57,13 +56,10 @@ async def product_reply_list(
     response_model_exclude_none=True,
 )
 async def update_product_reply(
-    reply: Reply,
-    background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request, reply: Reply, background_task: BackgroundTasks, db: DatabaseDep
 ):
     return await product_reply_service.update(
-        reply=reply, background_task=background_task, db=db, payload=payload
+        reply=reply, background_task=background_task, db=db, request=request
     )
 
 
@@ -73,16 +69,16 @@ async def update_product_reply(
     response_model_exclude_none=True,
 )
 async def delete_product_reply(
+    request: Request,
     reply_id: int,
     review_id: int,
     background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    db: DatabaseDep,
 ):
     return await product_reply_service.delete_reply(
         reply_id=reply_id,
         review_id=review_id,
         background_task=background_task,
         db=db,
-        payload=payload,
+        request=request,
     )
