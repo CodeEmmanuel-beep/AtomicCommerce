@@ -696,8 +696,8 @@ class SubscriptionResponse(BaseModel):
     id: int
     membership_id: int
     plan_name: str
-    price_id: str | None
-    plan_price: Decimal | None
+    price_id: str | None = None
+    plan_price: Decimal | None = None
     status: str
     expire_at: datetime | None = None
     time_of_subscription: datetime
