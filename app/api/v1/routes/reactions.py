@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import APIRouter, Depends, BackgroundTasks, Query
+from fastapi import APIRouter, Request, BackgroundTasks, Query, Depends
 from app.database.get import get_db
 from app.api.v1.schemas import (
     ReactionType,
@@ -7,20 +7,22 @@ from app.api.v1.schemas import (
     StandardResponse,
     PaginatedMetadata,
 )
-from app.auth.verify_jwt import verify_token
+from typing import Annotated
 from app.services import reactions_service
 
 router = APIRouter(prefix="/reactions", tags=["Reactions"])
 
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
+
 
 @router.post("/react")
 async def react_type(
+    request: Request,
     reaction_type: ReactionType,
     background_task: BackgroundTasks,
+    db: DatabaseDep,
     reply_id: int | None = None,
     review_id: int | None = None,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
 ):
     return await reactions_service.react_type(
         reaction_type=reaction_type,
@@ -28,7 +30,7 @@ async def react_type(
         reply_id=reply_id,
         review_id=review_id,
         db=db,
-        payload=payload,
+        request=request,
     )
 
 
@@ -39,12 +41,12 @@ async def react_type(
     response_model_exclude_defaults=True,
 )
 async def get_reactions(
+    request: Request,
+    db: DatabaseDep,
     review_id: int | None = None,
     reply_id: int | None = None,
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await reactions_service.view_reactions(
         review_id=review_id,
@@ -52,5 +54,5 @@ async def get_reactions(
         page=page,
         limit=limit,
         db=db,
-        payload=payload,
+        request=request,
     )
