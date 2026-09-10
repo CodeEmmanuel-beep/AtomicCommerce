@@ -7,6 +7,7 @@ from app.api.v1.schemas import (
     PaginatedResponse,
     ReactResponse,
 )
+from app.utils.helper import unique_id
 from datetime import timezone, datetime
 from sqlalchemy import select, or_, func
 from app.utils.redis import (
@@ -22,15 +23,8 @@ from sqlalchemy.exc import IntegrityError
 logger = get_logger("react")
 
 
-async def react_type(
-    reaction_type,
-    reply_id,
-    review_id,
-    background_task,
-    db,
-    payload,
-):
-    user_id = payload.get("user_id")
+async def react_type(reaction_type, reply_id, review_id, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("Unauthorized reaction attempt")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
@@ -142,8 +136,8 @@ async def react_type(
     return StandardResponse(status="success", message=message, data=reaction_enum)
 
 
-async def view_reactions(review_id, reply_id, page, limit, db, payload):
-    user_id = payload.get("user_id")
+async def view_reactions(review_id, reply_id, page, limit, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("Unauthorized view reaction attempt")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
