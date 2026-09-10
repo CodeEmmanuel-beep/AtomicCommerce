@@ -203,6 +203,7 @@ async def view_variant_photos(variant_id, db):
             VariantImage.variant_id == variant_id,
             Store.is_deleted.is_(False),
             Product.is_deleted.is_(False),
+            Store.approved.is_(True),
             ProductVariant.is_deleted.is_(False),
         )
     )
@@ -380,6 +381,7 @@ async def product_variant(
             ProductVariant.id == variant_id,
             Store.is_deleted.is_(False),
             Product.is_deleted.is_(False),
+            Store.approved.is_(True),
         )
     )
     product_variant = (await db.execute(stmt)).scalar_one_or_none()
@@ -433,6 +435,7 @@ async def list_product_variants(
             ProductVariant.is_deleted.is_(False),
             Product.is_deleted.is_(False),
             Store.is_deleted.is_(False),
+            Store.approved.is_(True),
             ProductVariant.product_id == product_id,
         )
         .order_by(ProductVariant.id.asc())
