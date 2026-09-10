@@ -285,7 +285,7 @@ async def view_member_subscription(store_id, member_id, db, request):
         )
         raise HTTPException(status_code=403, detail="Access denied for this store")
     version = await cache_version(f"store_subscriptions:{store_id}")
-    cache_key = f"subscription:v{version}:{member_id}:{user_id}"
+    cache_key = f"subscription:v{version}:{store_id}:{member_id}:{user_id}"
     cached_member = await cache(cache_key)
     if cached_member:
         logger.info("cached hit at view_subscription endpoint user %s", user_id)
