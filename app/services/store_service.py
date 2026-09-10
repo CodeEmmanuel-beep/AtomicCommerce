@@ -9,7 +9,6 @@ from app.models import (
     Product,
     Inventory,
     SubCategory,
-    ProductImage,
     ProductVariant,
     VariantImage,
 )
@@ -47,6 +46,10 @@ from app.utils.redis import (
     cached,
     cache_version,
     store_invalidation_global,
+    store_products_invalidation,
+    product_version_invalidation,
+    product_variant_invalidation,
+    product_variants_invalidation,
 )
 import re
 import regex
@@ -961,16 +964,6 @@ async def remove_store(store_id, db, request, get_supabase, background_task):
         store_check.approved = False
         if store_check.account:
             store_check.account.is_deleted = True
-        product_images_result = (
-            (
-                await db.execute(
-                    select(ProductImage.image).where(ProductImage.store_id == store_id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        product_images = [img for img in product_images_result if img]
         variant_images_result = (
             (
                 await db.execute(
@@ -984,39 +977,48 @@ async def remove_store(store_id, db, request, get_supabase, background_task):
             .all()
         )
         variant_images = [img for img in variant_images_result if img]
-        files_to_delete = product_images + variant_images
         (
             await db.execute(
                 update(Address)
-                .where(Address.store_id == store_id)
+                .where(Address.store_id == store_id, Address.is_deleted.is_(False))
                 .values(is_deleted=True)
             )
         )
         product_list = await db.execute(
             update(Product)
-            .where(Product.store_id == store_id)
+            .where(Product.store_id == store_id, Product.is_deleted.is_(False))
             .values(is_deleted=True, deleted_by=user_id, deleted_at=now)
-        ).returning(Product.id)
+            .returning(Product.id)
+        )
         product_ids = product_list.scalars().all()
+        logger.info("products for store %s deleted successfully", store_id)
         (
             await db.execute(
                 update(Inventory)
-                .where(Inventory.store_id == store_id)
+                .where(Inventory.store_id == store_id, Inventory.is_deleted.is_(False))
                 .values(is_deleted=True, deleted_by=user_id, deleted_at=now)
             )
         )
-        await db.execute(delete(ProductImage).where(ProductImage.store_id == store_id))
+        logger.info("inventories for store %s deleted successfully", store_id)
+        variant_ids = None
         if product_ids:
             variant_list = await db.execute(
                 update(ProductVariant)
-                .where(ProductVariant.product_id.in_(product_ids))
+                .where(
+                    ProductVariant.store_id == store_id,
+                    ProductVariant.is_deleted.is_(False),
+                )
                 .values(is_deleted=True, deleted_by=user_id, deleted_at=now)
                 .returning(ProductVariant.id)
             )
             variant_ids = variant_list.scalars().all()
+            logger.info("product variants for store %s deleted successfully", store_id)
             if variant_ids:
                 await db.execute(
                     delete(VariantImage).where(VariantImage.variant_id.in_(variant_ids))
+                )
+                logger.info(
+                    "variant images for store %s deleted successfully", store_id
                 )
         await db.commit()
     except HTTPException:
@@ -1036,13 +1038,19 @@ async def remove_store(store_id, db, request, get_supabase, background_task):
             user_id,
         )
         raise HTTPException(status_code=500, detail="internal server error")
-    if files_to_delete:
+    if variant_images:
         await cleaned_up(
             get_supabase,
-            files_to_delete,
+            variant_images,
             context_1="error removing orphaned product images from storage",
             context_2="successfully removed orphaned product images from storage",
         )
     background_task.add_task(store_invalidation_global)
+    background_task.add_task(store_products_invalidation, store_id)
+    if product_ids:
+        background_task.add_task(product_variants_invalidation, product_ids)
+        background_task.add_task(product_version_invalidation, product_ids)
+    if variant_ids:
+        background_task.add_task(product_variant_invalidation, variant_ids)
     logger.info("store '%s', deleted", store_id)
     return StandardResponse(status="success", message="store deleted", data=None)
