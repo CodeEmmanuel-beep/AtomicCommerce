@@ -35,7 +35,7 @@ async def react_type(
 
 
 @router.get(
-    "reactions_list",
+    "/reactions_list",
     response_model=StandardResponse[PaginatedMetadata[ReactResponse]],
     response_model_exclude_none=True,
     response_model_exclude_defaults=True,
