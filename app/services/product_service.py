@@ -167,6 +167,7 @@ async def view_product_pics(product_id, db):
             Product.is_deleted.is_(False),
             Store.is_deleted.is_(False),
             ProductVariant.is_deleted.is_(False),
+            Store.approved.is_(True),
         )
     )
     p_image = (await db.execute(stmt)).scalars().all()
