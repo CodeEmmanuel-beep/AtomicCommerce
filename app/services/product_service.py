@@ -160,7 +160,14 @@ async def view_product_pics(product_id, db):
     stmt = (
         select(VariantImage)
         .join(ProductVariant, VariantImage.variant_id == ProductVariant.id)
-        .where(ProductVariant.product_id == product_id)
+        .join(Product, ProductVariant.product_id == Product.id)
+        .join(Store, ProductVariant.store_id == Store.id)
+        .where(
+            ProductVariant.product_id == product_id,
+            Product.is_deleted.is_(False),
+            Store.is_deleted.is_(False),
+            ProductVariant.is_deleted.is_(False),
+        )
     )
     p_image = (await db.execute(stmt)).scalars().all()
     if not p_image:
@@ -229,9 +236,11 @@ async def product_change(
     try:
         stmt = (
             select(Product)
+            .join(Store, Product.store_id == Store.id)
             .where(
                 Product.store_id == store_id,
                 Product.id == product_id,
+                Store.is_deleted.is_(False),
                 Product.is_deleted.is_(False),
             )
             .with_for_update()
