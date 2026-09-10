@@ -121,11 +121,13 @@ async def add_vimage(
     stmt = (
         select(ProductVariant)
         .join(Product, ProductVariant.product_id == Product.id)
+        .join(Store, ProductVariant.store_id == Store.id)
         .where(
             ProductVariant.id == variant_id,
             ProductVariant.is_deleted.is_(False),
             Product.store_id == store_id,
             Product.is_deleted.is_(False),
+            Store.is_deleted.is_(False),
         )
         .with_for_update()
     )
@@ -192,7 +194,18 @@ async def view_variant_photos(variant_id, db):
     if product_image_cache:
         logger.info("Cache hit for product_images")
         return StandardResponse(**product_image_cache)
-    stmt = select(VariantImage).where(VariantImage.variant_id == variant_id)
+    stmt = (
+        select(VariantImage)
+        .join(ProductVariant, VariantImage.variant_id == ProductVariant.id)
+        .join(Product, ProductVariant.product_id == Product.id)
+        .join(Store, ProductVariant.store_id == Store.id)
+        .where(
+            VariantImage.variant_id == variant_id,
+            Store.is_deleted.is_(False),
+            Product.is_deleted.is_(False),
+            ProductVariant.is_deleted.is_(False),
+        )
+    )
     p_image = (await db.execute(stmt)).scalars().all()
     if not p_image:
         raise HTTPException(status_code=404, detail="product images not found")
@@ -273,11 +286,13 @@ async def variant_change(
                 ),
             )
             .join(Product, ProductVariant.product_id == Product.id)
+            .join(Store, ProductVariant.store_id == Store.id)
             .where(
                 ProductVariant.store_id == variant.store_id,
                 ProductVariant.is_deleted.is_(False),
                 Product.is_deleted.is_(False),
                 ProductVariant.id == variant.id,
+                Store.is_deleted.is_(False),
             )
             .with_for_update(of=ProductVariant)
         )
@@ -355,12 +370,16 @@ async def product_variant(
         return StandardResponse(**product_cache)
     stmt = (
         select(ProductVariant)
+        .join(Product, ProductVariant.product_id == Product.id)
+        .join(Store, ProductVariant.store_id == Store.id)
         .options(
             selectinload(ProductVariant.vimage), selectinload(ProductVariant.inventory)
         )
         .where(
             ProductVariant.is_deleted.is_(False),
             ProductVariant.id == variant_id,
+            Store.is_deleted.is_(False),
+            Product.is_deleted.is_(False),
         )
     )
     product_variant = (await db.execute(stmt)).scalar_one_or_none()
@@ -405,11 +424,15 @@ async def list_product_variants(
         return StandardResponse(**product_cache)
     stmt = (
         select(ProductVariant)
+        .join(Product, ProductVariant.product_id == Product.id)
+        .join(Store, ProductVariant.store_id == Store.id)
         .options(
             selectinload(ProductVariant.vimage), selectinload(ProductVariant.inventory)
         )
         .where(
             ProductVariant.is_deleted.is_(False),
+            Product.is_deleted.is_(False),
+            Store.is_deleted.is_(False),
             ProductVariant.product_id == product_id,
         )
         .order_by(ProductVariant.id.asc())
