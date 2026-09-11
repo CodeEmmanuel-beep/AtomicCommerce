@@ -6,6 +6,7 @@ from app.api.v1.schemas import (
     PaginatedResponse,
     ReactionsSummary,
 )
+from app.utils.helper import unique_id
 from app.models import Review, Store, Reply, React, User, Order, OrderStatus
 from app.utils.helper import react_summary
 from fastapi import HTTPException, Response, status
@@ -19,12 +20,13 @@ from app.utils.redis import (
     cached,
     store_invalidation_global,
 )
+from decimal import Decimal
 
 logger = get_logger("store_reviews")
 
 
-async def store_review(review, ratings, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def store_review(review, ratings, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at create_review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -35,7 +37,13 @@ async def store_review(review, ratings, background_task, db, payload):
                 exists().where(
                     Order.user_id == user_id,
                     Order.store_id == review.store_id,
-                    Order.status.in_((OrderStatus.processing, OrderStatus.delivered)),
+                    Order.status.in_(
+                        (
+                            OrderStatus.processing,
+                            OrderStatus.shipped,
+                            OrderStatus.delivered,
+                        )
+                    ),
                 ),
                 exists().where(
                     Review.user_id == user_id,
@@ -77,11 +85,12 @@ async def store_review(review, ratings, background_task, db, payload):
             ratings=ratings,
         )
         db.add(new_review)
-        current_avg = target.avg_rating or 0
+        current_avg = Decimal(str(target.avg_rating or "0.00"))
         current_count = target.review_count or 0
         target.review_count = current_count + 1
-        new_avg = (current_avg * current_count + ratings) / (current_count + 1)
-        target.avg_rating = new_avg
+        new_ratings = Decimal(str(ratings))
+        new_avg = (current_avg * current_count + new_ratings) / (current_count + 1)
+        target.avg_rating = new_avg.quantize(Decimal("0.01"))
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -165,8 +174,8 @@ async def view_reviews(store_id, page, limit, db):
     return response
 
 
-async def update_review(review, ratings, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def update_review(review, ratings, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at update review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -196,20 +205,22 @@ async def update_review(review, ratings, background_task, db, payload):
             logger.info("user %s, is updating their review text", user_id)
             db_review.review_text = review.review_text
             has_changed = True
-        if not has_changed and db_review.ratings == ratings:
-            await db.rollback()
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        if not has_changed:
+            if ratings is None or db_review.ratings == ratings:
+                await db.rollback()
+                return Response(status_code=status.HTTP_204_NO_CONTENT)
         db_review.edited = True
-        if db_review.ratings != ratings:
-            former_rating = db_review.ratings
+        if ratings is not None and db_review.ratings != ratings:
+            former_rating = Decimal(str(db_review.ratings))
             db_review.ratings = ratings
-            current_avg = target.avg_rating or 0
+            current_avg = Decimal(str(target.avg_rating or "0.00"))
             current_count = target.review_count or 0
+            new_ratings = Decimal(str(ratings))
             if current_count > 0:
                 new_avg = (
-                    (current_avg * current_count) - former_rating + ratings
+                    (current_avg * current_count) - former_rating + new_ratings
                 ) / current_count
-                target.avg_rating = max(0.0, new_avg)
+                target.avg_rating = new_avg.quantize(Decimal("0.01"))
             else:
                 target.avg_rating = ratings or 0.0
                 target.review_count = 1
@@ -233,8 +244,8 @@ async def update_review(review, ratings, background_task, db, payload):
     )
 
 
-async def delete_review(store_id, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def delete_review(store_id, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at delete_review endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -247,25 +258,28 @@ async def delete_review(store_id, background_task, db, payload):
                 Review.store_id == store_id,
                 Review.product_id.is_(None),
             )
-            .with_for_update(of=Store)
+            .with_for_update(of=(Review, Store))
         )
         row = (await db.execute(stmt)).fetchone()
         if not row:
             logger.error("user %s, tried deleting a non existent review", user_id)
             raise HTTPException(status_code=404, detail="review not found")
         review, store = row
-        await db.delete(review)
-        current_avg = store.avg_rating or 0
+        current_avg = Decimal(str(store.avg_rating or "0.00"))
+        del_ratings = Decimal(str(review.ratings))
         current_count = store.review_count or 0
         new_total = max(0, (current_count or 0) - 1)
         if new_total > 0:
-            new_avg = ((current_avg * current_count) - review.ratings) / new_total
-            new_avg = max(0.0, new_avg)
+            raw_sum = max(Decimal("0.00"), (current_avg * current_count) - del_ratings)
+            raw_avg = raw_sum / new_total
+            new_avg = raw_avg.quantize(Decimal("0.01"))
             store.avg_rating = new_avg
             store.review_count = new_total
         else:
-            store.avg_rating = 0.0
+            new_avg = Decimal("0.00")
+            store.avg_rating = new_avg
             store.review_count = 0
+        await db.delete(review)
         await db.commit()
     except HTTPException:
         await db.rollback()
