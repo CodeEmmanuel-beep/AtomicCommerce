@@ -6,6 +6,7 @@ from app.api.v1.schemas import (
     StandardResponse,
     ReactionsSummary,
 )
+from app.utils.helper import unique_id
 from fastapi import HTTPException, status, Response
 from app.models import Review, Reply, User, Store, React, store_owners, store_staffs
 from sqlalchemy import select, func, exists
@@ -23,8 +24,8 @@ from app.utils.redis import (
 logger = get_logger("store_reply")
 
 
-async def reply(reply, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def reply(reply, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at create reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -149,8 +150,8 @@ async def view_replies(store_id, review_id, page, limit, db):
     return full_response
 
 
-async def update(reply, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def update(reply, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at edit reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
@@ -191,8 +192,8 @@ async def update(reply, background_task, db, payload):
     )
 
 
-async def delete_reply(reply_id, store_id, background_task, db, payload):
-    user_id = payload.get("user_id")
+async def delete_reply(reply_id, store_id, background_task, db, request):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt at delete_reply endpoint")
         raise HTTPException(status_code=401, detail="not a registered user")
