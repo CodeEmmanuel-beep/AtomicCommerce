@@ -25,7 +25,7 @@ async def create_product_review(
     review: Review,
     db: DatabaseDep,
     background_task: BackgroundTasks,
-    ratings: int = Query(0, ge=1, le=5),
+    ratings: int = Query(1, ge=1, le=5),
 ):
     return await product_reviews_service.product_review(
         review=review,
@@ -63,7 +63,7 @@ async def product_review_update(
     review: Review,
     background_task: BackgroundTasks,
     db: DatabaseDep,
-    ratings: int = Query(0, ge=1, le=5),
+    ratings: int = Query(None, ge=1, le=5),
 ):
     return await product_reviews_service.update_review(
         review=review,
