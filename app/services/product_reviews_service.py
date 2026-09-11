@@ -235,11 +235,12 @@ async def update_review(review, ratings, background_task, db, request):
             logger.info("user %s, is updating their review text", user_id)
             db_review.review_text = review.review_text
             has_changed = True
-        if not has_changed and db_review.ratings == ratings:
-            await db.rollback()
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        if not has_changed:
+            if ratings is None or db_review.ratings == ratings:
+                await db.rollback()
+                return Response(status_code=status.HTTP_204_NO_CONTENT)
         db_review.edited = True
-        if db_review.ratings != ratings:
+        if ratings is not None and db_review.ratings != ratings:
             former_rating = Decimal(str(db_review.ratings))
             db_review.ratings = Decimal(str(ratings))
             new_ratings = Decimal(str(ratings))
@@ -288,7 +289,7 @@ async def delete_review(store_id, product_id, background_task, db, request):
                 Review.product_id == product_id,
                 Review.store_id == store_id,
             )
-            .with_for_update(of=Product)
+            .with_for_update(of=(Review, Product))
         )
         row = (await db.execute(stmt)).first()
         if not row:
@@ -300,7 +301,10 @@ async def delete_review(store_id, product_id, background_task, db, request):
         del_ratings = Decimal(str(review.ratings))
         new_total = max(0, (current_count or 0) - 1)
         if new_total > 0:
-            new_avg = ((current_avg * current_count) - del_ratings) / new_total
+            new_avg = (
+                max(Decimal(str("0.00")), ((current_avg * current_count) - del_ratings))
+                / new_total
+            )
             new_avg = new_avg.quantize(Decimal("0.01"))
         else:
             new_avg = Decimal(str("0.00"))
