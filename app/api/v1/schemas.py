@@ -739,8 +739,8 @@ class StoreReviewResponse(BaseModel):
 class Review(BaseModel):
     id: int | None = None
     product_id: int | None = None
-    store_id: int
-    review_text: str
+    store_id: int | None = None
+    review_text: str | None = None
 
 
 class CategoryResponse(BaseModel):
