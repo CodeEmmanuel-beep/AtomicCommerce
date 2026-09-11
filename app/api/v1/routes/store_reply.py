@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, Request, Query, BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.schemas import (
     Reply,
@@ -6,11 +6,13 @@ from app.api.v1.schemas import (
     PaginatedMetadata,
     ReplyResponse,
 )
-from app.auth.verify_jwt import verify_token
 from app.database.get import get_db
 from app.services import store_reply_service
+from typing import Annotated
 
 router = APIRouter(prefix="/store_replies", tags=["Store_Reply"])
+
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post(
@@ -19,13 +21,10 @@ router = APIRouter(prefix="/store_replies", tags=["Store_Reply"])
     response_model_exclude_none=True,
 )
 async def post_store_reply(
-    reply: Reply,
-    background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request, reply: Reply, background_task: BackgroundTasks, db: DatabaseDep
 ):
     return await store_reply_service.reply(
-        reply=reply, background_task=background_task, db=db, payload=payload
+        reply=reply, background_task=background_task, db=db, request=request
     )
 
 
@@ -38,9 +37,9 @@ async def post_store_reply(
 async def store_reply_list(
     store_id: int,
     review_id: int,
+    db: DatabaseDep,
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await store_reply_service.view_replies(
         store_id=store_id,
@@ -57,13 +56,10 @@ async def store_reply_list(
     response_model_exclude_none=True,
 )
 async def update_store_reply(
-    reply: Reply,
-    background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request, reply: Reply, background_task: BackgroundTasks, db: DatabaseDep
 ):
     return await store_reply_service.update(
-        reply=reply, background_task=background_task, db=db, payload=payload
+        reply=reply, background_task=background_task, db=db, request=request
     )
 
 
@@ -73,16 +69,16 @@ async def update_store_reply(
     response_model_exclude_none=True,
 )
 async def delete_store_reply(
+    request: Request,
     store_id: int,
     reply_id: int,
     background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    db: DatabaseDep,
 ):
     return await store_reply_service.delete_reply(
         store_id=store_id,
         reply_id=reply_id,
         background_task=background_task,
         db=db,
-        payload=payload,
+        request=request,
     )
