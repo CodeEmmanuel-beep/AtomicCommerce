@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Depends, Query, BackgroundTasks
-from app.auth.verify_jwt import verify_token
+from fastapi import APIRouter, Request, Query, BackgroundTasks, Depends
 from app.database.get import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services import store_reviews_service
@@ -9,8 +8,11 @@ from app.api.v1.schemas import (
     StandardResponse,
     PaginatedMetadata,
 )
+from typing import Annotated
 
 router = APIRouter(prefix="/store_reviews", tags=["Store_Reviews"])
+
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post(
@@ -19,18 +21,18 @@ router = APIRouter(prefix="/store_reviews", tags=["Store_Reviews"])
     response_model_exclude_none=True,
 )
 async def create_store_review(
+    request: Request,
     review: Review,
+    db: DatabaseDep,
     background_task: BackgroundTasks,
-    ratings: int = Query(0, le=5),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    ratings: int = Query(1, ge=1, le=5),
 ):
     return await store_reviews_service.store_review(
         review=review,
         background_task=background_task,
         ratings=ratings,
         db=db,
-        payload=payload,
+        request=request,
     )
 
 
@@ -42,9 +44,9 @@ async def create_store_review(
 )
 async def store_review_list(
     store_id: int,
+    db: DatabaseDep,
     page: int = Query(1, ge=1),
-    limit: int = Query(10, le=100),
-    db: AsyncSession = Depends(get_db),
+    limit: int = Query(10, ge=1, le=100),
 ):
     return await store_reviews_service.view_reviews(
         store_id=store_id, db=db, page=page, limit=limit
@@ -57,18 +59,18 @@ async def store_review_list(
     response_model_exclude_none=True,
 )
 async def store_reviews_update(
+    request: Request,
     review: Review,
     background_task: BackgroundTasks,
-    ratings: int = Query(0, le=5),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    db: DatabaseDep,
+    ratings: int = Query(None, ge=1, le=5),
 ):
     return await store_reviews_service.update_review(
         review=review,
         background_task=background_task,
         ratings=ratings,
         db=db,
-        payload=payload,
+        request=request,
     )
 
 
@@ -78,11 +80,8 @@ async def store_reviews_update(
     response_model_exclude_none=True,
 )
 async def delete_store_review(
-    store_id: int,
-    background_task: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    request: Request, store_id: int, background_task: BackgroundTasks, db: DatabaseDep
 ):
     return await store_reviews_service.delete_review(
-        store_id=store_id, background_task=background_task, db=db, payload=payload
+        store_id=store_id, background_task=background_task, db=db, request=request
     )
