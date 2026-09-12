@@ -1,11 +1,19 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.get import get_db
-from app.auth.verify_jwt import verify_token
-from app.api.v1.schemas import StandardResponse
-from fastapi import Depends, APIRouter, Query
+from app.api.v1.schemas import (
+    StandardResponse,
+    TimeFrameEnum,
+    RankingEnum,
+    ProductStatisticsEnum,
+    StockRangeEnum,
+)
+from typing import Annotated
+from fastapi import Request, APIRouter, Query, Depends
 from app.services import store_analytics_service
 
 router = APIRouter(prefix="/store_analytics", tags=["Store_Analytics"])
+
+DatabaseDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.get(
@@ -13,7 +21,7 @@ router = APIRouter(prefix="/store_analytics", tags=["Store_Analytics"])
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
-async def store_dashboard(slug: str, db: AsyncSession = Depends(get_db)):
+async def store_dashboard(slug: str, db: DatabaseDep):
     return await store_analytics_service.view_store_data(slug=slug, db=db)
 
 
@@ -22,11 +30,9 @@ async def store_dashboard(slug: str, db: AsyncSession = Depends(get_db)):
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
-async def view_store_entire_performance(
-    slug: str, db: AsyncSession = Depends(get_db), payload: dict = Depends(verify_token)
-):
+async def view_store_entire_performance(request: Request, slug: str, db: DatabaseDep):
     return await store_analytics_service.view_overall_performance(
-        slug=slug, db=db, payload=payload
+        slug=slug, db=db, request=request
     )
 
 
@@ -35,11 +41,9 @@ async def view_store_entire_performance(
     response_model=StandardResponse,
     response_model_exclude_none=True,
 )
-async def view_store_monthly_performance(
-    slug: str, db: AsyncSession = Depends(get_db), payload: dict = Depends(verify_token)
-):
+async def view_store_monthly_performance(request: Request, slug: str, db: DatabaseDep):
     return await store_analytics_service.view_current_performance(
-        slug=slug, db=db, payload=payload
+        slug=slug, db=db, request=request
     )
 
 
@@ -49,14 +53,14 @@ async def view_store_monthly_performance(
     response_model_exclude_none=True,
 )
 async def product_statistics(
+    request: Request,
     slug: str,
     product_id: int,
-    statistics: str = Query("product_sales", enum=["product_ratings", "product_sales"]),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    db: DatabaseDep,
+    statistics: ProductStatisticsEnum = Query(ProductStatisticsEnum.product_sales),
 ):
     return await store_analytics_service.select_products_stats(
-        slug=slug, product_id=product_id, stats=statistics, db=db, payload=payload
+        slug=slug, product_id=product_id, stats=statistics.value, db=db, request=request
     )
 
 
@@ -66,16 +70,18 @@ async def product_statistics(
     response_model_exclude_none=True,
 )
 async def get_products_statistics(
+    request: Request,
     slug: str,
-    ranking: str = Query("top_product", enum=["least_product", "top_product"]),
-    time_frame: str = Query(
-        "1 week", enum=["1 month", "3 months", "6 months", "1 year", "total", "1 week"]
-    ),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    db: DatabaseDep,
+    ranking: RankingEnum = Query(RankingEnum.top_product),
+    time_frame: TimeFrameEnum = Query(TimeFrameEnum.one_week),
 ):
     return await store_analytics_service.products_stats(
-        slug=slug, ranking=ranking, time_frame=time_frame, db=db, payload=payload
+        slug=slug,
+        ranking=ranking.value,
+        time_frame=time_frame.value,
+        db=db,
+        request=request,
     )
 
 
@@ -85,22 +91,11 @@ async def get_products_statistics(
     response_model_exclude_none=True,
 )
 async def get_inventory_statistics(
+    request: Request,
     slug: str,
-    stock_range: str = Query(
-        "ten_below",
-        enum=[
-            "thirty_below",
-            "five_below",
-            "twenty_below",
-            "fifty_below",
-            "out_of_stock",
-            "above_fifty",
-            "ten_below",
-        ],
-    ),
-    db: AsyncSession = Depends(get_db),
-    payload: dict = Depends(verify_token),
+    db: DatabaseDep,
+    stock_range: StockRangeEnum = Query(StockRangeEnum.ten_below),
 ):
     return await store_analytics_service.inventory_stats(
-        slug=slug, stock_range=stock_range, db=db, payload=payload
+        slug=slug, stock_range=stock_range.value, db=db, request=request
     )
