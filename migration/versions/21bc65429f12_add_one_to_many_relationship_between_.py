@@ -1,19 +1,19 @@
 """add one to many relationship between product variant and notification
 
 Revision ID: 21bc65429f12
-Revises: 48484c6f7f44
+Revises: 23e640e5dc24
 Create Date: 2026-09-07 13:20:02.956071
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
 
-
 # revision identifiers, used by Alembic.
-revision: str = '21bc65429f12'
-down_revision: Union[str, Sequence[str], None] = '48484c6f7f44'
+revision: str = "21bc65429f12"
+down_revision: Union[str, Sequence[str], None] = "23e640e5dc24"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
