@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     Standard: str
     Premium: str
     Regular: str
+    PLATFORM_LOGO: str
     Standard_Price: Decimal
     Regular_Price: Decimal
     Premium_Price: Decimal
