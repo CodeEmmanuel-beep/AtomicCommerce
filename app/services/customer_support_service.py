@@ -21,44 +21,56 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, or_, func, and_, update, case, exists
 from app.utils.redis import cache, cached
 from app.utils.supabase_url import cleaned_up, create_signed_urls, get_public_url
-from app.utils.helper import upload_photo_helper
+from app.utils.helper import upload_photo_helper, unique_id
 
 logger = get_logger("chat_support")
 
 
-async def text_support(store_id, message, pics, subject, db, payload, get_supabase):
-    user_id = payload.get("user_id")
+async def text_support(store_id, request, message, pics, subject, db, get_supabase):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("Unauthorized attempt at the text_support endpoint")
         raise HTTPException(status_code=401, detail="not a valid user")
     allowed_roles = ["Owner", "customer_care"]
-    store_exist = (
-        await db.execute(
-            select(exists().where(Store.id == store_id, Store.is_deleted.is_(False)))
-        )
-    ).scalar()
-    if not store_exist:
-        raise HTTPException(status_code=404, detail="store not found")
-    ticket_exist = (
-        await db.execute(
-            select(
-                exists().where(
-                    Ticket.user_id == user_id, Ticket.status != TicketStatus.closed
+    if not message and not pics:
+        logger.info(f"Message send failed: empty message from user '{user_id}'.")
+        raise HTTPException(status_code=400, detail="can not send empty messages")
+    if store_id:
+        store_exist = (
+            await db.execute(
+                select(
+                    exists().where(Store.id == store_id, Store.is_deleted.is_(False))
                 )
             )
-        )
-    ).scalar()
+        ).scalar()
+        if not store_exist:
+            raise HTTPException(status_code=404, detail="store not found")
+        ticket_exist = (
+            await db.execute(
+                select(
+                    exists().where(
+                        Ticket.user_id == user_id,
+                        Ticket.status != TicketStatus.closed,
+                        Ticket.store_id == store_id,
+                    )
+                )
+            )
+        ).scalar()
+    else:
+        ticket_exist = (
+            await db.execute(
+                select(
+                    exists().where(
+                        Ticket.user_id == user_id,
+                        Ticket.status != TicketStatus.closed,
+                        Ticket.store_id.is_(None),
+                    )
+                )
+            )
+        ).scalar()
     if ticket_exist:
         raise HTTPException(status_code=409, detail="you already have an active ticket")
     try:
-        domain_check = (
-            or_(
-                store_owners.c.stores_id == store_id,
-                store_staffs.c.stores_id == store_id,
-            )
-            if store_id
-            else User.role.in_(allowed_roles)
-        )
         subq = (
             select(
                 Ticket.assigned_to.label("assigned"),
@@ -69,17 +81,34 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
         ).subquery()
         stmt = select(User.id).outerjoin(subq, User.id == subq.c.assigned)
         if store_id:
-            stmt = stmt.outerjoin(store_owners, User.id == store_owners.c.users_id)
-            stmt = stmt.outerjoin(store_staffs, User.id == store_staffs.c.users_id)
+            is_owner = (
+                select(1)
+                .where(
+                    store_owners.c.users_id == User.id,
+                    store_owners.c.stores_id == store_id,
+                )
+                .exists()
+            )
+            is_staff = (
+                select(1)
+                .where(
+                    store_staffs.c.users_id == User.id,
+                    store_staffs.c.stores_id == store_id,
+                )
+                .exists()
+            )
+            stmt = stmt.where(or_(is_owner, is_staff))
+        else:
+            allowed_roles = ["Owner", "customer_care"]
+            stmt = stmt.where(User.role.in_(allowed_roles))
         stmt = (
             stmt.where(
-                domain_check,
                 User.is_active.is_(True),
             )
             .group_by(User.id, subq.c.cnt)
             .order_by(func.coalesce(subq.c.cnt, 0).asc(), User.id)
         )
-        receive = (await db.execute(stmt)).scalars().first()
+        receive = (await db.execute(stmt.limit(1))).scalars().first()
     except Exception:
         logger.exception("database error while fetching customer support")
         raise HTTPException(status_code=400, detail="database error")
@@ -87,12 +116,9 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
         logger.info("Message send failed: support not found.")
         raise HTTPException(status_code=404, detail="no active support found")
     filename = None
-    if not message and not pics:
-        logger.info(f"Message send failed: empty message from user '{user_id}'.")
-        raise HTTPException(status_code=400, detail="can not send empty messages")
     if pics:
         filename = await upload_photo_helper(
-            pics, payload, get_supabase, settings.BUCKET1
+            pics, request, get_supabase, settings.BUCKET1
         )
     logger.info(f"User '{user_id}' is sending a message to 'customer support'.")
     new_ticket = Ticket(
@@ -143,21 +169,21 @@ async def text_support(store_id, message, pics, subject, db, payload, get_supaba
     )
 
 
-async def ticket_thread(message, store_id, ticket_id, pics, db, payload, get_supabase):
-    user_id = payload.get("user_id")
+async def ticket_thread(message, request, store_id, ticket_id, pics, db, get_supabase):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("Unauthorized attempt at text_customer endpoint")
         raise HTTPException(status_code=401, detail="not a valid user")
     filename = None
     if pics:
         filename = await upload_photo_helper(
-            pics, payload, get_supabase, settings.BUCKET1
+            pics, request, get_supabase, settings.BUCKET1
         )
     ticket = (
         await db.execute(
             select(Ticket)
             .where(
-                Ticket.store_id == store_id,
+                or_(Ticket.store_id == store_id, Ticket.store_id.is_(None)),
                 Ticket.id == ticket_id,
                 or_(Ticket.assigned_to == user_id, Ticket.user_id == user_id),
             )
@@ -237,9 +263,9 @@ async def ticket_thread(message, store_id, ticket_id, pics, db, payload, get_sup
 
 
 async def customer_support_messages(
-    store_id, ticket_id, view, page, limit, db, payload, get_supabase
+    store_id, request, ticket_id, view, page, limit, db, get_supabase
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("Unauthorized attempt at the customer_view_messages endpoint")
         raise HTTPException(status_code=401, detail="not a valid user")
@@ -286,7 +312,9 @@ async def customer_support_messages(
             selectinload(Messaging.user),
             selectinload(Messaging.ticket).selectinload(Ticket.store),
         )
-        .where(*base_filter, Ticket.store_id == store_id)
+        .where(
+            *base_filter, or_(Ticket.store_id == store_id, Ticket.store_id.is_(None))
+        )
         .order_by(Messaging.time_of_chat.desc())
     )
     total = (
@@ -337,6 +365,7 @@ async def customer_support_messages(
     )
     user_map = {u.id: u for u in user_obj}
     conversations = {}
+    subject = None
     for msg, conv_id in view_result:
         support_obj = user_map.get(msg.support_id)
         customer_obj = user_map.get(msg.customer_id)
@@ -351,9 +380,15 @@ async def customer_support_messages(
             if msg.user and msg.user.profile_picture
             else None
         )
-        chat_data.store_photo = (
-            msg.ticket.store.store_photo if msg.ticket and msg.ticket.store else None
-        )
+        subject = msg.ticket.subject if msg.ticket else None
+        if msg.ticket and msg.ticket.store:
+            chat_data.store_photo = (
+                get_public_url(msg.ticket.store.store_photo)
+                if msg.ticket.store.store_photo
+                else None
+            )
+        else:
+            chat_data.platform_photo = get_public_url(settings.PLATFORM_LOGO)
         chat_data.customer_support = (
             s := support_obj
         ) and f"{s.first_name} {s.surname}"
@@ -365,10 +400,14 @@ async def customer_support_messages(
         conversation_list.append(
             {
                 "conversation_id": conv_id,
+                "platform_photo": (
+                    get_public_url(settings.PLATFORM_LOGO) if not store_id else None
+                ),
                 "store_photo": getattr(parent, "store_photo", None),
                 "customer_photo": getattr(parent, "customer_photo", None),
                 "customer_support": getattr(parent, "customer_support", None),
                 "customer": getattr(parent, "customer", None),
+                "subject": subject,
                 "ticket_id": getattr(parent, "ticket_id", None),
                 "ticket_status": getattr(parent, "ticket_status", None),
                 "messages": [
@@ -381,6 +420,7 @@ async def customer_support_messages(
                             "ticket_id",
                             "ticket_status",
                             "store_photo",
+                            "platform_photo",
                             "customer_photo",
                         },
                     )
@@ -402,8 +442,10 @@ async def customer_support_messages(
     return full_response
 
 
-async def customer_support_conversations(views, page, limit, db, payload, get_supabase):
-    user_id = payload.get("user_id")
+async def customer_support_conversations(
+    request, store_id, views, page, limit, db, get_supabase
+):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning(
             "Unauthorized access attempt at customer_support_conversations endpoint"
@@ -461,6 +503,7 @@ async def customer_support_conversations(views, page, limit, db, payload, get_su
     )
     stmt = (
         select(Messaging, subq.c.conversation_id, unread_subq.c.unread_count)
+        .join(Ticket, Messaging.ticket_id == Ticket.id)
         .join(
             subq,
             and_(
@@ -474,6 +517,7 @@ async def customer_support_conversations(views, page, limit, db, payload, get_su
             selectinload(Messaging.user),
             selectinload(Messaging.ticket).selectinload(Ticket.store),
         )
+        .where(or_(Ticket.store_id == store_id, Ticket.store_id.is_(None)))
         .order_by(subq.c.latest_time.desc())
     )
     total = (await db.execute(select(func.count()).select_from(subq))).scalar() or 0
@@ -522,6 +566,7 @@ async def customer_support_conversations(views, page, limit, db, payload, get_su
             or {}
         )
     conversations = {}
+    subject = None
     for msg, conv_id, unread_count in view_result:
         chat_data = Chat.model_validate(msg)
         chat_data.unread_count = unread_count or 0
@@ -529,18 +574,21 @@ async def customer_support_conversations(views, page, limit, db, payload, get_su
             chat_data.photo = message_pic.get(chat_data.photo)
         customer_obj = id_map.get(msg.customer_id)
         support_obj = id_map.get(msg.support_id)
+        subject = msg.ticket.subject if msg.ticket else None
         sender = "customer" if msg.user_id == msg.customer_id else "customer_support"
         chat_data.sender = sender
         chat_data.customer_support = (
             f"{support_obj.first_name} {support_obj.surname}" if support_obj else None
         )
-        chat_data.ticket_status = msg.ticket.status if msg.ticket else None
         chat_data.customer = (c := customer_obj) and f"{c.first_name} {c.surname}"
-        chat_data.store_photo = (
-            get_public_url(msg.ticket.store.store_photo)
-            if msg.ticket and msg.ticket.store
-            else None
-        )
+        if msg.ticket and msg.ticket.store:
+            chat_data.store_photo = (
+                get_public_url(msg.ticket.store.store_photo)
+                if msg.ticket and msg.ticket.store
+                else None
+            )
+        else:
+            chat_data.platform_photo = get_public_url(settings.PLATFORM_LOGO)
         chat_data.customer_photo = get_public_url(
             customer_obj.profile_picture if customer_obj else None
         )
@@ -548,10 +596,14 @@ async def customer_support_conversations(views, page, limit, db, payload, get_su
     conversations_list = [
         {
             "conversation_id": conv_id,
+            "platform_photo": (
+                get_public_url(settings.PLATFORM_LOGO) if not store_id else None
+            ),
             "store_photo": getattr(msgs, "store_photo", None),
             "customer_photo": getattr(msgs, "customer_photo", None),
             "customer_support": getattr(msgs, "customer_support", None),
             "customer": getattr(msgs, "customer", None),
+            "subject": subject,
             "ticket_id": getattr(msgs, "ticket_id", None),
             "ticket_status": getattr(msgs, "ticket_status", None),
             "unread_count": getattr(msgs, "unread_count", None),
@@ -566,6 +618,7 @@ async def customer_support_conversations(views, page, limit, db, payload, get_su
                     "customer",
                     "unread_count",
                     "ticket_id",
+                    "platform_photo",
                     "ticket_status",
                     "store_photo",
                     "customer_photo",
@@ -586,8 +639,8 @@ async def customer_support_conversations(views, page, limit, db, payload, get_su
     return full_response
 
 
-async def mark_as_resolved(store_id, ticket_id, db, payload):
-    user_id = payload.get("user_id")
+async def mark_as_resolved(store_id, request, ticket_id, db):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("Unauthorized access attempt at the mark_as_resolved endpoint")
         raise HTTPException(status_code=401, detail="not a valid user")
@@ -596,7 +649,7 @@ async def mark_as_resolved(store_id, ticket_id, db, payload):
             await db.execute(
                 select(Ticket)
                 .where(
-                    Ticket.store_id == store_id,
+                    or_(Ticket.store_id == store_id, Ticket.store_id.is_(None)),
                     Ticket.id == ticket_id,
                     Ticket.user_id == user_id,
                 )
@@ -636,8 +689,8 @@ async def mark_as_resolved(store_id, ticket_id, db, payload):
     return StandardResponse(status="success", message="ticket status closed", data=None)
 
 
-async def close_ticket(store_id, ticket_id, db, payload):
-    user_id = payload.get("user_id")
+async def close_ticket(store_id, request, ticket_id, db):
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("Unauthorized access attempt at the close_ticket endpoint")
         raise HTTPException(status_code=401, detail="not a valid user")
@@ -646,7 +699,7 @@ async def close_ticket(store_id, ticket_id, db, payload):
             await db.execute(
                 select(Ticket)
                 .where(
-                    Ticket.store_id == store_id,
+                    or_(Ticket.store_id == store_id, Ticket.store_id.is_(None)),
                     Ticket.id == ticket_id,
                     Ticket.assigned_to == user_id,
                 )
@@ -710,11 +763,11 @@ async def close_ticket(store_id, ticket_id, db, payload):
 async def remove_message(
     store_id,
     ticket_id,
+    request,
     message_id,
     db,
-    payload,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("Unauthorized access attempt at the remove_message endpoint")
         raise HTTPException(status_code=401, detail="not a valid user")
@@ -725,7 +778,7 @@ async def remove_message(
                 .join(Ticket, Messaging.ticket_id == Ticket.id)
                 .options(contains_eager(Messaging.ticket))
                 .where(
-                    Ticket.store_id == store_id,
+                    or_(Ticket.store_id == store_id, Ticket.store_id.is_(None)),
                     Ticket.id == ticket_id,
                     Messaging.id == message_id,
                     Ticket.user_id == user_id,
@@ -782,28 +835,24 @@ async def remove_message(
 async def clear_conversation(
     agent,
     store_id,
+    request,
     ticket_id,
     db,
-    payload,
 ):
-    user_id = payload.get("user_id")
+    user_id = unique_id(request)
     if not user_id:
         logger.warning("Unauthorized access attempt at the clear_conversation")
         raise HTTPException(status_code=401, detail="not a valid user")
-    if agent not in ["customer", "support"]:
-        raise HTTPException(
-            status_code=409, detail="agent must be either 'customer' or 'support'"
-        )
     ticket_filter = (
         and_(
             Ticket.user_id == user_id,
         )
-        if agent == "customer"
+        if agent == "customer_view"
         else and_(Ticket.assigned_to == user_id, Ticket.status == TicketStatus.closed)
     )
     role_filter = (
         Messaging.customer_id == user_id
-        if agent == "customer"
+        if agent == "customer_view"
         else Messaging.support_id == user_id
     )
     try:
@@ -811,7 +860,9 @@ async def clear_conversation(
             await db.execute(
                 select(Ticket)
                 .where(
-                    Ticket.store_id == store_id, Ticket.id == ticket_id, ticket_filter
+                    or_(Ticket.store_id == store_id, Ticket.store_id.is_(None)),
+                    Ticket.id == ticket_id,
+                    ticket_filter,
                 )
                 .with_for_update()
             )
@@ -846,7 +897,7 @@ async def clear_conversation(
         if not clear.scalar():
             logger.info(f"No messages found with ticket '{ticket_id}'")
             raise HTTPException(status_code=404, detail="no messages found to delete")
-        if agent == "customer" and ticket_check.status != TicketStatus.closed:
+        if agent == "customer_view" and ticket_check.status != TicketStatus.closed:
             ticket_check.status = TicketStatus.closed
         await db.commit()
     except HTTPException:
