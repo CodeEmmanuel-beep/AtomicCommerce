@@ -188,7 +188,7 @@ class Ticket(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), nullable=False)
     store_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("store.id"), nullable=False
+        Integer, ForeignKey("store.id"), nullable=True
     )
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[TicketStatus] = mapped_column(
@@ -403,14 +403,18 @@ class Product(Base):
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("store.id"))
     product_name: Mapped[str] = mapped_column(String)
     primary_image: Mapped[str] = mapped_column(String, nullable=False)
-    avg_rating: Mapped[Decimal] = mapped_column(Numeric(precision=3, scale=2), default=0)
+    avg_rating: Mapped[Decimal] = mapped_column(
+        Numeric(precision=3, scale=2), default=0
+    )
     review_count: Mapped[int] = mapped_column(Integer, default=0)
     product_description: Mapped[str] = mapped_column(Text)
     category_id: Mapped[int] = mapped_column(Integer, ForeignKey("category.id"))
     sub_category_id: Mapped[int] = mapped_column(Integer, ForeignKey("subcategory.id"))
     product_availability: Mapped[str] = mapped_column(String, default="out_of_stock")
     created_by: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     searchable_text: Mapped[str] = mapped_column(
         TSVECTOR,
         Computed(
@@ -485,6 +489,7 @@ class ProductVariant(Base):
     inventory = relationship("Inventory", back_populates="variant", uselist=False)
     vimage = relationship("VariantImage", back_populates="variant")
     notifications = relationship("Notification", back_populates="productvariant")
+
 
 class VariantImage(Base):
     __tablename__ = "variantimage"
@@ -692,7 +697,7 @@ class Notification(Base):
     __tablename__ = "notification"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     notification: Mapped[str] = mapped_column(String)
-    from_user: Mapped[int|None] = mapped_column(Integer, nullable=True, index=True)
+    from_user: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     notified_user: Mapped[int] = mapped_column(Integer, index=True)
     status: Mapped[str | None] = mapped_column(String, nullable=True)
     product_id: Mapped[int | None] = mapped_column(
