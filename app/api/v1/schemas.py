@@ -409,6 +409,7 @@ class Chat(BaseModel):
     unread_count: int = Field(default_factory=int)
     customer_photo: str = Field(default_factory=str)
     customer: str = Field(default_factory=str)
+    platform_photo: str = Field(default_factory=str)
     store_photo: str = Field(default_factory=str)
     customer_support: str = Field(default_factory=str)
     sender: str = Field(default_factory=str)
