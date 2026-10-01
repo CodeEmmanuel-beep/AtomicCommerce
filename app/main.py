@@ -1,10 +1,10 @@
-from fastapi import FastAPI, HTTPException, Request, status, Response
+from fastapi import FastAPI, HTTPException, Request, status, Response, Depends
 import time
 from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
 from app.database.config import settings
 from jose import jwt, JWTError, ExpiredSignatureError
-from app.database.get import async_db
+from app.database.get import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.routes import (
     auth,
@@ -221,7 +221,7 @@ async def requests(request: Request, call_next):
 
 
 @app.get("/healthcheck", include_in_schema=False, status_code=status.HTTP_200_OK)
-async def healthcheck(response: Response, db: AsyncSession = async_db):
+async def healthcheck(response: Response, db: AsyncSession = Depends(get_db)):
     try:
         await db.execute(text("SELECT 1"))
         return {
