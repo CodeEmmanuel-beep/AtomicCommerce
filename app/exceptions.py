@@ -26,7 +26,7 @@ def make_http_exception_handler():
             logger.warning(f"HTTPEXCEPTION: {exc.detail}-PATH:{request.url.path}")
             return JSONResponse(
                 status_code=exc.status_code,
-                content={"status": "error", "message": exc.detail},
+                content={"status": "error", "message": str(exc.detail)},
             )
         logger = get_logger("exceptions")
         logger.warning(f"UNHANDLED ERROR: PATH-{request.url.path}| ERROR {exc}")
@@ -48,7 +48,7 @@ def make_validation_error_handler():
                 content={
                     "status": "FAILED",
                     "message": "VALIDATION ERROR",
-                    "details": exc.errors(),
+                    "details": str(exc.errors()),
                 },
             )
         logger = get_logger("exceptions")
