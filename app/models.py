@@ -135,7 +135,9 @@ class User(Base):
     reviews = relationship("Review", back_populates="user")
     replies = relationship("Reply", back_populates="user")
     orders = relationship("Order", back_populates="user")
-    messages = relationship("Messaging", back_populates="user")
+    messages = relationship(
+        "Messaging", foreign_keys="[Messaging.user_id]", back_populates="user"
+    )
     carts = relationship("Cart", back_populates="user")
     owners = relationship("Store", secondary=store_owners, back_populates="user_owners")
     staffs = relationship("Store", secondary=store_staffs, back_populates="user_staffs")
@@ -147,6 +149,12 @@ class User(Base):
     assigned_tickets = relationship(
         "Ticket", foreign_keys="[Ticket.assigned_to]", back_populates="agent"
     )
+    customer_messages = relationship(
+        "Messaging", foreign_keys="[Messaging.customer_id]", back_populates="customer"
+    )
+    support_messages = relationship(
+        "Messaging", foreign_keys="[Messaging.support_id]", back_populates="support"
+    )
 
 
 class Messaging(Base):
@@ -154,8 +162,8 @@ class Messaging(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
     ticket_id: Mapped[int] = mapped_column(Integer, ForeignKey("ticket.id"), index=True)
-    support_id: Mapped[int] = mapped_column(Integer, index=True)
-    customer_id: Mapped[int] = mapped_column(Integer, index=True)
+    support_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
+    customer_id: Mapped[int] = mapped_column(Integer, ForeignKey("user.id"), index=True)
     message: Mapped[str | None] = mapped_column(String, nullable=True)
     photo: Mapped[str | None] = mapped_column(String, nullable=True)
     delivered: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -172,7 +180,13 @@ class Messaging(Base):
             "idx_message_customer_support", "customer_id", "support_id", "time_of_chat"
         ),
     )
-    user = relationship("User", back_populates="messages")
+    user = relationship("User", foreign_keys=[user_id], back_populates="messages")
+    support = relationship(
+        "User", foreign_keys=[support_id], back_populates="support_messages"
+    )
+    customer = relationship(
+        "User", foreign_keys=[customer_id], back_populates="customer_messages"
+    )
     ticket = relationship("Ticket", back_populates="messages")
 
 
