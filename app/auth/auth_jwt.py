@@ -1,9 +1,7 @@
 from jose import jwt
-from fastapi import HTTPException
 from datetime import datetime, timezone, timedelta
 from passlib.context import CryptContext
 from app.database.config import settings
-import re
 
 password_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
