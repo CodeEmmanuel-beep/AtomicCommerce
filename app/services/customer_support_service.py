@@ -76,7 +76,10 @@ async def text_support(store_id, request, message, pics, subject, db, get_supaba
                 Ticket.assigned_to.label("assigned"),
                 func.count(Ticket.id).label("cnt"),
             )
-            .where(Ticket.status.in_([TicketStatus.open, TicketStatus.in_progress]))
+            .where(
+                Ticket.store_id == store_id,
+                Ticket.status.in_([TicketStatus.open, TicketStatus.in_progress]),
+            )
             .group_by(Ticket.assigned_to)
         ).subquery()
         stmt = select(User.id).outerjoin(subq, User.id == subq.c.assigned)
