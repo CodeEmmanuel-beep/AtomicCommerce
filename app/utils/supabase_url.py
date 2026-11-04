@@ -2,12 +2,13 @@ from fastapi import Request
 from app.logs.logger import get_logger
 from app.database.config import settings
 from supabase import AsyncClient
+from starlette.requests import HTTPConnection
 
 logger = get_logger("supabase_urls")
 
 
-def _supabase(request: Request) -> AsyncClient:
-    return request.app.state.supabase
+def _supabase(conn: HTTPConnection) -> AsyncClient:
+    return conn.app.state.supabase
 
 
 async def create_signed_urls(file: list[str], expires, context, get_supabase):
