@@ -8,6 +8,7 @@ from app.database.get import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.routes import (
     auth,
+    websocket,
     product,
     product_reply,
     product_reviews,
@@ -48,29 +49,45 @@ from app.logs.logger import get_logger
 from contextlib import asynccontextmanager
 from supabase import create_async_client
 from cryptography.fernet import Fernet
+from app.api.v1.routes.websocket import fanout_message
+
+logger = get_logger("lifespan")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    supabase = await create_async_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-    app.state.supabase = supabase
     if not settings.CIPHER_KEY:
         raise RuntimeError("key not found")
     app.state.cipher = Fernet(settings.CIPHER_KEY.encode())
-    app.state.router = asyncio.create_task(run_router())
+    supabase = await create_async_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+    app.state.supabase = supabase
+    app.state.router = asyncio.create_task(run_router(), name="router")
     app.state.notification_worker = asyncio.create_task(
-        add_commit_periodically(notification_queue)
+        add_commit_periodically(notification_queue), name="notification_worker"
+    )
+    app.state.fanout_worker = asyncio.create_task(
+        fanout_message(), name="fanout_worker"
     )
     try:
         yield
     finally:
-        app.state.router.cancel()
-        app.state.notification_worker.cancel()
-        try:
-            await app.state.router
-            await app.state.notification_worker
-        except asyncio.CancelledError:
-            print("Router task cancelled successfully.")
+        tasks = [
+            app.state.router,
+            app.state.notification_worker,
+            app.state.fanout_worker,
+        ]
+        for task in tasks:
+            task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for task, result in zip(tasks, results):
+            if isinstance(result, asyncio.CancelledError):
+                logger.info("%s cancelled successfully", task.get_name())
+            elif isinstance(result, Exception):
+                logger.error(
+                    "%s exited with an exception",
+                    task.get_name(),
+                    exc_info=(type(result), result, result.__traceback__),
+                )
 
 
 app = FastAPI(title="AtomicCommerce", version="1.0", lifespan=lifespan)
@@ -104,6 +121,7 @@ app.openapi = custom_openapi
 PUBLIC_PREFIX_PATHS = (
     "/auth/register",
     "/auth/login",
+    "/websocket",
     "/category/get_category",
     "/product/search_product",
     "/product/store_product",
@@ -242,6 +260,7 @@ def home():
 
 
 app.include_router(auth.router)
+app.include_router(websocket.router)
 app.include_router(notifications.router)
 app.include_router(profile.router)
 app.include_router(category.router)
