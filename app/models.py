@@ -17,8 +17,9 @@ from sqlalchemy import (
     Date,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, ENUM as PG_ENUM
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID, ENUM as PG_ENUM
 from enum import Enum
+import uuid
 from sqlalchemy.orm import relationship, mapped_column, Mapped, declarative_base
 from sqlalchemy.schema import Computed
 from sqlalchemy import func
@@ -194,6 +195,37 @@ class TicketStatus(str, Enum):
     open = "open"
     in_progress = "in_progress"
     closed = "closed"
+
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    aggregate_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    payload: Mapped[dict | str] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String, default="pending", nullable=False, index=True
+    )
+    attempt: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, index=False
+    )
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    claim_token: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class Ticket(Base):
