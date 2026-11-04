@@ -3,7 +3,6 @@ from app.database.config import settings
 from redis import asyncio as aioredis
 from fastapi.encoders import jsonable_encoder
 import asyncio
-from typing import Optional
 import aiopg
 import time
 from datetime import datetime
