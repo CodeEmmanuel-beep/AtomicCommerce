@@ -14,6 +14,7 @@ from app.utils.supabase_url import get_public_url
 from decimal import Decimal
 from enum import Enum
 import re
+from app.models import OutboxStatus
 
 T = TypeVar("T")
 
@@ -104,6 +105,23 @@ class TimeFrameEnum(str, Enum):
 class SubscriptionTypeEnum(str, Enum):
     one_time = "one_time"
     subscription = "subscription"
+
+
+class OutboxResponse(BaseModel):
+    id: int | None = None
+    aggregate_id: int
+    event_type: str
+    payload: dict | str
+    status: OutboxStatus
+    attempt: int
+    next_attempt_at: datetime | None = None
+    locked_until: datetime | None = None
+    claim_token: str | None = None
+    last_error: str | None = None
+    created_at: datetime
+    published_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PersonnelResponse(BaseModel):
