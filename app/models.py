@@ -191,10 +191,12 @@ class Messaging(Base):
     ticket = relationship("Ticket", back_populates="messages")
 
 
-class TicketStatus(str, Enum):
-    open = "open"
-    in_progress = "in_progress"
-    closed = "closed"
+class OutboxStatus(str, Enum):
+    pending = "pending"
+    processing = "processing"
+    published = "published"
+    failed = "failed"
+    dead_letter = "dead_letter"
 
 
 class OutboxEvent(Base):
@@ -204,8 +206,8 @@ class OutboxEvent(Base):
     event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
     aggregate_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     payload: Mapped[dict | str] = mapped_column(JSONB, nullable=False)
-    status: Mapped[str] = mapped_column(
-        String, default="pending", nullable=False, index=True
+    status: Mapped[OutboxStatus] = mapped_column(
+        SQLEnum(OutboxStatus), default=OutboxStatus.pending, nullable=False, index=True
     )
     attempt: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False, index=False
@@ -226,6 +228,12 @@ class OutboxEvent(Base):
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class TicketStatus(str, Enum):
+    open = "open"
+    in_progress = "in_progress"
+    closed = "closed"
 
 
 class Ticket(Base):
