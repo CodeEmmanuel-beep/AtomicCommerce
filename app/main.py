@@ -49,7 +49,12 @@ from app.logs.logger import get_logger
 from contextlib import asynccontextmanager
 from supabase import create_async_client
 from cryptography.fernet import Fernet
-from app.api.v1.routes.websocket import fanout_message
+from app.api.v1.routes.websocket import (
+    fanout_message,
+    autoclaims,
+    publish_events,
+    create_consumer_group,
+)
 
 logger = get_logger("lifespan")
 
@@ -65,9 +70,12 @@ async def lifespan(app: FastAPI):
     app.state.notification_worker = asyncio.create_task(
         add_commit_periodically(notification_queue), name="notification_worker"
     )
+    await create_consumer_group()
     app.state.fanout_worker = asyncio.create_task(
         fanout_message(), name="fanout_worker"
     )
+    app.state.reclaim = asyncio.create_task(autoclaims(), name="redis_reclaim")
+    app.state.stream_add = asyncio.create_task(publish_events(), name="redis_add")
     try:
         yield
     finally:
@@ -75,6 +83,8 @@ async def lifespan(app: FastAPI):
             app.state.router,
             app.state.notification_worker,
             app.state.fanout_worker,
+            app.state.stream_add,
+            app.state.reclaim,
         ]
         for task in tasks:
             task.cancel()
