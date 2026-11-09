@@ -20,4 +20,4 @@ regex
 stripe
 sse_starlette
 aiopg
-websocket-client
+uuid6
