@@ -14,6 +14,7 @@ from app.utils.supabase_url import get_public_url
 from decimal import Decimal
 from enum import Enum
 import re
+import uuid
 from app.models import OutboxStatus
 
 T = TypeVar("T")
@@ -108,15 +109,15 @@ class SubscriptionTypeEnum(str, Enum):
 
 
 class OutboxResponse(BaseModel):
-    id: int | None = None
+    id: uuid.UUID
     aggregate_id: int
     event_type: str
     payload: dict | str
     status: OutboxStatus
-    attempt: int
+    attempts: int
     next_attempt_at: datetime | None = None
     locked_until: datetime | None = None
-    claim_token: str | None = None
+    claim_token: uuid.UUID | None = None
     last_error: str | None = None
     created_at: datetime
     published_at: datetime
@@ -382,7 +383,7 @@ class MemberStatus(str, Enum):
 
 
 class CursorPaginatedResponse(BaseModel):
-    next_cursor: int | None = None
+    next_cursor: int | uuid.UUID | None = None
     limit: int
     has_more: bool
 
