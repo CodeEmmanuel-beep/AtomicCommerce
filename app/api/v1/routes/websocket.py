@@ -7,24 +7,27 @@ from app.models import (
     store_owners,
     store_staffs,
     OutboxEvent,
-    OutboxStatus,
 )
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import select, or_, func, update, text, and_
+from sqlalchemy import select, or_, func, update
 from sqlalchemy.orm import selectinload
 from app.database.get import AsyncSessionLocal
 from app.utils.helper import upload_photo_helper
 from app.utils.supabase_url import create_signed_urls, _supabase, cleaned_up
 from fastapi import Depends, WebSocket, APIRouter, WebSocketDisconnect
+from starlette.requests import HTTPConnection
 import orjson
 import uuid
 import asyncio
-from datetime import datetime, timedelta, timezone
 from redis.exceptions import ResponseError
 from jose import jwt, JWTError, ExpiredSignatureError
 from app.database.config import settings
-from app.utils.redis import redis_client
-import socket
+from app.utils.redis import redis_client, STREAM_NAME
+from app.services.transactional_outbox_service import (
+    mark_event_as_published,
+    schedule_retry,
+    claim_outbox_events,
+)
 from app.logs.logger import get_logger
 
 logger = get_logger("websocket")
@@ -32,18 +35,6 @@ logger = get_logger("websocket")
 router = APIRouter(prefix="/websocket", tags=["Real Time Messaging"])
 
 active_connections: dict[int, WebSocket] = {}
-
-STREAM_NAME = "chat_stream"
-CONSUMER_GROUP = f"chat_cross_worker_delivery"
-CONSUMER_NAME = f"worker:{socket.gethostname()} id: {uuid.uuid4().hex}"
-TIME_OUT_ZSET = "offline_ticket_tracker"
-GRACE_PERIOD = 1800
-
-
-def decode(val):
-    if isinstance(val, bytes):
-        return val.decode("utf-8")
-    return val
 
 
 async def get_active_connections(
@@ -72,9 +63,10 @@ async def get_active_connections(
                                     Messaging.support_id == user_id,
                                     Messaging.customer_id == user_id,
                                 ),
+                                Messaging.user_id != user_id,
                                 Messaging.delivered.is_(False),
                             )
-                            .order_by(Messaging.created_at.asc(), Messaging.id.asc())
+                            .order_by(Messaging.time_of_chat.asc(), Messaging.id.asc())
                         )
                     )
                     .scalars()
@@ -117,186 +109,6 @@ def remove_active_connection(user_id: int, ws: WebSocket):
         del active_connections[user_id]
 
 
-async def create_consumer_group():
-    try:
-        await redis_client.xgroup_create(
-            STREAM_NAME, CONSUMER_GROUP, id="$", mkstream=True
-        )
-        logger.info(
-            f"consumer group '{CONSUMER_GROUP}' created for stream: {STREAM_NAME}"
-        )
-    except ResponseError as e:
-        if "BUSYGROUP" in str(e):
-            logger.info(f"consumer group: {CONSUMER_GROUP} already running")
-        else:
-            raise
-
-
-async def fanout_message():
-    delay = 1
-    try:
-        await create_consumer_group()
-    except Exception:
-        logger.exception("failed to initialize redis consumer group")
-        raise
-    while True:
-        try:
-            streams = await redis_client.xreadgroup(
-                groupname=CONSUMER_GROUP,
-                consumername=CONSUMER_NAME,
-                streams={STREAM_NAME: ">"},
-                count=100,
-                block=5000,
-            )
-            if not streams:
-                delay = 1
-            delay = 1
-            for stream_key, messages in streams:
-                for message_id, message in messages:
-                    data = decode(message.get("data"))
-                    event_id = decode(message.get("event_id", None))
-                    event_type = decode(message.get("event_type", None))
-                    try:
-                        event = orjson.loads(data) if data else None
-                    except (orjson.JSONDecodeError, TypeError):
-                        logger.error("failed to parse data for message: %s", message_id)
-                        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-                        continue
-                    if not isinstance(event, dict):
-                        logger.error("Redis event must be a dictionary")
-                        await redis_client.xack(
-                            STREAM_NAME,
-                            CONSUMER_GROUP,
-                            message_id,
-                        )
-                        continue
-                    ticket_id = event.get("ticket_id", None)
-                    receiver_id = event.get("receiver_id", None)
-                    broadcast_payload = event.get("broadcast_payload")
-                    if not isinstance(event_type, str):
-                        logger.error("Invalid event_type for message %s", message_id)
-                        await redis_client.xack(
-                            STREAM_NAME,
-                            CONSUMER_GROUP,
-                            message_id,
-                        )
-                        continue
-                    if not isinstance(broadcast_payload, dict):
-                        logger.error(
-                            "Invalid broadcast_payload for message %s", message_id
-                        )
-                        await redis_client.xack(
-                            STREAM_NAME,
-                            CONSUMER_GROUP,
-                            message_id,
-                        )
-                        continue
-                    if event_type.startswith("websocket"):
-                        if not receiver_id:
-                            logger.error(
-                                "Missing receiver_id for message %s", message_id
-                            )
-                            await redis_client.xack(
-                                STREAM_NAME, CONSUMER_GROUP, message_id
-                            )
-                            continue
-                        await redis_client.publish(
-                            f"chat:{receiver_id}",
-                            orjson.dumps(
-                                {
-                                    k: v
-                                    for k, v in broadcast_payload.items()
-                                    if v is not None
-                                },
-                            ),
-                        )
-                        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-        except asyncio.CancelledError:
-            logger.info("stream consumer task cancelled gracefully")
-            raise
-        except Exception:
-            logger.exception("stream consumer encountered an error, reconnecting...")
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 30)
-
-
-async def autoclaims():
-    min_idle_time_ms = 60000
-    start_id = "0-0"
-    delay = 1
-    while True:
-        try:
-            claimed_result = await redis_client.xautoclaim(
-                name=STREAM_NAME,
-                groupname=CONSUMER_GROUP,
-                consumername=CONSUMER_NAME,
-                min_idle_time=min_idle_time_ms,
-                start_id=start_id,
-                count=50,
-            )
-            next_start_id, messages, _ = claimed_result
-            start_id = next_start_id
-            if not messages:
-                await asyncio.sleep(10)
-                continue
-            delay = 1
-            for message_id, message in messages:
-                event_id = decode(message.get("event_id"))
-                event_type = decode(message.get("event_type"))
-                data = decode(message.get("data"))
-                if (
-                    not isinstance(event_id, str)
-                    or not isinstance(event_type, str)
-                    or not isinstance(data, (str, bytes))
-                ):
-                    logger.error("invalid event payload for message: %s", message_id)
-                    await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-                    continue
-                try:
-                    event = orjson.loads(data)
-                except orjson.JSONDecodeError:
-                    logger.error("failed to parse reclaimed message: %s", message_id)
-                    await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-                    continue
-                if not isinstance(event, dict):
-                    logger.error("Reclaimed event must be a dictionary")
-                    await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-                    continue
-                ticket_id = event.get("ticket_id")
-                receiver_id = event.get("receiver_id")
-                broadcast_payload = event.get("broadcast_payload")
-                if not isinstance(broadcast_payload, dict):
-                    logger.error(
-                        "reclaimed broadcast payload for message '%s' must be dictionary",
-                        message_id,
-                    )
-                    await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-                    continue
-                if event_type.startswith("websocket"):
-                    if not receiver_id:
-                        logger.error("Missing receiver_id for message %s", message_id)
-                        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-                        continue
-                    await redis_client.publish(
-                        f"chat:{receiver_id}",
-                        orjson.dumps(
-                            {
-                                k: v
-                                for k, v in broadcast_payload.items()
-                                if v is not None
-                            }
-                        ),
-                    )
-                    await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
-        except asyncio.CancelledError:
-            logger.info("autoclaim worker cancelled gracefully")
-            raise
-        except Exception:
-            logger.exception("autoclaim worker encountered an error, retrying...")
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 20)
-
-
 async def publish_to_users(user_id):
     delay = 1
     channel_name = f"chat:{user_id}"
@@ -335,6 +147,7 @@ async def publish_to_users(user_id):
 async def get_connection(
     ws: WebSocket,
     token: str,
+    request: HTTPConnection,
     store_id: int | None = None,
     cus_id: int | None = None,
     tick_id: int | None = None,
@@ -451,8 +264,6 @@ async def get_connection(
                                     Ticket.status.in_(
                                         [TicketStatus.open, TicketStatus.in_progress]
                                     ),
-                                    Ticket.updated_at
-                                    > (func.now() - text("INTERVAL '30 minutes'")),
                                 )
                                 .order_by(Ticket.updated_at.desc())
                                 .limit(1)
@@ -511,8 +322,6 @@ async def get_connection(
                                 Ticket.assigned_to == user_id,
                                 Ticket.user_id == cus_id,
                                 Ticket.id == tick_id,
-                                Ticket.updated_at
-                                > (func.now() - text("INTERVAL '30 minutes'")),
                                 Ticket.status.in_(
                                     [TicketStatus.open, TicketStatus.in_progress]
                                 ),
@@ -583,7 +392,7 @@ async def get_connection(
                     await ws.send_json({"error": "Invalid message ID"})
                     continue
                 async with AsyncSessionLocal() as db:
-                    await db.execute(
+                    delivered = await db.execute(
                         update(Messaging)
                         .where(
                             or_(
@@ -591,13 +400,15 @@ async def get_connection(
                                 Messaging.customer_id == user_id,
                             ),
                             Messaging.user_id != user_id,
+                            Messaging.ticket_id == current_ticket_id,
                             Messaging.id == action_msg_id,
                             Messaging.delivered.is_(False),
                         )
                         .values(delivered=True)
                     )
                     await db.commit()
-                await ws.send_json({"acknowledged": action_msg_id})
+                if delivered.rowcount == 1:
+                    await ws.send_json({"acknowledged": action_msg_id})
                 continue
             if action.get("activity") and action.get("activity") == "read":
                 action_msg_id = action.get("msg_id")
@@ -607,7 +418,7 @@ async def get_connection(
                     await ws.send_json({"error": "Invalid message ID"})
                     continue
                 async with AsyncSessionLocal() as db:
-                    await db.execute(
+                    seen = await db.execute(
                         update(Messaging)
                         .where(
                             or_(
@@ -617,11 +428,13 @@ async def get_connection(
                             Messaging.user_id != user_id,
                             Messaging.id == action_msg_id,
                             Messaging.seen.is_(False),
+                            Messaging.ticket_id == current_ticket_id,
                         )
                         .values(seen=True)
                     )
                     await db.commit()
-                await ws.send_json({"seen": action_msg_id})
+                if seen.rowcount == 1:
+                    await ws.send_json({"seen": action_msg_id})
                 continue
             message = data.get("message")
             photo = data.get("photo")
@@ -630,14 +443,20 @@ async def get_connection(
                 continue
             if photo:
                 photo = await upload_photo_helper(
-                    photo, context="message photo", get_supabase=get_supabase
+                    photo, request, get_supabase, user_id, settings.BUCKET1, skip=True
+                )
+                photo_url = await create_signed_urls(
+                    photo,
+                    expires=3600,
+                    context="message photo",
+                    get_supabase=get_supabase,
                 )
             payload = {
                 "action": "message",
                 "store_name": store_name,
                 "sender": f"{first_name} {last_name}",
                 "message": message,
-                "photo": photo,
+                "photo": photo_url,
             }
             try:
                 async with AsyncSessionLocal() as db:
@@ -676,142 +495,22 @@ async def get_connection(
                 await ws.send_json({"error": "Failed to save message"})
                 continue
     except WebSocketDisconnect:
-        logger.exception("User %s disconnected from WebSocket", user_id)
+        logger.info("User %s disconnected from WebSocket", user_id)
     except Exception:
         logger.exception("Unexpected WebSocket error for user %s", user_id)
     finally:
         if publisher_task is not None:
             publisher_task.cancel()
-
             try:
                 await publisher_task
             except asyncio.CancelledError:
                 pass
         remove_active_connection(user_id, ws)
         if accepted:
-            await ws.close()
-
-
-async def claim_outbox_events():
-    try:
-        async with AsyncSessionLocal() as db:
             try:
-                token = uuid.uuid4().hex
-                now = datetime.now(timezone.utc)
-                result = await db.execute(
-                    select(OutboxEvent)
-                    .where(
-                        or_(
-                            and_(
-                                OutboxEvent.status == OutboxStatus.pending,
-                                or_(
-                                    OutboxEvent.next_attempt_at <= now,
-                                    OutboxEvent.next_attempt_at.is_(None),
-                                ),
-                            ),
-                            and_(
-                                OutboxEvent.status == OutboxStatus.processing,
-                                OutboxEvent.locked_until <= now,
-                            ),
-                        )
-                    )
-                    .order_by(OutboxEvent.created_at.asc())
-                    .limit(50)
-                    .with_for_update(skip_locked=True)
-                )
-                events = result.scalars().all()
-                claimed = []
-                for event in events:
-                    if event.attempts >= 5:
-                        event.status = OutboxStatus.dead_letter
-                        event.claim_token = None
-                        event.locked_until = None
-                        continue
-                    event.status = OutboxStatus.processing
-                    event.locked_until = now + timedelta(minutes=5)
-                    event.claim_token = token
-                    event.attempts += 1
-
-                    claimed.append(
-                        {
-                            "event_id": event.id,
-                            "event_type": event.event_type,
-                            "aggregate_id": event.aggregate_id,
-                            "payload": event.payload,
-                            "claim_token": token,
-                            "attempts": event.attempts,
-                        }
-                    )
-                await db.commit()
-                return claimed
-            except SQLAlchemyError as e:
-                logger.exception(f"Database Error: {e}")
-                await db.rollback()
-                return []
-    except Exception as e:
-        logger.exception(f"Unexpected Error during outbox claim: {e}")
-        return []
-
-
-async def mark_event_as_published(event_id, claim_token):
-    try:
-        async with AsyncSessionLocal() as db:
-            try:
-                await db.execute(
-                    update(OutboxEvent)
-                    .where(
-                        OutboxEvent.id == event_id,
-                        OutboxEvent.status == OutboxStatus.processing,
-                        OutboxEvent.claim_token == claim_token,
-                    )
-                    .values(
-                        status=OutboxStatus.published,
-                        locked_until=None,
-                        claim_token=None,
-                        last_error=None,
-                        published_at=datetime.now(timezone.utc),
-                    )
-                )
-                await db.commit()
-            except SQLAlchemyError as e:
-                logger.exception(
-                    f"Database Error while marking event as published: {e}"
-                )
-                await db.rollback()
-    except Exception:
-        logger.exception(f"Unexpected Error while marking event as published")
-
-
-async def schedule_retry(event_id, claim_token, error_message):
-    try:
-        async with AsyncSessionLocal() as db:
-            try:
-                await db.execute(
-                    update(OutboxEvent)
-                    .where(
-                        OutboxEvent.id == event_id,
-                        OutboxEvent.status == OutboxStatus.processing,
-                        OutboxEvent.claim_token == claim_token,
-                    )
-                    .values(
-                        status=OutboxStatus.pending,
-                        next_attempt_at=datetime.now(timezone.utc)
-                        + timedelta(minutes=5),
-                        last_error=error_message[:2000] if error_message else None,
-                        locked_until=None,
-                        claim_token=None,
-                    )
-                )
-                await db.commit()
-            except SQLAlchemyError as e:
-                logger.exception(
-                    f"Database Error while scheduling retry for event {event_id}: {e}"
-                )
-                await db.rollback()
-    except Exception:
-        logger.exception(
-            f"Unexpected Error while scheduling retry for event {event_id}"
-        )
+                await ws.close()
+            except Exception:
+                pass
 
 
 async def publish_events():
