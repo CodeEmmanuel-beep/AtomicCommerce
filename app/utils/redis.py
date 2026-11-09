@@ -11,14 +11,30 @@ from app.database.async_config import AsyncSessionLocal
 from app.logs.logger import get_logger
 from dataclasses import dataclass
 from sqlalchemy.exc import SQLAlchemyError
+import socket
+import uuid
+from redis.exceptions import ResponseError
+
+STREAM_NAME = "chat_stream"
+CONSUMER_GROUP = f"chat_cross_worker_delivery"
+CONSUMER_NAME = f"worker:{socket.gethostname()} id: {uuid.uuid4().hex}"
+
+
+def decode(val):
+    if isinstance(val, bytes):
+        return val.decode("utf-8")
+    return val
+
 
 redis_url = settings.REDIS_URL
 if redis_url.startswith("rediss://"):
     redis_client = aioredis.from_url(
-        redis_url, ssl_cert_reqs=None, decode_responses=True
+        redis_url, ssl_cert_reqs=None, decode_responses=True, socket_timeout=15
     )
 else:
-    redis_client = aioredis.from_url(redis_url, decode_responses=True)
+    redis_client = aioredis.from_url(
+        redis_url, decode_responses=True, socket_timeout=15
+    )
 
 
 async def cache_version(key: str, ttl: int = 18000) -> int:
@@ -203,6 +219,181 @@ async def profile_invalidation(user_id: int):
         if cursor in (0, "0", b"0"):
             break
     return delete
+
+
+async def create_consumer_group():
+    try:
+        await redis_client.xgroup_create(
+            STREAM_NAME, CONSUMER_GROUP, id="$", mkstream=True
+        )
+        logger.info(
+            f"consumer group '{CONSUMER_GROUP}' created for stream: {STREAM_NAME}"
+        )
+    except ResponseError as e:
+        if "BUSYGROUP" in str(e):
+            logger.info(f"consumer group: {CONSUMER_GROUP} already running")
+        else:
+            raise
+
+
+async def fanout_message():
+    delay = 1
+    while True:
+        try:
+            streams = await redis_client.xreadgroup(
+                groupname=CONSUMER_GROUP,
+                consumername=CONSUMER_NAME,
+                streams={STREAM_NAME: ">"},
+                count=100,
+                block=5000,
+            )
+            if not streams:
+                delay = 1
+            delay = 1
+            for stream_key, messages in streams:
+                for message_id, message in messages:
+                    data = decode(message.get("data"))
+                    event_id = decode(message.get("event_id", None))
+                    event_type = decode(message.get("event_type", None))
+                    try:
+                        event = orjson.loads(data) if data else None
+                    except (orjson.JSONDecodeError, TypeError):
+                        logger.error("failed to parse data for message: %s", message_id)
+                        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+                        continue
+                    if not isinstance(event, dict):
+                        logger.error("Redis event must be a dictionary")
+                        await redis_client.xack(
+                            STREAM_NAME,
+                            CONSUMER_GROUP,
+                            message_id,
+                        )
+                        continue
+                    ticket_id = event.get("ticket_id", None)
+                    receiver_id = event.get("receiver_id", None)
+                    broadcast_payload = event.get("broadcast_payload")
+                    if not isinstance(event_type, str):
+                        logger.error("Invalid event_type for message %s", message_id)
+                        await redis_client.xack(
+                            STREAM_NAME,
+                            CONSUMER_GROUP,
+                            message_id,
+                        )
+                        continue
+                    if not isinstance(broadcast_payload, dict):
+                        logger.error(
+                            "Invalid broadcast_payload for message %s", message_id
+                        )
+                        await redis_client.xack(
+                            STREAM_NAME,
+                            CONSUMER_GROUP,
+                            message_id,
+                        )
+                        continue
+                    if event_type.startswith("websocket"):
+                        if not receiver_id:
+                            logger.error(
+                                "Missing receiver_id for message %s", message_id
+                            )
+                            await redis_client.xack(
+                                STREAM_NAME, CONSUMER_GROUP, message_id
+                            )
+                            continue
+                        await redis_client.publish(
+                            f"chat:{receiver_id}",
+                            orjson.dumps(
+                                {
+                                    k: v
+                                    for k, v in broadcast_payload.items()
+                                    if v is not None
+                                },
+                            ),
+                        )
+                        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+        except asyncio.CancelledError:
+            logger.info("stream consumer task cancelled gracefully")
+            raise
+        except Exception:
+            logger.exception("stream consumer encountered an error, reconnecting...")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 30)
+
+
+async def autoclaims():
+    min_idle_time_ms = 60000
+    start_id = "0-0"
+    delay = 1
+    while True:
+        try:
+            claimed_result = await redis_client.xautoclaim(
+                name=STREAM_NAME,
+                groupname=CONSUMER_GROUP,
+                consumername=CONSUMER_NAME,
+                min_idle_time=min_idle_time_ms,
+                start_id=start_id,
+                count=50,
+            )
+            next_start_id, messages, _ = claimed_result
+            start_id = next_start_id
+            if not messages:
+                await asyncio.sleep(10)
+                continue
+            delay = 1
+            for message_id, message in messages:
+                event_id = decode(message.get("event_id"))
+                event_type = decode(message.get("event_type"))
+                data = decode(message.get("data"))
+                if (
+                    not isinstance(event_id, str)
+                    or not isinstance(event_type, str)
+                    or not isinstance(data, (str, bytes))
+                ):
+                    logger.error("invalid event payload for message: %s", message_id)
+                    await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+                    continue
+                try:
+                    event = orjson.loads(data)
+                except orjson.JSONDecodeError:
+                    logger.error("failed to parse reclaimed message: %s", message_id)
+                    await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+                    continue
+                if not isinstance(event, dict):
+                    logger.error("Reclaimed event must be a dictionary")
+                    await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+                    continue
+                ticket_id = event.get("ticket_id")
+                receiver_id = event.get("receiver_id")
+                broadcast_payload = event.get("broadcast_payload")
+                if not isinstance(broadcast_payload, dict):
+                    logger.error(
+                        "reclaimed broadcast payload for message '%s' must be dictionary",
+                        message_id,
+                    )
+                    await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+                    continue
+                if event_type.startswith("websocket"):
+                    if not receiver_id:
+                        logger.error("Missing receiver_id for message %s", message_id)
+                        await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+                        continue
+                    await redis_client.publish(
+                        f"chat:{receiver_id}",
+                        orjson.dumps(
+                            {
+                                k: v
+                                for k, v in broadcast_payload.items()
+                                if v is not None
+                            }
+                        ),
+                    )
+                    await redis_client.xack(STREAM_NAME, CONSUMER_GROUP, message_id)
+        except asyncio.CancelledError:
+            logger.info("autoclaim worker cancelled gracefully")
+            raise
+        except Exception:
+            logger.exception("autoclaim worker encountered an error, retrying...")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 20)
 
 
 async def notifications_stream(user_id: int | None = None):
