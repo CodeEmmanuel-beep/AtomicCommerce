@@ -17,6 +17,7 @@ from sqlalchemy import (
     Date,
     text,
 )
+import uuid6
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID, ENUM as PG_ENUM
 from enum import Enum
 import uuid
@@ -202,14 +203,16 @@ class OutboxStatus(str, Enum):
 class OutboxEvent(Base):
     __tablename__ = "outbox_events"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid6.uuid7
+    )
     event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
     aggregate_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     payload: Mapped[dict | str] = mapped_column(JSONB, nullable=False)
     status: Mapped[OutboxStatus] = mapped_column(
         SQLEnum(OutboxStatus), default=OutboxStatus.pending, nullable=False, index=True
     )
-    attempt: Mapped[int] = mapped_column(
+    attempts: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False, index=False
     )
     next_attempt_at: Mapped[datetime] = mapped_column(
