@@ -31,6 +31,7 @@ celery_app.conf.update(
             "task": "member_subscribe_activation",
             "schedule": 3600,
         },
+        "close_quick_tickets": {"task": "close_tickets", "schedule": 1800},
         "deactivation_status": {
             "task": "member_deactivation",
             "schedule": 3660,
