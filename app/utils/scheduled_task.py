@@ -6,9 +6,12 @@ from app.models import (
     Membership,
     Subscription,
     SubscriptionStatus,
+    OutboxEvent,
+    TicketStatus,
+    Ticket,
 )
 from app.database.async_config import AsyncSessionLocal, engine
-from sqlalchemy import select, or_, cast, String
+from sqlalchemy import select, or_, cast, String, update
 from sqlalchemy.orm import selectinload
 from datetime import timedelta, datetime, timezone
 from app.logs.logger import get_logger
@@ -41,7 +44,7 @@ async def invalidate_order():
                         Order.created_at <= time_limit,
                         Order.re_order_time <= retry_limit,
                     ),
-                    ~Order.order_delete,
+                    Order.order_delete.is_(False),
                     Order.status == OrderStatus.pending,
                 )
                 .limit(1000)
@@ -80,6 +83,33 @@ async def invalidate_order():
             await session.rollback()
             logger.exception(
                 "fatal processing exception occurred during batch order invalidation"
+            )
+            raise
+
+
+async def close_quick_tickets():
+    async with AsyncSessionLocal() as session:
+        now = datetime.now(timezone.utc)
+        limit_ = now - timedelta(minutes=30)
+        try:
+            ticket_close = await session.execute(
+                update(Ticket)
+                .where(
+                    Ticket.updated_at < limit_,
+                    Ticket.subject == "Quick Ticket",
+                    Ticket.status.in_((TicketStatus.open, TicketStatus.in_progress)),
+                )
+                .values(status=TicketStatus.closed)
+            )
+            if ticket_close.rowcount == 0:
+                logger.info("No ticket found to close.")
+                return
+            await session.commit()
+            logger.info("Batch ticket closed successfully")
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "fatal processing exception occurred during batch ticket closing"
             )
             raise
 
@@ -214,6 +244,20 @@ def membership_update():
         get_worker_loop(update_membership_type())
     except Exception:
         logger.exception("fatal error, updating membership type")
+        raise
+
+
+@shared_task(
+    name="close_tickets",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3, "countdown": 30},
+)
+def close_ticket():
+    try:
+        get_worker_loop(close_quick_tickets())
+    except Exception:
+        logger.exception("fetal error closing quick tickets")
         raise
 
 
