@@ -21,10 +21,10 @@ graph TB
     end
 
     subgraph Gateway["🛡️ Gateway & Ingress Layer"]
-        Nginx["Nginx Reverse Proxy & Ingress<br/>• Upstream Keepalive Connection Pooling<br/>• Zero-Buffer SSE / Event Streaming Support<br/>• Dynamic Gzip Compression<br/>• TLS 1.2/1.3 Termination"]
+        Nginx["Nginx Reverse Proxy & Ingress<br/>• Upstream Keepalive Connection Pooling<br/>• Zero-Buffer SSE / Event Streaming & WebSocket Support<br/>• Dynamic Gzip Compression<br/>• TLS 1.2/1.3 Termination"]
     end
 
-    subgraph Application["🚀 FastAPI Backend Core (Dockerized)"]
+    subgraph Application["🚀 FastAPI Backend Core (Dockerized Workers)"]
         AuthMiddleware["🔒 Auth Middleware Layer<br/>• Fast JWT Decoding & Verification<br/>• Request Scope Context Injection (request.state.user)<br/>• Token Revocation Check"]
         
         subgraph DomainServices["Domain Service Engines"]
@@ -33,13 +33,13 @@ graph TB
             EngagementModule["Reviews, Replies & Reactions"]
             SupportModule["Support Ticketing Engine"]
             NotifService["Real-Time Notification Worker"]
+            OutboxPublisher["Transactional Outbox Publisher"]
         end
-    end
 
-    subgraph BackgroundWorkers["⚡ Asynchronous Background Layer"]
-        CeleryWorker["Celery Worker Engine"]
-        InventoryTask["Inventory Reconciliation Task"]
-        MembershipTask["Membership Activation / Deactivation Task"]
+        subgraph ASGIWorkerBoundary["ASGI Worker Instance Boundary"]
+            PubSubListener["Redis Pub/Sub Inter-Worker Listener<br/>• Subscribes to Channel Events"]
+            WebSocketManager["Local WebSocket Connection Manager<br/>• Maintains Active In-Memory Sockets"]
+        end
     end
 
     subgraph External["💳 External Services"]
@@ -47,19 +47,36 @@ graph TB
     end
 
     subgraph DataLayer["💾 Data & Messaging Layer"]
-        PostgreSQL[("PostgreSQL Multi-Tenant DB<br/>• Triggers & LISTEN/NOTIFY<br/>• Encrypted Bank Details (Fernet)<br/>• Persisted Notifications")]
-        RedisCache[("Redis Cache & Celery Broker<br/>• Token Revocation / Sessions")]
+        PostgreSQL[("PostgreSQL Multi-Tenant DB<br/>• Bank Details / Domain Writes / Outbox Transactions<br/>• Triggers & LISTEN/NOTIFY<br/>• Encrypted Bank Details (Fernet)<br/>• Persisted Notifications & Support Tickets")]
+        RedisCache[("Redis Cache & Celery Broker<br/>• Token Revocation / Sessions<br/>• Task Queues & Results")]
+        
+        subgraph StreamMessaging["Durable Event Bus (At-Least-Once Delivery)"]
+            RedisStreams[("Redis Streams<br/>• Consumer Groups & Stream Log<br/>• Pending Entry List (PEL) & XAUTOCLAIM")]
+        end
+        
+        subgraph TransientMessaging["Transient Real-Time Bus (Best-Effort Delivery)"]
+            RedisPubSub[("Redis Pub/Sub<br/>• Zero Persistence Fan-Out Channels<br/>• Low-Latency Inter-Worker Broadcast")]
+        end
+    end
+
+    subgraph BackgroundWorkers["⚡ Asynchronous Background Layer"]
+        CeleryBeat["Celery Beat Scheduler<br/>• Periodic Task Dispatch (e.g., close_tickets)"]
+        CeleryWorker["Celery Worker Engine<br/>• Standard Celery Task Execution"]
+        StreamConsumer["Redis Stream Consumer Group Engine<br/>• Durable Event Processing Loop"]
+        InventoryTask["Inventory Reconciliation Task"]
+        MembershipTask["Membership Activation / Deactivation Task"]
+        TicketTask["Ticket Cleanup Task (close_tickets)"]
     end
 
     %% Client Routing
-    UserClient -->|HTTPS / Bearer JWT| Nginx
-    MerchantClient -->|HTTPS / Bearer JWT| Nginx
-    AdminClient -->|HTTPS / Bearer JWT| Nginx
+    UserClient -->|HTTPS / WSS / Bearer JWT| Nginx
+    MerchantClient -->|HTTPS / WSS / Bearer JWT| Nginx
+    AdminClient -->|HTTPS / WSS / Bearer JWT| Nginx
 
     %% Gateway to App
     Nginx --> AuthMiddleware
 
-    %% Auth Middleware Context Propagation to Domain Services via Request Scope
+    %% Auth Middleware Context Propagation
     AuthMiddleware -->|Validated Scope & User Context| StoreMgmt
     AuthMiddleware -->|Validated Scope & User Context| OrderSubEngine
     AuthMiddleware -->|Validated Scope & User Context| EngagementModule
@@ -69,25 +86,43 @@ graph TB
     OrderSubEngine <--> Stripe
     AuthMiddleware <-->|Blacklist / Session Check| RedisCache
 
-    %% Async Queue Dispatch (Celery)
-    OrderSubEngine -->|Dispatch Tasks| RedisCache
-    StoreMgmt -->|Dispatch Tasks| RedisCache
-    
-    RedisCache -->|Broker Queue| CeleryWorker
-    CeleryWorker --> InventoryTask
-    CeleryWorker --> MembershipTask
-
-    %% Database Sync & Security
-    StoreMgmt <-->|Fernet Encrypted Bank Details| PostgreSQL
-    OrderSubEngine <--> PostgreSQL
+    %% Outbox & DB Write Operations
+    StoreMgmt <-->|Bank Details & Outbox Transactions| PostgreSQL
+    OrderSubEngine <-->|Atomic Transactions + Outbox| PostgreSQL
     EngagementModule <--> PostgreSQL
     SupportModule <--> PostgreSQL
+
+    %% Real-time DB Triggers (LISTEN/NOTIFY)
+    PostgreSQL -- "LISTEN / NOTIFY" --> NotifService
+    NotifService -- "Persist State" --> PostgreSQL
+
+    %% ========================================================
+    %% PATH 1: DURABLE EVENT-PROCESSING PATH (Redis Streams)
+    %% ========================================================
+    PostgreSQL ==>|1. Read Stored Outbox Records| OutboxPublisher
+    OutboxPublisher ==>|2. Append Events to Stream| RedisStreams
+    RedisStreams ==>|3. Consume & XAUTOCLAIM Claims| StreamConsumer
+    
+    StreamConsumer --> InventoryTask
+    StreamConsumer --> MembershipTask
+
     InventoryTask <-->|Audit Stock| PostgreSQL
     MembershipTask <-->|Toggle Status| PostgreSQL
 
-    %% Real-time DB Triggers
-    PostgreSQL -- "LISTEN / NOTIFY" --> NotifService
-    NotifService -- "Persist State" --> PostgreSQL
+    %% Celery Beat Scheduling & Broker Dispatch
+    CeleryBeat -->|Schedule Periodic Jobs| RedisCache
+    RedisCache -->|Broker Queue| CeleryWorker
+    CeleryWorker --> TicketTask
+    TicketTask <-->|Close Inactive Tickets| PostgreSQL
+
+    %% ========================================================
+    %% PATH 2: TRANSIENT WEBSOCKET FAN-OUT PATH (Redis Pub/Sub)
+    %% ========================================================
+    SupportModule -.->|1. Fire-and-Forget Publish| RedisPubSub
+    RedisPubSub -.->|2. Broadcast to Other ASGI Workers| PubSubListener
+    PubSubListener -.->|3. Forward Payload| WebSocketManager
+    WebSocketManager -.->|4. Push to Local Active Sockets| Nginx
+    
 ```
 ---
 
@@ -103,12 +138,13 @@ graph TB
 *   **Media Uploads**: Chunk-streaming asset gateway that scans, validates MIME-types at the binary byte level, and writes straight to Supabase Storage Buckets to protect server memory.
 *   **JWT Authentication**: Stateless verification workflow featuring Multi-Tenant Role-Based Access Control (RBAC) maps backed by a zero-reuse Refresh Token Rotation security policy.
 *   **Customer Support Messaging (Ticketing System)**: A durable, multi-tenant ticketing and operational support routing layout. Tracks client issues with strict SLA expiration states, tenant boundary verification, and asynchronous agent assignment queues managed outside the core transaction paths.
+*   **Customer Support Websocket Messaging (Ticketing System)**: A durable, multi-tenant ticketing and operational support engine. Enforces strict tenant boundary verification and offloads agent assignment to asynchronous queues. Features real-time bidirectional support messaging powered by Redis Streams for durable cross-worker event handling and Redis Pub/Sub for low-latency WebSocket fan-out.
 
 ---
 
 ## 📈 System Metrics & Scale
 
-*   **110+ REST Endpoints**: Fully versioned, clean API paths covering multi-tenant billing portals, vendor marketplaces, real-time analytics dashboards, shopping carts, checkout logic, and advanced stock administration.
+*   **125+ REST Endpoints**: Fully versioned, clean API paths covering multi-tenant billing portals, vendor marketplaces, real-time analytics dashboards, shopping carts, checkout logic, and advanced stock administration.
 *   **20+ Service Modules**: Fully isolated domain modules following Service-Oriented Architecture (SOA) principles to eliminate circular imports and enforce a clear separation of concerns.
 *   **20+ Database Tables**: A robust PostgreSQL relational schema complete with optimized composite indexes, write-ahead time-series logging, explicit cascading parameters, and foreign key boundaries.
 *   **10+ Strict Enums**: Rigid state-machine tracking via Python/SQLAlchemy Enums (e.g., Subscription Status, Order states, Payment states, Account tiers, Analytics event types) ensuring type-safe processing at every interface.
@@ -142,8 +178,10 @@ The platform features an event-driven, low-latency infrastructure designed to ca
 *   **Asynchronous Architecture**: Built entirely on an ASGI worker pool loop using FastAPI and SQLAlchemy `AsyncSession`, enabling high-concurrency throughput without thread context-switching overhead.
 *   **Zero-Copy Request Scope Context Injection**: Implements a lightweight ASGI Auth Middleware that validates incoming JWTs and injects the authenticated tenant payload directly into `request.state`. Downstream domain services consume this request scope instantly without redundant token parsing overhead or duplicate database user fetches.
 *   **Atomic State Management**: Guarantees zero "Lost Updates" or inventory drift in high-throughput warehouse environments by implementing precise **PostgreSQL Advisory Locks** and row-level locking schemas (`FOR UPDATE`) across critical transaction paths.
+*   **Transactional Outbox Pattern**: Guarantees reliable event publication by writing domain state changes and outbox records within a single atomic PostgreSQL transaction. Asynchronous workers poll and publish committed records to Redis Streams, completely eliminating database-to-Redis dual-write inconsistencies.
 *   **High-Throughput Upstream Keepalives**: Configured `keepalive 32` within the Nginx `upstream` block over HTTP/1.1 to maintain a persistent connection pool with Uvicorn. This prevents TCP socket churn and port exhaustion under high concurrency.
 *   **Unbuffered SSE Proxying**: Explicitly disabled proxy buffering (`proxy_buffering off`) at the ingress layer to ensure continuous, unbuffered chunk streaming for real-time Server-Sent Events (SSE) and notification streams.
+*   **Real-Time WebSocket Messaging**: Provides bidirectional WebSocket communication for customer support ticketing, featuring authenticated connection lifecycles, asynchronous message handling, and strict multi-tenant boundary verification.
 *   **Offloaded HTTP Dynamic Compression**: Enforces Nginx-level `gzip` compression across JSON responses and API payloads, reducing network round-trip time (RTT) while keeping CPU-bound compression tasks completely off the Python ASGI event loop.
 *   **Read-Optimized Analytics Modules**: Offloads expensive aggregate queries (`SUM`, `AVG`) from core transaction tables on every API call by leveraging a read-optimized time-series ledger strategy. Efficiently buckets store performance, net revenue, conversion rates, and item sales velocity across customizable hourly, daily, and monthly windows.
 *   **Analytics Performance Safeguards**: High-volume analytics lookups utilize explicit composite indexes on `(store_id, created_at DESC)` and are structured to avoid nested loop joins and sequential scans, verified via `EXPLAIN ANALYZE`.
@@ -151,6 +189,7 @@ The platform features an event-driven, low-latency infrastructure designed to ca
 *   **High-Throughput Micro-Batching Buffer**: Mitigates heavy connection pool strain by routing intense ingestion feeds (e.g., streaming telemetry, notification logs) through an `asyncio.Queue` buffer. A background execution task drains the queue using a sliding-window chunk architecture—committing up to 100 records inside a single transaction or flushing automatically on a 100ms timeout threshold with a robust, structured retry policy.
 *   **Redis Caching Framework**: Utilizes a strict **Redis Cache-Aside** strategy. High-demand product catalogs, pricing tiers, and pre-aggregated analytics endpoints return responses instantly, reducing total round-trip times (RTT) dramatically.
 *   **Distributed Background Processing**: Offloads heavy out-of-process operations seamlessly. Uses **FastAPI BackgroundTasks** for lightweight, post-response I/O chores, and **Celery** workers for heavy architectural workloads, reporting loops, and automated ledger adjustments.
+*   **Durable Event Processing & Cross-Worker Messaging**: Implements **Redis Streams** with consumer groups and **XAUTOCLAIM** pending-entry recovery to guarantee durable, at-least-once event processing across distributed workers. Integrates Redis Pub/Sub for low-latency cross-worker fan-out, routing real-time messages to WebSocket connections hosted across independent **ASGI** worker instances.
 *   **Hardened Auth & Token Rotation**: Effortlessly isolates and enforces Multi-Tenant Role-Based Access Control (Admin vs. Staff permissions) via stateless JWTs. Implements **Refresh Token Rotation**—revoking and replacing refresh tokens on every single use—to block token-reuse vectors out of the box.
 *   **Zero-Crash Media Pipeline & Orphan Cleanup**: Protects server memory under heavy asset workloads. Media uploads bypass container staging via a chunk-streaming pipeline that caps file sizes in real time, validates MIME-types at the binary byte layer, and streams files directly to **Supabase Storage Buckets**. Orphaned files are tracked and cleaned up automatically on database rollbacks.
 *   **Ironclad Database Integrity**: Implements strict database-level unique constraints (preventing duplicate SKUs) and check constraints (ensuring quantities can never drop below zero), wrapped inside explicit transaction boundaries within the application logic for atomic rollbacks.
