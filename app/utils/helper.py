@@ -93,8 +93,11 @@ async def react_summary(
     return result
 
 
-async def upload_photo_helper(photo, request, get_supabase, bucket: str | None = None):
-    user_id = unique_id(request)
+async def upload_photo_helper(
+    photo, request, get_supabase, user_id, bucket: str | None = None, skip: bool = False
+):
+    if skip is not True:
+        user_id = unique_id(request)
     filename = None
     max_size = 5 * 1024 * 1024
     allowed_types = ("image/jpeg", "image/webp", "image/png")
@@ -186,7 +189,11 @@ async def file_generator(file, user_id):
         return bytes(buffer)
 
 
-async def store_auth(store_id, db, request):
+async def store_auth(
+    store_id,
+    db,
+    request,
+):
     user_id = unique_id(request)
     if not user_id:
         logger.warning("unauthorized attempt")
