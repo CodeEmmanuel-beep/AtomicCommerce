@@ -7,6 +7,7 @@ from jose import jwt, JWTError, ExpiredSignatureError
 from app.database.get import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.routes import (
+    transactional_outbox,
     auth,
     websocket,
     product,
@@ -36,6 +37,9 @@ from app.utils.redis import (
     add_commit_periodically,
     notification_queue,
     redis_client,
+    create_consumer_group,
+    fanout_message,
+    autoclaims,
 )
 import asyncio
 from app.exceptions import (
@@ -49,12 +53,7 @@ from app.logs.logger import get_logger
 from contextlib import asynccontextmanager
 from supabase import create_async_client
 from cryptography.fernet import Fernet
-from app.api.v1.routes.websocket import (
-    fanout_message,
-    autoclaims,
-    publish_events,
-    create_consumer_group,
-)
+from app.api.v1.routes.websocket import publish_events
 
 logger = get_logger("lifespan")
 
@@ -271,6 +270,7 @@ def home():
 
 app.include_router(auth.router)
 app.include_router(websocket.router)
+app.include_router(transactional_outbox.router)
 app.include_router(notifications.router)
 app.include_router(profile.router)
 app.include_router(category.router)
